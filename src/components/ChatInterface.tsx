@@ -6,6 +6,7 @@ import { StepIndicator } from "./StepIndicator";
 import { LoanCard } from "./LoanCard";
 import { CreditScoreCard } from "./CreditScoreCard";
 import { SanctionLetter } from "./SanctionLetter";
+import { AnalyticsDashboard } from "./AnalyticsDashboard";
 import { Send, ArrowLeft, MessageCircle } from "lucide-react";
 
 const STEPS = [
@@ -41,13 +42,14 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [showCreditScore, setShowCreditScore] = useState(false);
   const [showLoanOffers, setShowLoanOffers] = useState(false);
   const [showSanction, setShowSanction] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
   const [userData, setUserData] = useState({
     name: "",
     pan: "",
     creditScore: 0,
     selectedLoan: { amount: 0, interest: 0, tenure: 0, emi: 0 },
   });
-  
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationStep = useRef(0);
 
@@ -57,15 +59,15 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, showCreditScore, showLoanOffers, showSanction]);
+  }, [messages, showCreditScore, showLoanOffers, showSanction, showAnalytics]);
 
   const simulateBotResponse = (userMessage: string) => {
     setIsTyping(true);
-    
+
     setTimeout(() => {
       setIsTyping(false);
       let botResponse = "";
-      
+
       switch (conversationStep.current) {
         case 0:
           setUserData((prev) => ({ ...prev, name: userMessage }));
@@ -78,12 +80,12 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           botResponse = "Perfect! Let me verify your details and fetch your credit score...\n\n⏳ Please wait while I connect to the bureau...";
           conversationStep.current = 2;
           setCurrentStep(2);
-          
+
           setTimeout(() => {
             const creditScore = Math.floor(Math.random() * (850 - 680) + 680);
             setUserData((prev) => ({ ...prev, creditScore }));
             setShowCreditScore(true);
-            
+
             setTimeout(() => {
               if (creditScore >= 700) {
                 setMessages((prev) => [
@@ -116,7 +118,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         default:
           botResponse = "Thank you for your message. Is there anything else I can help you with?";
       }
-      
+
       if (botResponse) {
         setMessages((prev) => [
           ...prev,
@@ -128,7 +130,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
   const handleSend = () => {
     if (!input.trim()) return;
-    
+
     const userMessage = input.trim();
     setMessages((prev) => [
       ...prev,
@@ -141,17 +143,17 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const handleLoanSelect = (interest: number, tenure: number, amount: number) => {
     const emi = Math.round(
       (amount * (interest / 1200) * Math.pow(1 + interest / 1200, tenure)) /
-        (Math.pow(1 + interest / 1200, tenure) - 1)
+      (Math.pow(1 + interest / 1200, tenure) - 1)
     );
-    
+
     setUserData((prev) => ({
       ...prev,
       selectedLoan: { amount, interest, tenure, emi },
     }));
-    
+
     setShowLoanOffers(false);
     setCurrentStep(4);
-    
+
     setMessages((prev) => [
       ...prev,
       {
@@ -160,7 +162,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         isBot: false,
       },
     ]);
-    
+
     setIsTyping(true);
     setTimeout(() => {
       setIsTyping(false);
@@ -172,7 +174,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           isBot: true,
         },
       ]);
-      
+
       setCurrentStep(5);
       setTimeout(() => {
         setShowSanction(true);
@@ -211,15 +213,15 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
             isBot={message.isBot}
           />
         ))}
-        
+
         {isTyping && <ChatMessage message="" isBot isTyping />}
-        
+
         {showCreditScore && (
           <div className="py-4">
             <CreditScoreCard score={userData.creditScore} />
           </div>
         )}
-        
+
         {showLoanOffers && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 py-4">
             <LoanCard
@@ -249,7 +251,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
             />
           </div>
         )}
-        
+
         {showSanction && (
           <div className="py-4">
             <SanctionLetter
@@ -261,10 +263,22 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
               sanctionDate={new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
               referenceId={`LOAN${Date.now().toString().slice(-8)}`}
               blockchainHash={`0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`}
+              onViewAnalytics={() => setShowAnalytics(true)}
             />
           </div>
         )}
-        
+
+        {showAnalytics && (
+          <div className="py-8 bg-background/50 rounded-xl border border-border/50 animate-slide-up">
+            <AnalyticsDashboard
+              customerName={userData.name}
+              initialAmount={userData.selectedLoan.amount}
+              initialInterest={userData.selectedLoan.interest}
+              initialTenure={userData.selectedLoan.tenure}
+            />
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 

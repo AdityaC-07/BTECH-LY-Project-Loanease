@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Download, Shield, FileCheck } from "lucide-react";
+import { Download, Shield, FileCheck, TrendingUp } from "lucide-react";
 
 interface SanctionLetterProps {
   customerName: string;
@@ -12,6 +12,7 @@ interface SanctionLetterProps {
   sanctionDate: string;
   referenceId: string;
   blockchainHash: string;
+  onViewAnalytics?: () => void;
 }
 
 export const SanctionLetter = ({
@@ -23,6 +24,7 @@ export const SanctionLetter = ({
   sanctionDate,
   referenceId,
   blockchainHash,
+  onViewAnalytics,
 }: SanctionLetterProps) => {
   return (
     <Card className="max-w-2xl mx-auto animate-slide-up overflow-hidden">
@@ -41,7 +43,7 @@ export const SanctionLetter = ({
           </Badge>
         </div>
       </div>
-      
+
       <CardContent className="p-6 space-y-6">
         <div className="grid grid-cols-2 gap-4">
           <div>
@@ -59,7 +61,7 @@ export const SanctionLetter = ({
             <p className="text-xs text-muted-foreground">Customer Name</p>
             <p className="font-semibold text-lg">{customerName}</p>
           </div>
-          
+
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div>
               <p className="text-xs text-muted-foreground">Loan Amount</p>
@@ -94,6 +96,18 @@ export const SanctionLetter = ({
           <Download className="w-4 h-4 mr-2" />
           Download Sanction Letter
         </Button>
+
+        {onViewAnalytics && (
+          <Button
+            variant="outline"
+            className="w-full border-accent text-accent hover:bg-accent hover:text-accent-foreground"
+            size="lg"
+            onClick={onViewAnalytics}
+          >
+            <TrendingUp className="w-4 h-4 mr-2" />
+            View Advanced Analytics
+          </Button>
+        )}
       </CardContent>
     </Card>
   );
