@@ -56,9 +56,9 @@ We’ve benchmarked our performance against industry standards to ensure our bor
 
 ---
 
-## 🎨 Design Philosophy (EY Branded)
+## 🎨 Design Philosophy 
 LoanEase is built to feel like a premium, enterprise-grade financial tool:
-- **Palette**: Dark Mode optimized with `EY Black (#212121)` and `EY Yellow (#FFE600)`.
+- **Palette**: Dark Mode optimized with `Black (#212121)` and `Yellow (#FFE600)`.
 - **Typography**: `Inter` and `DM Sans` for maximum readability and a professional feel.
 - **Interactions**: Subtle micro-animations (float, slide-up) and glassmorphism effects for a modern UX.
 
@@ -129,4 +129,4 @@ loanease/
 - **Agniv Dutta** - [GitHub](https://github.com/AdityaC-07)
 
 ---
-© 2025 LoanEase - A BFSI Innovation Solution.
+© 2026 LoanEase - A BFSI Innovation Solution.
