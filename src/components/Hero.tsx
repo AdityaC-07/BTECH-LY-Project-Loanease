@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
-import { MessageCircle, Shield, Zap, Clock, CheckCircle } from "lucide-react";
+import { MessageCircle, Shield, Zap, Clock, CheckCircle, Check, X, Minus } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 interface HeroProps {
   onStartChat: () => void;
@@ -152,6 +153,127 @@ export const Hero = ({ onStartChat }: HeroProps) => {
               <p className="text-muted-foreground">
                 Customize your loan terms with real-time EMI calculations and rate adjustments.
               </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Comparison Section */}
+      <section className="py-24 px-4 bg-background">
+        <div className="container mx-auto">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-4xl font-display font-bold text-foreground mb-4">
+              LoanEase vs Traditional Lending
+            </h2>
+            <p className="text-muted-foreground max-w-2xl mx-auto">
+              See why borrowers choose LoanEase over banks and traditional loan agents.
+            </p>
+          </div>
+
+          <div className="grid lg:grid-cols-3 gap-8">
+            {/* Card 1: Bar Chart */}
+            <div className="bg-card p-8 rounded-2xl border border-border flex flex-col h-full">
+              <h3 className="text-xl font-semibold text-foreground mb-6">Average Loan Approval Time</h3>
+              <div className="flex-1 min-h-[300px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={[
+                      { name: 'Bank Branch', time: 10, label: '7-10 days' },
+                      { name: 'Bank App', time: 3, label: '2-3 days' },
+                      { name: 'Loan Agent', time: 5, label: '3-5 days' },
+                      { name: 'LoanEase (AI)', time: 0.1, label: '< 5 mins' },
+                    ]}
+                    layout="vertical"
+                    margin={{ left: 20, right: 40, top: 0, bottom: 0 }}
+                  >
+                    <XAxis type="number" hide />
+                    <YAxis 
+                      dataKey="name" 
+                      type="category" 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{ fill: '#94a3b8', fontSize: 12 }}
+                      width={100}
+                    />
+                    <Tooltip
+                      cursor={{ fill: 'transparent' }}
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length) {
+                          return (
+                            <div className="bg-popover border border-border px-3 py-2 rounded-lg shadow-xl">
+                              <p className="text-sm font-medium text-foreground">{payload[0].payload.label}</p>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Bar dataKey="time" radius={[0, 4, 4, 0]} barSize={24}>
+                      {[0, 1, 2, 3].map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={index === 3 ? '#F5C518' : '#4B5563'} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Card 2: Feature Matrix */}
+            <div className="bg-card p-8 rounded-2xl border border-border lg:col-span-1 overflow-x-auto">
+              <h3 className="text-xl font-semibold text-foreground mb-6">Feature Matrix</h3>
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="pb-4 font-medium text-muted-foreground">Feature</th>
+                    <th className="pb-4 font-medium text-muted-foreground text-center">Bank</th>
+                    <th className="pb-4 font-medium text-muted-foreground text-center">Agent</th>
+                    <th className="pb-4 font-medium text-muted-foreground text-center text-accent">LoanEase</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/50">
+                  {[
+                    { name: 'Personalized Offers', bank: 'partial', agent: 'no', loanease: 'yes' },
+                    { name: 'Real-Time Negotiation', bank: 'no', agent: 'partial', loanease: 'yes' },
+                    { name: '24/7 Availability', bank: 'no', agent: 'no', loanease: 'yes' },
+                    { name: 'Instant Sanction', bank: 'no', agent: 'no', loanease: 'yes' },
+                    { name: 'Blockchain Audit', bank: 'no', agent: 'no', loanease: 'yes' },
+                    { name: 'WhatsApp Access', bank: 'no', agent: 'yes', loanease: 'yes' },
+                    { name: 'Zero Paperwork', bank: 'no', agent: 'no', loanease: 'yes' },
+                  ].map((row, i) => (
+                    <tr key={i}>
+                      <td className="py-3 text-foreground/80">{row.name}</td>
+                      <td className="py-3 text-center">
+                        {row.bank === 'yes' ? <Check className="w-4 h-4 text-accent mx-auto" /> : row.bank === 'partial' ? <Minus className="w-4 h-4 text-muted-foreground mx-auto" /> : <X className="w-4 h-4 text-muted-foreground/30 mx-auto" />}
+                      </td>
+                      <td className="py-3 text-center">
+                        {row.agent === 'yes' ? <Check className="w-4 h-4 text-accent mx-auto" /> : row.agent === 'partial' ? <Minus className="w-4 h-4 text-muted-foreground mx-auto" /> : <X className="w-4 h-4 text-muted-foreground/30 mx-auto" />}
+                      </td>
+                      <td className="py-3 text-center font-bold">
+                        <Check className="w-5 h-5 text-accent mx-auto" />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Card 3: Impact Numbers */}
+            <div className="space-y-4 flex flex-col justify-between">
+              <div className="bg-card p-8 rounded-2xl border border-border hover:shadow-lg transition-all duration-300">
+                <div className="text-4xl font-bold text-accent mb-2">75% faster</div>
+                <div className="text-foreground font-semibold mb-1">vs traditional bank</div>
+                <p className="text-sm text-muted-foreground">Loan decisions in minutes, not weeks.</p>
+              </div>
+              <div className="bg-card p-8 rounded-2xl border border-border hover:shadow-lg transition-all duration-300">
+                <div className="text-4xl font-bold text-accent mb-2">50% reduction</div>
+                <div className="text-foreground font-semibold mb-1">in manual effort</div>
+                <p className="text-sm text-muted-foreground">Automated agent workflows for efficiency.</p>
+              </div>
+              <div className="bg-card p-8 rounded-2xl border border-border hover:shadow-lg transition-all duration-300">
+                <div className="text-4xl font-bold text-accent mb-2">100% digital</div>
+                <div className="text-foreground font-semibold mb-1">zero physical touchpoints</div>
+                <p className="text-sm text-muted-foreground">From KYC to signed sanction letter online.</p>
+              </div>
             </div>
           </div>
         </div>
