@@ -1,6 +1,6 @@
 # 🏦 LoanEase
 
-> **EY Techathon 6.0 Submission**  
+> **B.Tech Project 2026-2027**  
 > A modern, intelligent loan management platform designed to simplify and streamline the loan application and management process.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
