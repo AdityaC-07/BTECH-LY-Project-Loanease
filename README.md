@@ -129,7 +129,7 @@ loanease/
 - **Aditya Choudhuri** - [GitHub](https://github.com/AdityaC-07)
 - **Agniv Dutta** - [GitHub](https://github.com/agniv-dutta)
 - **Akshat Kunder** - [GitHub](https://github.com/AkshatKunder)
-- **Aaryan Dubey** - [GitHub](https://github.com/AdityaC-07)
+- **Aaryan Dubey** - [GitHub](https://github.com/aaryan-r-dubey)
 
 ---
 © 2026 LoanEase - A BFSI Innovation Solution.
