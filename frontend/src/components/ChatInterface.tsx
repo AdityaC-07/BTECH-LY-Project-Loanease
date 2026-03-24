@@ -2,21 +2,11 @@ import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ChatMessage } from "./ChatMessage";
-import { StepIndicator } from "./StepIndicator";
 import { LoanCard } from "./LoanCard";
 import { CreditScoreCard } from "./CreditScoreCard";
 import { SanctionLetter } from "./SanctionLetter";
 import { AnalyticsDashboard } from "./AnalyticsDashboard";
 import { Send, ArrowLeft, MessageCircle } from "lucide-react";
-
-const STEPS = [
-  { id: "welcome", label: "Welcome" },
-  { id: "kyc", label: "KYC" },
-  { id: "credit", label: "Credit Score" },
-  { id: "offers", label: "Loan Offers" },
-  { id: "negotiation", label: "Negotiation" },
-  { id: "sanction", label: "Sanction" },
-];
 
 const AGENT_PIPELINE = [
   "Master Agent",
@@ -46,7 +36,6 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     },
   ]);
   const [input, setInput] = useState("");
-  const [currentStep, setCurrentStep] = useState(0);
   const [isTyping, setIsTyping] = useState(false);
   const [showCreditScore, setShowCreditScore] = useState(false);
   const [showLoanOffers, setShowLoanOffers] = useState(false);
@@ -62,6 +51,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationStep = useRef(0);
+  const activeAgentIndex = AGENT_PIPELINE.indexOf(activeAgent);
 
   const activateAgent = (agentName: string, note: string) => {
     setActiveAgent(agentName);
@@ -96,14 +86,12 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           activateAgent("KYC Verification Agent", "Validating identity inputs and verification details.");
           botResponse = `Thank you, ${userMessage}.\n\nFor KYC verification, please enter your PAN number.`;
           conversationStep.current = 1;
-          setCurrentStep(1);
           break;
         case 1:
           setUserData((prev) => ({ ...prev, pan: userMessage.toUpperCase() }));
           activateAgent("Credit Underwriting Agent", "Evaluating eligibility based on credit and risk profile.");
           botResponse = "Your details are captured. I will now verify your profile and fetch your credit score.\n\nPlease wait while we process the bureau check.";
           conversationStep.current = 2;
-          setCurrentStep(2);
 
           setTimeout(() => {
             const creditScore = Math.floor(Math.random() * (850 - 680) + 680);
@@ -122,7 +110,6 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
                   },
                 ]);
                 setShowLoanOffers(true);
-                setCurrentStep(3);
                 conversationStep.current = 3;
               } else {
                 setMessages((prev) => [
@@ -177,7 +164,6 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     }));
 
     setShowLoanOffers(false);
-    setCurrentStep(4);
 
     setMessages((prev) => [
       ...prev,
@@ -201,7 +187,6 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         },
       ]);
 
-      setCurrentStep(5);
       setTimeout(() => {
         setActiveAgent("Blockchain Ledger");
         setMessages((prev) => [
@@ -237,30 +222,53 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           <div className="w-10" />
         </div>
         <div className="px-4 pb-3">
-          <div className="rounded-lg border border-border/60 bg-muted/20 p-2">
+          <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
             <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-foreground">
-              Multi-Agent Orchestration
+              Agent Activation Timeline
             </div>
-            <div className="flex gap-2 overflow-x-auto">
-            {AGENT_PIPELINE.map((agent) => {
-              const isActive = agent === activeAgent;
-              return (
-                <div
-                  key={agent}
-                  className={`whitespace-nowrap rounded-full px-3 py-1.5 text-xs border transition-all ${
-                    isActive
-                      ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                      : "bg-background text-muted-foreground border-border"
-                  }`}
-                >
-                  {agent}
-                </div>
-              );
-            })}
+            <div className="flex items-center gap-2 overflow-x-auto">
+              {AGENT_PIPELINE.map((agent, index) => {
+                const isCompleted = index < activeAgentIndex;
+                const isActive = index === activeAgentIndex;
+                return (
+                  <div key={agent} className="flex items-center gap-2">
+                    <div
+                      className={`h-7 min-w-7 rounded-full border text-[11px] flex items-center justify-center px-2 ${
+                        isActive
+                          ? "bg-yellow-400 text-black border-yellow-400"
+                          : isCompleted
+                            ? "bg-green-600 text-white border-green-600"
+                            : "bg-background text-muted-foreground border-border"
+                      }`}
+                    >
+                      {index + 1}
+                    </div>
+                    <div
+                      className={`whitespace-nowrap text-xs ${
+                        isActive
+                          ? "text-yellow-300"
+                          : isCompleted
+                            ? "text-green-400"
+                            : "text-muted-foreground"
+                      }`}
+                    >
+                      {agent}
+                    </div>
+                    {index < AGENT_PIPELINE.length - 1 && (
+                      <div
+                        className={`h-[2px] w-8 ${
+                          index < activeAgentIndex
+                            ? "bg-green-500"
+                            : "bg-border"
+                        }`}
+                      />
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
-        <StepIndicator steps={STEPS} currentStep={currentStep} />
       </div>
 
       {/* Messages */}
