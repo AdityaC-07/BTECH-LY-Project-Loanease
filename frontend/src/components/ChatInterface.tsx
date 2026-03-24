@@ -18,6 +18,15 @@ const STEPS = [
   { id: "sanction", label: "Sanction" },
 ];
 
+const AGENT_PIPELINE = [
+  "Master Agent",
+  "KYC Verification Agent",
+  "Credit Underwriting Agent",
+  "Loan Recommendation Engine",
+  "Dynamic Negotiation Agent",
+  "Blockchain Ledger",
+];
+
 interface Message {
   id: number;
   text: string;
@@ -32,7 +41,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 1,
-      text: "Hello! I'm your Personal Loan Assistant. I'll help you find the perfect loan tailored to your needs. Let's get started!\n\nMay I have your full name as per your PAN card?",
+      text: "Hello. I am your Personal Loan Assistant. I will help you identify the most suitable loan offer and guide you through the journey.\n\nPlease share your full name as per your PAN card.",
       isBot: true,
     },
   ]);
@@ -43,6 +52,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [showLoanOffers, setShowLoanOffers] = useState(false);
   const [showSanction, setShowSanction] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
+  const [activeAgent, setActiveAgent] = useState("Master Agent");
   const [userData, setUserData] = useState({
     name: "",
     pan: "",
@@ -52,6 +62,18 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationStep = useRef(0);
+
+  const activateAgent = (agentName: string, note: string) => {
+    setActiveAgent(agentName);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: prev.length + 1,
+        text: `${agentName} activated.\n${note}`,
+        isBot: true,
+      },
+    ]);
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -71,13 +93,15 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       switch (conversationStep.current) {
         case 0:
           setUserData((prev) => ({ ...prev, name: userMessage }));
-          botResponse = `Nice to meet you, ${userMessage}! 🙂\n\nFor KYC verification, please enter your PAN number:`;
+          activateAgent("KYC Verification Agent", "Validating identity inputs and verification details.");
+          botResponse = `Thank you, ${userMessage}.\n\nFor KYC verification, please enter your PAN number.`;
           conversationStep.current = 1;
           setCurrentStep(1);
           break;
         case 1:
           setUserData((prev) => ({ ...prev, pan: userMessage.toUpperCase() }));
-          botResponse = "Perfect! Let me verify your details and fetch your credit score...\n\n⏳ Please wait while I connect to the bureau...";
+          activateAgent("Credit Underwriting Agent", "Evaluating eligibility based on credit and risk profile.");
+          botResponse = "Your details are captured. I will now verify your profile and fetch your credit score.\n\nPlease wait while we process the bureau check.";
           conversationStep.current = 2;
           setCurrentStep(2);
 
@@ -88,11 +112,12 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
             setTimeout(() => {
               if (creditScore >= 700) {
+                setActiveAgent("Loan Recommendation Engine");
                 setMessages((prev) => [
                   ...prev,
                   {
                     id: prev.length + 1,
-                    text: "Great news! Based on your credit profile, you're eligible for our premium loan offers. Here are personalized options for you:",
+                    text: "Loan Recommendation Engine activated.\nBuilding personalized loan options.\n\nBased on your credit profile, you are eligible for the following offers:",
                     isBot: true,
                   },
                 ]);
@@ -104,7 +129,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
                   ...prev,
                   {
                     id: prev.length + 1,
-                    text: "I'm sorry, but your current credit score doesn't meet our minimum eligibility criteria (700+). I recommend improving your credit score and applying again in a few months.\n\nWould you like tips on improving your credit score?",
+                    text: "Your current credit score does not meet our minimum eligibility criteria (700+). We recommend improving your score and reapplying after some time.\n\nWould you like improvement tips?",
                     isBot: true,
                   },
                 ]);
@@ -166,17 +191,27 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     setIsTyping(true);
     setTimeout(() => {
       setIsTyping(false);
+      setActiveAgent("Dynamic Negotiation Agent");
       setMessages((prev) => [
         ...prev,
         {
           id: prev.length + 1,
-          text: "Excellent choice! I'm now processing your application...\n\n✅ KYC Verified\n✅ Credit Check Passed\n✅ Income Assessment Complete\n✅ Risk Analysis Done\n\n🎉 Congratulations! Your loan has been approved!",
+          text: "Dynamic Negotiation Agent activated.\nApplying negotiation policy and offer optimization.\n\nYour application is being processed.\n\nKYC Verified\nCredit Check Passed\nIncome Assessment Complete\nRisk Analysis Completed\n\nYour loan has been approved.",
           isBot: true,
         },
       ]);
 
       setCurrentStep(5);
       setTimeout(() => {
+        setActiveAgent("Blockchain Ledger");
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: prev.length + 1,
+            text: "Blockchain Ledger activated.\nYour sanction details are being securely recorded with tamper-proof hash verification.",
+            isBot: true,
+          },
+        ]);
         setShowSanction(true);
       }, 1000);
     }, 2500);
@@ -196,10 +231,34 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
             </div>
             <div>
               <h2 className="text-sm font-semibold">Loan Assistant</h2>
-              <p className="text-xs text-accent">Online</p>
+              <p className="text-xs text-accent">Online • {activeAgent}</p>
             </div>
           </div>
           <div className="w-10" />
+        </div>
+        <div className="px-4 pb-3">
+          <div className="rounded-lg border border-border/60 bg-muted/20 p-2">
+            <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+              Multi-Agent Orchestration
+            </div>
+            <div className="flex gap-2 overflow-x-auto">
+            {AGENT_PIPELINE.map((agent) => {
+              const isActive = agent === activeAgent;
+              return (
+                <div
+                  key={agent}
+                  className={`whitespace-nowrap rounded-full px-3 py-1.5 text-xs border transition-all ${
+                    isActive
+                      ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                      : "bg-background text-muted-foreground border-border"
+                  }`}
+                >
+                  {agent}
+                </div>
+              );
+            })}
+            </div>
+          </div>
         </div>
         <StepIndicator steps={STEPS} currentStep={currentStep} />
       </div>
