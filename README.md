@@ -77,8 +77,9 @@ LoanEase is built to feel like a premium, enterprise-grade financial tool:
    cd BTECH-LY-Project-Loanease
    ```
 
-2. **Install dependencies**
+2. **Install frontend dependencies**
    ```bash
+   cd frontend
    npm install
    ```
 
@@ -95,17 +96,30 @@ LoanEase is built to feel like a premium, enterprise-grade financial tool:
 ## 📁 Project Structure
 ```text
 loanease/
-├── src/
-│   ├── components/      # Functional & UI components
-│   │   ├── ui/          # Radix-based primitives (shadcn)
-│   │   └── ...          # Feature components (Hero, Chat, etc.)
-│   ├── pages/           # High-level page layouts
-│   ├── lib/             # Shared utilities and configurations
-│   ├── hooks/           # Custom React business logic
-│   ├── App.tsx          # Application routing and layout
-│   └── index.css        # Global styles & EY design tokens
-├── public/              # Static assets and media
-└── tailwind.config.js   # Custom theme & animation config
+├── frontend/
+│   ├── src/
+│   │   ├── components/      # Functional and UI components
+│   │   │   ├── ui/          # shadcn and Radix primitives
+│   │   │   └── ...          # Feature components
+│   │   ├── pages/           # App-level page views
+│   │   ├── hooks/           # Custom React hooks
+│   │   ├── lib/             # Shared frontend utilities
+│   │   ├── App.tsx
+│   │   └── main.tsx
+│   ├── public/
+│   ├── package.json
+│   └── vite.config.ts
+├── backend/
+│   ├── app/                 # Underwriting FastAPI app
+│   ├── artifacts/           # Trained model and metadata
+│   ├── data/                # Dataset and assessment store
+│   ├── requirements.txt
+│   └── train_model.py
+├── negotiation_backend/
+│   ├── app/                 # Negotiation FastAPI app
+│   └── requirements.txt
+├── README.md
+└── LICENSE
 ```
 
 ---
@@ -122,6 +136,159 @@ loanease/
 - [ ] Integration with major Core Banking Systems (CBS)
 - [ ] Advanced Fraud Detection using ML models
 - [ ] Mobile App (Progressive Web App support)
+
+---
+
+## ⚙️ Backend Services
+
+LoanEase includes two separate FastAPI backends:
+
+- `backend/` for credit underwriting and explainability.
+- `negotiation_backend/` for dynamic loan-rate negotiation.
+
+### Credit Underwriting Backend (`backend/`)
+
+#### What it does
+- Trains an XGBoost classifier using `backend/data/loan_train.csv`.
+- Produces prediction artifacts in `backend/artifacts/`.
+- Exposes underwriting APIs for assessment, explanation, and health monitoring.
+- Returns SHAP-based plain-English factor explanations.
+
+#### Setup
+From repository root:
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+#### Dataset
+Place Kaggle Loan Prediction dataset CSV at:
+
+- `backend/data/loan_train.csv`
+
+Expected columns:
+
+- `Gender`, `Married`, `Dependents`, `Education`, `Self_Employed`
+- `ApplicantIncome`, `CoapplicantIncome`, `LoanAmount`, `Loan_Amount_Term`
+- `Credit_History`, `Property_Area`, `Loan_Status`
+
+#### Train model
+
+```powershell
+python train_model.py --data data/loan_train.csv --artifacts artifacts
+```
+
+Training pipeline includes:
+
+- Missing-value imputation: median (numeric), mode (categorical)
+- Label encoding for categoricals
+- 80/20 train-test split
+- GridSearchCV tuning for `max_depth`, `n_estimators`, `learning_rate`
+- Classification report and confusion matrix in console output
+
+Artifacts generated:
+
+- `backend/artifacts/loan_model.pkl`
+- `backend/artifacts/preprocessor.pkl`
+- `backend/artifacts/metadata.json`
+
+#### Run API
+
+```powershell
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Docs: `http://localhost:8000/docs`
+
+#### API endpoints (validated)
+
+| Method | Endpoint | Purpose |
+| :--- | :--- | :--- |
+| `GET` | `/health` | Service health, model version, accuracy, uptime |
+| `POST` | `/assess` | Risk assessment and decision generation |
+| `POST` | `/explain/{application_id}` | Full explanation and SHAP waterfall for a stored application |
+
+#### Risk policy
+- `probability >= 0.75`: `Low Risk` and `APPROVED`
+- `0.50 <= probability < 0.75`: `Medium Risk` and `APPROVED_WITH_CONDITIONS`
+- `probability < 0.50`: `High Risk` and `REJECTED`
+
+### Dynamic Negotiation Backend (`negotiation_backend/`)
+
+#### What it does
+- Runs stateful in-memory negotiation sessions.
+- Applies risk-aware pricing policy with configurable limits.
+- Returns plain-English reasoning for each response.
+- Computes EMI, total payable, and savings with reducing-balance formula.
+- Performs basic intent detection from applicant messages.
+- Enforces 48-hour session expiry.
+
+#### Setup
+From repository root:
+
+```powershell
+cd negotiation_backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+Run service:
+
+```powershell
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
+```
+
+Docs: `http://localhost:8001/docs`
+
+#### Business constants
+Defined in `negotiation_backend/app/constants.py`:
+
+- `RATE_CEILING = 14.0`
+- `RATE_FLOOR = 10.5`
+- `MAX_ROUNDS = 3`
+- `CONCESSION_STEP = 0.25`
+
+#### Underwriting integration
+Typical flow:
+
+1. Call underwriting `POST /assess`.
+2. Use returned `risk_score` and `risk_tier`.
+3. Start negotiation via `POST /negotiate/start`.
+
+Optional adapter endpoint:
+
+- `POST /negotiate/start-from-underwriting`
+
+#### EMI formula
+
+- `EMI = P * R * (1+R)^N / ((1+R)^N - 1)`
+- `P`: principal
+- `R`: monthly interest rate (`annual_rate / 12 / 100`)
+- `N`: tenure in months
+
+#### CORS
+Allowed origins include:
+
+- `http://localhost:8080`
+- `http://127.0.0.1:8080`
+- `http://localhost:3000`
+- `FRONTEND_DOMAIN` env var (default `https://loanease.example.com`)
+
+#### Core endpoints
+
+| Method | Endpoint | Purpose |
+| :--- | :--- | :--- |
+| `POST` | `/negotiate/start` | Start a negotiation session from supplied risk context |
+| `POST` | `/negotiate/start-from-underwriting` | Start negotiation by first calling underwriting `/assess` |
+| `POST` | `/negotiate/counter` | Submit user counter-request and get a revised offer |
+| `POST` | `/negotiate/accept` | Accept current negotiated offer and close session |
+| `POST` | `/negotiate/escalate` | Escalate case to a human loan officer |
+| `GET` | `/negotiate/history/{session_id}` | Retrieve current session state and conversation history |
+| `GET` | `/health` | Service health, uptime, and active session count |
 
 ---
 
