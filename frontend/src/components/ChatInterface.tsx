@@ -14,7 +14,6 @@ const AGENT_PIPELINE = [
   "Credit Underwriting Agent",
   "Loan Recommendation Engine",
   "Dynamic Negotiation Agent",
-  "Blockchain Ledger",
 ];
 
 interface Message {
@@ -188,12 +187,11 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       ]);
 
       setTimeout(() => {
-        setActiveAgent("Blockchain Ledger");
         setMessages((prev) => [
           ...prev,
           {
             id: prev.length + 1,
-            text: "Blockchain Ledger activated.\nYour sanction details are being securely recorded with tamper-proof hash verification.",
+            text: "Sanction details are being securely recorded with tamper-proof hash verification.",
             isBot: true,
           },
         ]);
