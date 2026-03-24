@@ -226,12 +226,12 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
             <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-foreground">
               Agent Activation Timeline
             </div>
-            <div className="flex items-center gap-2 overflow-x-auto">
+            <div className="flex flex-wrap items-center gap-2">
               {AGENT_PIPELINE.map((agent, index) => {
                 const isCompleted = index < activeAgentIndex;
                 const isActive = index === activeAgentIndex;
                 return (
-                  <div key={agent} className="flex items-center gap-2">
+                  <div key={agent} className="flex items-center gap-2 min-w-0">
                     <div
                       className={`h-7 min-w-7 rounded-full border text-[11px] flex items-center justify-center px-2 ${
                         isActive
@@ -244,7 +244,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
                       {index + 1}
                     </div>
                     <div
-                      className={`whitespace-nowrap text-xs ${
+                      className={`text-xs ${
                         isActive
                           ? "text-yellow-300"
                           : isCompleted
