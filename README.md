@@ -290,6 +290,141 @@ Allowed origins include:
 | `GET` | `/negotiate/history/{session_id}` | Retrieve current session state and conversation history |
 | `GET` | `/health` | Service health, uptime, and active session count |
 
+### Translation Service (`translation_backend/`) — Multilingual Support
+
+#### What it does
+- Translates text between English and Hindi using Google Translate free tier.
+- Detects Hinglish input (Hindi written in English letters) and maps to intents.
+- Provides language detection, fallback handling, and caching.
+- Enables chatbot to communicate in user's preferred language.
+
+#### Setup
+From repository root:
+
+```powershell
+cd translation_backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+Run service:
+
+```powershell
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8002
+```
+
+Docs: `http://localhost:8002/docs`
+
+#### API endpoints
+
+| Method | Endpoint | Purpose |
+| :--- | :--- | :--- |
+| `POST` | `/translate` | Translate text between English and Hindi |
+| `POST` | `/detect-hinglish-intent` | Detect intent from Hinglish (Hindi in English letters) |
+| `GET` | `/health` | Service health and uptime |
+
+#### Supported Hinglish Intents
+
+- `LOAN_REQUEST` - "loan chahiye", "mujhe loan", "loan lena hai"
+- `RATE_QUERY` - "kitna rate", "rate kya hai", "interest kya"
+- `COUNTER_REQUEST` - "aur kam karo", "aur neeche", "kamtar karo" (negotiation)
+- `ACCEPTANCE` - "theek hai", "manzoor", "accept"
+- `CANCELLATION` - "cancel", "nahi chahiye", "band karo"
+- `KYC_PROMPT` - "documents", "kyc", "pan card", "aadhar"
+
+#### Frontend Features
+
+- **Language Switcher**: EN/HI pills in chat header (yellow active state)
+- **Auto-detection**: Detects user language from typed message via franc-min CDN
+- **Hardcoded Critical Strings**: Core messages (approval, rejection, KYC) in both languages
+- **Number Formatting**: Indian style (₹5,00,000) in Hindi mode
+- **Translation Caching**: 24-hour client-side cache for translations
+
+#### Example Usage
+
+**Translate endpoint:**
+
+```bash
+curl -X POST "http://localhost:8002/translate" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "Congratulations! Your loan is approved.",
+    "source_language": "en",
+    "target_language": "hi"
+  }'
+```
+
+**Hinglish intent detection:**
+
+```bash
+curl -X POST "http://localhost:8002/detect-hinglish-intent" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "aur kam karo rate"}'
+```
+
+#### How to Add a New Language
+
+1. **Update Translation Service**: Add language code to `SUPPORTED_LANGUAGES` in `translation_backend/app/translation_service.py`
+2. **Add Hardcoded Strings**: Update `frontend/src/lib/translations.ts` with new language translations
+3. **Update Intent Detection** (if needed): Add phrase mappings to `translation_backend/app/hinglish_intent.py`
+4. **Update Language Switcher**: Add button for new language in `frontend/src/components/LanguageSwitcher.tsx`
+5. **Verify franc-min Support**: Ensure language code is supported by franc-min library
+
+For detailed integration steps, see `MULTILINGUAL_INTEGRATION.md`.
+
+---
+
+## 🌍 Running All Services Locally
+
+Start three separate terminals:
+
+**Terminal 1 - Frontend:**
+
+```powershell
+cd frontend
+npm install
+npm run dev
+# Opens at http://localhost:8080
+```
+
+**Terminal 2 - Underwriting Backend:**
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python train_model.py --data data/loan_train.csv --artifacts artifacts
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+**Terminal 3 - Negotiation Backend:**
+
+```powershell
+cd negotiation_backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
+```
+
+**Terminal 4 - Translation Backend (NEW):**
+
+```powershell
+cd translation_backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8002
+```
+
+All services are now running:
+- frontend: `http://localhost:8080`
+- underwriting: `http://localhost:8000/docs`
+- negotiation: `http://localhost:8001/docs`
+- translation: `http://localhost:8002/docs`
+
 ---
 
 ## 👥 Contributors

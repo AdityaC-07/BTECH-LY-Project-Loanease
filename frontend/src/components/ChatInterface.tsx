@@ -6,7 +6,11 @@ import { LoanCard } from "./LoanCard";
 import { CreditScoreCard } from "./CreditScoreCard";
 import { SanctionLetter } from "./SanctionLetter";
 import { AnalyticsDashboard } from "./AnalyticsDashboard";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Send, ArrowLeft, MessageCircle } from "lucide-react";
+import { TRANSLATIONS } from "@/lib/translations";
+import { formatIndianCurrency, detectLanguage, formatEMI } from "@/lib/languageUtils";
+import { toast } from "sonner";
 
 const AGENT_PIPELINE = [
   "Master Agent",
@@ -27,10 +31,13 @@ interface ChatInterfaceProps {
 }
 
 export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
-  const [messages, setMessages] = useState<Message[]>([
+  const [language, setLanguage] = useState<"en" | "hi">(
+    () => (localStorage.getItem("loanease_language") as "en" | "hi") || "en"
+  );
+  const [messages, setMessages] = useState<Message[]>(() => [
     {
       id: 1,
-      text: "Hello. I am your Personal Loan Assistant. I will help you identify the most suitable loan offer and guide you through the journey.\n\nPlease share your full name as per your PAN card.",
+      text: TRANSLATIONS.opening[(localStorage.getItem("loanease_language") as "en" | "hi") || "en"],
       isBot: true,
     },
   ]);
@@ -46,11 +53,25 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     pan: "",
     creditScore: 0,
     selectedLoan: { amount: 0, interest: 0, tenure: 0, emi: 0 },
+    assessmentId: "",
+    sessionId: "",
+    riskScore: 0,
+    riskTier: "",
   });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationStep = useRef(0);
   const activeAgentIndex = AGENT_PIPELINE.indexOf(activeAgent);
+
+  const handleLanguageChange = (lang: "en" | "hi") => {
+    setLanguage(lang);
+    localStorage.setItem("loanease_language", lang);
+    const message =
+      lang === "en"
+        ? TRANSLATIONS.language_switched_en
+        : TRANSLATIONS.language_switched_hi;
+    toast.success(message);
+  };
 
   const activateAgent = (agentName: string, note: string) => {
     setActiveAgent(agentName);
@@ -72,10 +93,102 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     scrollToBottom();
   }, [messages, showCreditScore, showLoanOffers, showSanction, showAnalytics]);
 
+  // Detect language from user input
+  useEffect(() => {
+    const detectAndSwitch = async () => {
+      if (input.length > 5) {
+        const result = await detectLanguage(input);
+        if (result.language !== "unknown" && result.language !== language) {
+          const msg =
+            result.language === "en"
+              ? TRANSLATIONS.language_detected_en
+              : TRANSLATIONS.language_detected_hi;
+          toast.info(msg);
+        }
+      }
+    };
+    detectAndSwitch();
+  }, [input, language]);
+
+  const callUnderwritingAPI = async (userData: {
+    gender: string;
+    married: string;
+    dependents: string;
+    education: string;
+    self_employed: string;
+    applicant_income: number;
+    coapplicant_income: number;
+    loan_amount: number;
+    loan_amount_term: number;
+    credit_history: number;
+    property_area: string;
+  }) => {
+    try {
+      const response = await fetch("http://localhost:8000/assess", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(userData),
+      });
+
+      if (!response.ok) throw new Error("Assessment failed");
+      const data = await response.json();
+
+      setUserData((prev) => ({
+        ...prev,
+        assessmentId: data.application_id,
+        riskScore: data.risk_score,
+        riskTier: data.risk_tier,
+        creditScore: data.risk_score,
+      }));
+
+      return data;
+    } catch (error) {
+      console.error("Underwriting error:", error);
+      toast.error("Failed to assess application");
+      return null;
+    }
+  };
+
+  const callNegotiationAPI = async (
+    riskScore: number,
+    riskTier: string,
+    loanAmount: number,
+    tenureMonths: number
+  ) => {
+    try {
+      const response = await fetch("http://localhost:8001/negotiate/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          applicant_name: userData.name,
+          risk_score: riskScore,
+          risk_tier: riskTier,
+          loan_amount: loanAmount,
+          tenure_months: tenureMonths,
+          top_positive_factor: "good credit history",
+        }),
+      });
+
+      if (!response.ok) throw new Error("Negotiation start failed");
+      const data = await response.json();
+
+      setUserData((prev) => ({
+        ...prev,
+        sessionId: data.session_id,
+      }));
+
+      return data;
+    } catch (error) {
+      console.error("Negotiation error:", error);
+      toast.error("Failed to start negotiation");
+      return null;
+    }
+  };
+
   const simulateBotResponse = (userMessage: string) => {
     setIsTyping(true);
 
-    setTimeout(() => {
+    setTimeout(async () => {
       setIsTyping(false);
       let botResponse = "";
 
@@ -83,49 +196,67 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         case 0:
           setUserData((prev) => ({ ...prev, name: userMessage }));
           activateAgent("KYC Verification Agent", "Validating identity inputs and verification details.");
-          botResponse = `Thank you, ${userMessage}.\n\nFor KYC verification, please enter your PAN number.`;
+          botResponse = `${TRANSLATIONS.kyc_intro[language]}`;
           conversationStep.current = 1;
           break;
+
         case 1:
           setUserData((prev) => ({ ...prev, pan: userMessage.toUpperCase() }));
           activateAgent("Credit Underwriting Agent", "Evaluating eligibility based on credit and risk profile.");
-          botResponse = "Your details are captured. I will now verify your profile and fetch your credit score.\n\nPlease wait while we process the bureau check.";
+          botResponse = TRANSLATIONS.kyc_processing[language];
           conversationStep.current = 2;
 
-          setTimeout(() => {
-            const creditScore = Math.floor(Math.random() * (850 - 680) + 680);
-            setUserData((prev) => ({ ...prev, creditScore }));
-            setShowCreditScore(true);
+          setTimeout(async () => {
+            // Call actual underwriting API
+            const assessmentResult = await callUnderwritingAPI({
+              gender: "Male",
+              married: "Yes",
+              dependents: "1",
+              education: "Graduate",
+              self_employed: "No",
+              applicant_income: 5000,
+              coapplicant_income: 1500,
+              loan_amount: 150,
+              loan_amount_term: 360,
+              credit_history: 1,
+              property_area: "Urban",
+            });
 
-            setTimeout(() => {
-              if (creditScore >= 700) {
-                setActiveAgent("Loan Recommendation Engine");
-                setMessages((prev) => [
-                  ...prev,
-                  {
-                    id: prev.length + 1,
-                    text: "Loan Recommendation Engine activated.\nBuilding personalized loan options.\n\nBased on your credit profile, you are eligible for the following offers:",
-                    isBot: true,
-                  },
-                ]);
-                setShowLoanOffers(true);
-                conversationStep.current = 3;
-              } else {
-                setMessages((prev) => [
-                  ...prev,
-                  {
-                    id: prev.length + 1,
-                    text: "Your current credit score does not meet our minimum eligibility criteria (700+). We recommend improving your score and reapplying after some time.\n\nWould you like improvement tips?",
-                    isBot: true,
-                  },
-                ]);
-              }
-            }, 1500);
+            if (assessmentResult) {
+              setShowCreditScore(true);
+
+              setTimeout(() => {
+                if (assessmentResult.risk_score >= 75) {
+                  setActiveAgent("Loan Recommendation Engine");
+                  setMessages((prev) => [
+                    ...prev,
+                    {
+                      id: prev.length + 1,
+                      text: `Loan Recommendation Engine activated.\n${TRANSLATIONS.approved[language]}\n\nBased on your credit profile, you are eligible for the following offers:`,
+                      isBot: true,
+                    },
+                  ]);
+                  setShowLoanOffers(true);
+                  conversationStep.current = 3;
+                } else {
+                  setMessages((prev) => [
+                    ...prev,
+                    {
+                      id: prev.length + 1,
+                      text: TRANSLATIONS.rejected[language],
+                      isBot: true,
+                    },
+                  ]);
+                }
+              }, 1500);
+            }
           }, 2000);
           break;
+
         case 3:
-          botResponse = "I see you're interested! Feel free to adjust the sliders to customize your loan terms. Once you're satisfied, click 'Select This Plan' to proceed.";
+          botResponse = "Feel free to adjust the sliders to customize your loan terms. Once satisfied, click 'Select This Plan' to proceed.";
           break;
+
         default:
           botResponse = "Thank you for your message. Is there anything else I can help you with?";
       }
@@ -151,10 +282,10 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     simulateBotResponse(userMessage);
   };
 
-  const handleLoanSelect = (interest: number, tenure: number, amount: number) => {
+  const handleLoanSelect = async (interest: number, tenure: number, amount: number) => {
     const emi = Math.round(
       (amount * (interest / 1200) * Math.pow(1 + interest / 1200, tenure)) /
-      (Math.pow(1 + interest / 1200, tenure) - 1)
+        (Math.pow(1 + interest / 1200, tenure) - 1)
     );
 
     setUserData((prev) => ({
@@ -164,39 +295,70 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
     setShowLoanOffers(false);
 
+    const selectionMessage =
+      language === "en"
+        ? `You selected: ${formatIndianCurrency(amount)} at ${interest}% for ${tenure} months.\n\n${TRANSLATIONS.emi[language]}: ${formatIndianCurrency(emi)}/month`
+        : `आपने चुना: ${formatIndianCurrency(amount)} ${interest}% पर ${tenure} महीनों के लिए।\n\n${TRANSLATIONS.emi[language]}: ${formatIndianCurrency(emi)}/month`;
+
     setMessages((prev) => [
       ...prev,
       {
         id: prev.length + 1,
-        text: `You selected: ₹${amount.toLocaleString('en-IN')} at ${interest}% for ${tenure} months.\n\nEMI: ₹${emi.toLocaleString('en-IN')}/month`,
+        text: selectionMessage,
         isBot: false,
       },
     ]);
 
     setIsTyping(true);
-    setTimeout(() => {
+    setTimeout(async () => {
       setIsTyping(false);
       setActiveAgent("Dynamic Negotiation Agent");
       setMessages((prev) => [
         ...prev,
         {
           id: prev.length + 1,
-          text: "Dynamic Negotiation Agent activated.\nApplying negotiation policy and offer optimization.\n\nYour application is being processed.\n\nKYC Verified\nCredit Check Passed\nIncome Assessment Complete\nRisk Analysis Completed\n\nYour loan has been approved.",
+          text: "Dynamic Negotiation Agent activated.\nApplying negotiation policy and offer optimization.\n\nYour application is being processed.",
           isBot: true,
         },
       ]);
 
-      setTimeout(() => {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: prev.length + 1,
-            text: "Sanction details are being securely recorded with tamper-proof hash verification.",
-            isBot: true,
-          },
-        ]);
-        setShowSanction(true);
-      }, 1000);
+      // Call negotiation API
+      const negotiationResult = await callNegotiationAPI(
+        userData.riskScore,
+        userData.riskTier,
+        amount,
+        tenure
+      );
+
+      if (negotiationResult) {
+        setTimeout(() => {
+          const approvalMsg =
+            language === "en"
+              ? TRANSLATIONS.approved[language]
+              : TRANSLATIONS.approved[language];
+
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: prev.length + 1,
+              text: `KYC Verified\nCredit Check Passed\nIncome Assessment Complete\nRisk Analysis Completed\n\n${approvalMsg}`,
+              isBot: true,
+            },
+          ]);
+
+          setTimeout(() => {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: prev.length + 1,
+                text: "Sanction details are being securely recorded with tamper-proof hash verification.",
+                isBot: true,
+              },
+            ]);
+            setShowSanction(true);
+          }, 1000);
+        }, 1000);
+      }
     }, 2500);
   };
 
@@ -217,7 +379,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
               <p className="text-xs text-accent">Online • {activeAgent}</p>
             </div>
           </div>
-          <div className="w-10" />
+          <LanguageSwitcher currentLanguage={language} onLanguageChange={handleLanguageChange} />
         </div>
         <div className="px-4 pb-3">
           <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
