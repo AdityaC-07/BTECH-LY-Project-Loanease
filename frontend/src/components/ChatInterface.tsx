@@ -7,7 +7,7 @@ import { CreditScoreCard } from "./CreditScoreCard";
 import { SanctionLetter } from "./SanctionLetter";
 import { AnalyticsDashboard } from "./AnalyticsDashboard";
 import { LanguageSwitcher } from "./LanguageSwitcher";
-import { Send, ArrowLeft, MessageCircle } from "lucide-react";
+import { Send, ArrowLeft, MessageCircle, Upload, CheckCircle2, FileText, Pencil } from "lucide-react";
 import { TRANSLATIONS } from "@/lib/translations";
 import { formatIndianCurrency, detectLanguage, formatEMI } from "@/lib/languageUtils";
 import { toast } from "sonner";
@@ -30,6 +30,24 @@ interface ChatInterfaceProps {
   onClose: () => void;
 }
 
+interface PanKycFields {
+  pan_number?: string;
+  name?: string;
+  fathers_name?: string;
+  date_of_birth?: string;
+  age?: number;
+  age_eligible?: boolean;
+}
+
+interface AadhaarKycFields {
+  aadhaar_last4?: string;
+  name?: string;
+  date_of_birth?: string;
+  age?: number;
+  gender?: string;
+  age_eligible?: boolean;
+}
+
 export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [language, setLanguage] = useState<"en" | "hi">(
     () => (localStorage.getItem("loanease_language") as "en" | "hi") || "en"
@@ -50,6 +68,19 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [activeAgent, setActiveAgent] = useState("Master Agent");
   const [showCreditScoreCard, setShowCreditScoreCard] = useState(false);
   const [creditScoreData, setCreditScoreData] = useState<any>(null);
+  const [showPanUploadCard, setShowPanUploadCard] = useState(false);
+  const [showAadhaarUploadCard, setShowAadhaarUploadCard] = useState(false);
+  const [isKycProcessing, setIsKycProcessing] = useState(false);
+  const [kycProcessingText, setKycProcessingText] = useState("");
+  const [kycProgress, setKycProgress] = useState(0);
+  const [showPanConfirmCard, setShowPanConfirmCard] = useState(false);
+  const [showKycVerifiedCard, setShowKycVerifiedCard] = useState(false);
+  const [panKycData, setPanKycData] = useState<PanKycFields | null>(null);
+  const [aadhaarKycData, setAadhaarKycData] = useState<AadhaarKycFields | null>(null);
+  const [kycMatchScore, setKycMatchScore] = useState<number | null>(null);
+  const [kycReferenceId, setKycReferenceId] = useState<string>("");
+  const [panFile, setPanFile] = useState<File | null>(null);
+  const [aadhaarFile, setAadhaarFile] = useState<File | null>(null);
   const [userData, setUserData] = useState({
     name: "",
     pan: "",
@@ -65,6 +96,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationStep = useRef(0);
   const activeAgentIndex = AGENT_PIPELINE.indexOf(activeAgent);
+  const panInputRef = useRef<HTMLInputElement>(null);
+  const aadhaarInputRef = useRef<HTMLInputElement>(null);
 
   const handleLanguageChange = (lang: "en" | "hi") => {
     setLanguage(lang);
@@ -114,6 +147,19 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
   const isValidPan = (value: string) => /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(value);
 
+  const kycText = (en: string, hi: string) => (language === "hi" ? hi : en);
+
+  const addBotMessage = (text: string) => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: prev.length + 1,
+        text,
+        isBot: true,
+      },
+    ]);
+  };
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -138,6 +184,209 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     };
     detectAndSwitch();
   }, [input, language]);
+
+  const startKycProgress = (label: string) => {
+    setIsKycProcessing(true);
+    setKycProcessingText(label);
+    setKycProgress(5);
+    let value = 5;
+    const timer = setInterval(() => {
+      value = Math.min(95, value + 5);
+      setKycProgress(value);
+    }, 150);
+    return timer;
+  };
+
+  const stopKycProgress = (timer: ReturnType<typeof setInterval>) => {
+    clearInterval(timer);
+    setKycProgress(100);
+    setTimeout(() => {
+      setIsKycProcessing(false);
+      setKycProcessingText("");
+      setKycProgress(0);
+    }, 300);
+  };
+
+  const callKycPanExtractAPI = async (file: File) => {
+    const form = new FormData();
+    form.append("document", file);
+    form.append("language", language);
+
+    const response = await fetch("http://localhost:8003/kyc/extract/pan", {
+      method: "POST",
+      body: form,
+    });
+
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => null);
+      throw new Error(errBody?.detail || "PAN extraction failed");
+    }
+
+    return response.json();
+  };
+
+  const callKycAadhaarExtractAPI = async (file: File) => {
+    const form = new FormData();
+    form.append("document", file);
+
+    const response = await fetch("http://localhost:8003/kyc/extract/aadhaar", {
+      method: "POST",
+      body: form,
+    });
+
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => null);
+      throw new Error(errBody?.detail || "Aadhaar extraction failed");
+    }
+
+    return response.json();
+  };
+
+  const callKycVerifyAPI = async (panDoc: File, aadhaarDoc: File) => {
+    const form = new FormData();
+    form.append("pan", panDoc);
+    form.append("aadhaar", aadhaarDoc);
+
+    const response = await fetch("http://localhost:8003/kyc/verify", {
+      method: "POST",
+      body: form,
+    });
+
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => null);
+      throw new Error(errBody?.detail || "KYC verification failed");
+    }
+
+    return response.json();
+  };
+
+  const proceedToCreditFlow = async (panNumber: string) => {
+    const normalizedPan = normalizePan(panNumber);
+    if (!isValidPan(normalizedPan)) {
+      toast.error(kycText("Invalid PAN from KYC extraction", "KYC extraction से PAN invalid मिला"));
+      return;
+    }
+
+    setUserData((prev) => ({ ...prev, pan: normalizedPan }));
+    activateAgent("Credit Underwriting Agent", "Evaluating eligibility based on credit and risk profile.");
+    addBotMessage(TRANSLATIONS.kyc_processing[language]);
+
+    const creditScoreResult = await callCreditScoreAPI(normalizedPan);
+    if (!creditScoreResult) return;
+
+    setShowCreditScoreCard(true);
+    setTimeout(() => {
+      if (creditScoreResult.eligible_for_loan) {
+        addBotMessage(
+          language === "en"
+            ? "Great! Your credit profile qualifies. Now let me analyze your complete financial profile..."
+            : "बहुत बढ़िया! आपकी credit profile योग्य है। अब मैं आपकी complete financial profile का विश्लेषण करूंगा..."
+        );
+        activateAgent("Loan Recommendation Engine", "Generating personalized loan options based on risk profile.");
+        setShowLoanOffers(true);
+        conversationStep.current = 2;
+      } else {
+        addBotMessage(
+          language === "hi"
+            ? (creditScoreResult.message_hi ||
+                "दुर्भाग्यवश, आपका credit score हमारी न्यूनतम आवश्यकता को पूरा नहीं करता है।")
+            : (creditScoreResult.message_en ||
+                "Unfortunately, your credit score does not meet our minimum requirement.")
+        );
+        conversationStep.current = -1;
+      }
+    }, 1500);
+  };
+
+  const handlePanFileSelected = async (file?: File) => {
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error(kycText("File exceeds 5MB limit", "फ़ाइल 5MB सीमा से बड़ी है"));
+      return;
+    }
+
+    setPanFile(file);
+    setShowPanUploadCard(false);
+    setMessages((prev) => [...prev, { id: prev.length + 1, text: file.name, isBot: false }]);
+
+    const timer = startKycProgress(kycText("Scanning your PAN card...", "आपके PAN कार्ड को स्कैन किया जा रहा है..."));
+    try {
+      const result = await callKycPanExtractAPI(file);
+      stopKycProgress(timer);
+
+      setPanKycData(result.extracted_fields);
+      const valid = result.validation?.overall_valid && result.confidence_score >= 0.7;
+      if (!valid) {
+        addBotMessage(
+          kycText(
+            "The document image is unclear. Please upload a better quality photo in good lighting.",
+            "दस्तावेज़ स्पष्ट नहीं है। कृपया अच्छी रोशनी में स्पष्ट फोटो अपलोड करें।"
+          )
+        );
+        setShowPanUploadCard(true);
+        return;
+      }
+
+      setShowPanConfirmCard(true);
+    } catch (error) {
+      stopKycProgress(timer);
+      toast.error(error instanceof Error ? error.message : "PAN OCR failed");
+      setShowPanUploadCard(true);
+    }
+  };
+
+  const handleAadhaarFileSelected = async (file?: File) => {
+    if (!file || !panFile) return;
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error(kycText("File exceeds 5MB limit", "फ़ाइल 5MB सीमा से बड़ी है"));
+      return;
+    }
+
+    setAadhaarFile(file);
+    setShowAadhaarUploadCard(false);
+    setMessages((prev) => [...prev, { id: prev.length + 1, text: file.name, isBot: false }]);
+
+    const timer = startKycProgress(kycText("Scanning your Aadhaar card...", "आपके Aadhaar कार्ड को स्कैन किया जा रहा है..."));
+    try {
+      const aadhaarResult = await callKycAadhaarExtractAPI(file);
+      setAadhaarKycData(aadhaarResult.extracted_fields);
+
+      const verifyResult = await callKycVerifyAPI(panFile, file);
+      stopKycProgress(timer);
+
+      if (!verifyResult.overall_kyc_passed) {
+        addBotMessage(
+          verifyResult.cross_validation?.name_match_score < 70
+            ? kycText(
+                "The names on your PAN and Aadhaar don't match closely enough. Please check your documents.",
+                "PAN और Aadhaar पर नाम पर्याप्त रूप से मेल नहीं खा रहे हैं। कृपया दस्तावेज़ जांचें।"
+              )
+            : kycText(
+                "Applicants must be between 21 and 65 years old to apply.",
+                "आवेदन करने के लिए आयु 21 से 65 वर्ष के बीच होनी चाहिए।"
+              )
+        );
+        setShowAadhaarUploadCard(true);
+        return;
+      }
+
+      setKycMatchScore(verifyResult.cross_validation?.name_match_score ?? null);
+      setKycReferenceId(verifyResult.kyc_reference_id ?? "");
+      setShowKycVerifiedCard(true);
+
+      setTimeout(async () => {
+        setShowKycVerifiedCard(false);
+        const extractedPan = verifyResult.pan_data?.pan_number || panKycData?.pan_number;
+        if (extractedPan) {
+          await proceedToCreditFlow(extractedPan);
+        }
+      }, 1300);
+    } catch (error) {
+      stopKycProgress(timer);
+      toast.error(error instanceof Error ? error.message : "Aadhaar OCR failed");
+      setShowAadhaarUploadCard(true);
+    }
+  };
 
   const callUnderwritingAPI = async (userData: {
     pan_number: string;
@@ -255,68 +504,16 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         case 0:
           setUserData((prev) => ({ ...prev, name: userMessage }));
           activateAgent("KYC Verification Agent", "Validating identity inputs and verification details.");
-          botResponse = `${TRANSLATIONS.kyc_intro[language]}`;
+          botResponse = kycText("Please upload your PAN card first.", "कृपया पहले अपना PAN कार्ड अपलोड करें।");
+          setShowPanUploadCard(true);
           conversationStep.current = 1;
           break;
 
         case 1: {
-          const panNumber = extractPan(userMessage) || normalizePan(userMessage);
-
-          if (!isValidPan(panNumber)) {
-            botResponse =
-              language === "en"
-                ? "Please enter a valid PAN in this format: ABCDE1234F. You can also type it in a sentence, like: My PAN is ABCDE1234F."
-                : "कृपया सही PAN इस format में दर्ज करें: ABCDE1234F। आप sentence में भी भेज सकते हैं, जैसे: मेरा PAN ABCDE1234F है।";
-            conversationStep.current = 1;
-            break;
-          }
-
-          setUserData((prev) => ({ ...prev, pan: panNumber }));
-          activateAgent("Credit Underwriting Agent", "Evaluating eligibility based on credit and risk profile.");
-          botResponse = TRANSLATIONS.kyc_processing[language];
-          conversationStep.current = 2;
-
-          setTimeout(async () => {
-            const creditScoreResult = await callCreditScoreAPI(panNumber);
-
-            if (creditScoreResult) {
-              setShowCreditScoreCard(true);
-
-              setTimeout(() => {
-                if (creditScoreResult.eligible_for_loan) {
-                  setMessages((prev) => [
-                    ...prev,
-                    {
-                      id: prev.length + 1,
-                      text:
-                        language === "en"
-                          ? "Great! Your credit profile qualifies. Now let me analyze your complete financial profile..."
-                          : "बहुत बढ़िया! आपकी credit profile योग्य है। अब मैं आपकी complete financial profile का विश्लेषण करूंगा...",
-                      isBot: true,
-                    },
-                  ]);
-                  activateAgent("Loan Recommendation Engine", "Generating personalized loan options based on risk profile.");
-                  setShowLoanOffers(true);
-                  conversationStep.current = 2;
-                } else {
-                  setMessages((prev) => [
-                    ...prev,
-                    {
-                      id: prev.length + 1,
-                      text:
-                        language === "hi"
-                          ? (creditScoreResult.message_hi ||
-                              "दुर्भाग्यवश, आपका credit score हमारी न्यूनतम आवश्यकता को पूरा नहीं करता है।")
-                          : (creditScoreResult.message_en ||
-                              "Unfortunately, your credit score does not meet our minimum requirement."),
-                      isBot: true,
-                    },
-                  ]);
-                  conversationStep.current = -1;
-                }
-              }, 1500);
-            }
-          }, 2000);
+          botResponse = kycText(
+            "Please use the upload card below to upload your PAN document.",
+            "कृपया PAN दस्तावेज़ अपलोड करने के लिए नीचे दिए गए upload card का उपयोग करें।"
+          );
           break;
         }
 
@@ -553,6 +750,117 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
         {isTyping && <ChatMessage message="" isBot isTyping />}
 
+        {isKycProcessing && (
+          <div className="max-w-md rounded-xl border border-yellow-500/40 bg-gradient-to-br from-card to-card/80 p-4 shadow-lg shadow-yellow-500/10">
+            <div className="mb-2 text-sm font-medium text-foreground">{kycProcessingText}</div>
+            <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted/70">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-yellow-400 to-yellow-500 transition-all duration-200"
+                style={{ width: `${kycProgress}%` }}
+              />
+            </div>
+            <div className="mt-2 text-[11px] text-muted-foreground">{kycProgress}%</div>
+          </div>
+        )}
+
+        {showPanUploadCard && (
+          <div className="max-w-md rounded-xl border-2 border-dashed border-yellow-500/70 bg-gradient-to-br from-card to-card/85 p-5 shadow-lg shadow-yellow-500/10">
+            <div className="mb-1 flex items-center gap-2 text-base font-semibold text-foreground">
+              <FileText className="h-4 w-4 text-yellow-400" />
+              {kycText("Upload PAN Card", "PAN कार्ड अपलोड करें")}
+            </div>
+            <div className="mb-3 text-xs text-muted-foreground">JPG, PNG or PDF • Max 5MB</div>
+            <input
+              ref={panInputRef}
+              type="file"
+              accept=".jpg,.jpeg,.png,.pdf"
+              className="hidden"
+              onChange={(e) => handlePanFileSelected(e.target.files?.[0])}
+            />
+            <Button variant="outline" className="w-full border-yellow-500/50 bg-background/60 hover:bg-yellow-500/10" onClick={() => panInputRef.current?.click()}>
+              <Upload className="mr-2 h-4 w-4" />
+              {kycText("Choose File", "फ़ाइल चुनें")}
+            </Button>
+            <div className="mt-2 text-[11px] text-muted-foreground">
+              {kycText("or drag file here", "या फ़ाइल यहां drag करें")}
+            </div>
+          </div>
+        )}
+
+        {showPanConfirmCard && panKycData && (
+          <div className="max-w-md rounded-xl border border-green-500/50 bg-gradient-to-br from-card to-card/85 p-4 shadow-lg shadow-green-500/10">
+            <div className="mb-2 flex items-center gap-2 text-base font-semibold text-green-400">
+              <CheckCircle2 className="h-4 w-4" />
+              {kycText("PAN Card Verified", "PAN कार्ड सत्यापित")}
+            </div>
+            <div className="space-y-1.5 text-sm text-foreground">
+              <div className="font-medium">{panKycData.name}</div>
+              <div>{panKycData.pan_number}</div>
+              <div>{panKycData.date_of_birth} {panKycData.age ? `(Age: ${panKycData.age})` : ""}</div>
+              <div>{kycText("Father", "पिता")}: {panKycData.fathers_name}</div>
+            </div>
+            <div className="mt-3 flex gap-2">
+              <Button
+                variant="accent"
+                className="flex-1"
+                onClick={() => {
+                  setShowPanConfirmCard(false);
+                  setShowAadhaarUploadCard(true);
+                  addBotMessage(kycText("Great! Now upload your Aadhaar card.", "बहुत बढ़िया! अब अपना Aadhaar कार्ड अपलोड करें।"));
+                }}
+              >
+                {kycText("Confirm", "पुष्टि करें")}
+              </Button>
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => {
+                  setShowPanConfirmCard(false);
+                  setShowPanUploadCard(true);
+                }}
+              >
+                <Pencil className="mr-1 h-4 w-4" />
+                {kycText("Edit", "संपादित करें")}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {showAadhaarUploadCard && (
+          <div className="max-w-md rounded-xl border-2 border-dashed border-yellow-500/70 bg-gradient-to-br from-card to-card/85 p-5 shadow-lg shadow-yellow-500/10">
+            <div className="mb-1 flex items-center gap-2 text-base font-semibold text-foreground">
+              <FileText className="h-4 w-4 text-yellow-400" />
+              {kycText("Upload Aadhaar Card", "Aadhaar कार्ड अपलोड करें")}
+            </div>
+            <div className="mb-3 text-xs text-muted-foreground">JPG, PNG or PDF • Max 5MB</div>
+            <input
+              ref={aadhaarInputRef}
+              type="file"
+              accept=".jpg,.jpeg,.png,.pdf"
+              className="hidden"
+              onChange={(e) => handleAadhaarFileSelected(e.target.files?.[0])}
+            />
+            <Button variant="outline" className="w-full border-yellow-500/50 bg-background/60 hover:bg-yellow-500/10" onClick={() => aadhaarInputRef.current?.click()}>
+              <Upload className="mr-2 h-4 w-4" />
+              {kycText("Choose File", "फ़ाइल चुनें")}
+            </Button>
+            <div className="mt-2 text-[11px] text-muted-foreground">
+              {kycText("or drag file here", "या फ़ाइल यहां drag करें")}
+            </div>
+          </div>
+        )}
+
+        {showKycVerifiedCard && (
+          <div className="max-w-md rounded-xl border border-green-500/50 bg-gradient-to-br from-card to-card/85 p-4 shadow-lg shadow-green-500/10">
+            <div className="mb-1 flex items-center gap-2 text-base font-semibold text-green-400">
+              <CheckCircle2 className="h-4 w-4" />
+              {kycText("KYC Verified", "KYC सत्यापित")}
+            </div>
+            <div className="text-sm text-foreground">{kycText("Documents match", "दस्तावेज़ मेल")} : {kycMatchScore ?? "-"}%</div>
+            <div className="text-sm text-muted-foreground">KYC Ref: {kycReferenceId}</div>
+          </div>
+        )}
+
         {showCreditScoreCard && creditScoreData && (
           <div className="py-4">
             <CreditScoreCard score={creditScoreData.credit_score} maxScore={900} />
@@ -628,13 +936,28 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
             placeholder="Type your message..."
             onKeyPress={(e) => e.key === "Enter" && handleSend()}
             className="flex-1"
-            disabled={showLoanOffers || showSanction}
+            disabled={
+              showLoanOffers ||
+              showSanction ||
+              isKycProcessing ||
+              showPanUploadCard ||
+              showAadhaarUploadCard ||
+              showPanConfirmCard
+            }
           />
           <Button
             variant="chat"
             size="icon"
             onClick={handleSend}
-            disabled={!input.trim() || showLoanOffers || showSanction}
+            disabled={
+              !input.trim() ||
+              showLoanOffers ||
+              showSanction ||
+              isKycProcessing ||
+              showPanUploadCard ||
+              showAadhaarUploadCard ||
+              showPanConfirmCard
+            }
           >
             <Send className="w-4 h-4" />
           </Button>
