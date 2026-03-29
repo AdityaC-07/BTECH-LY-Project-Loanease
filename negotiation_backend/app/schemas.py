@@ -12,6 +12,7 @@ class StartNegotiationRequest(BaseModel):
     loan_amount: int = Field(..., gt=0)
     tenure_months: int = Field(..., gt=0)
     top_positive_factor: str = "credit history"
+    max_negotiation_rounds: int = Field(default=3, ge=0, le=5, description="Max rounds allowed from credit band")
 
 
 class UnderwritingAssessPayload(BaseModel):

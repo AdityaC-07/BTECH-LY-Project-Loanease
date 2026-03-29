@@ -64,6 +64,10 @@ def start_session(payload: dict) -> dict:
     if tier == "High" and score < 35:
         can_negotiate = False
 
+    # Use max_negotiation_rounds from payload (comes from credit band in underwriting)
+    # Default to 3 if not provided for backward compatibility
+    max_rounds = payload.get("max_negotiation_rounds", MAX_ROUNDS)
+
     opening_offer = build_offer(
         loan_amount=payload["loan_amount"],
         tenure_months=payload["tenure_months"],
@@ -96,6 +100,7 @@ def start_session(payload: dict) -> dict:
         "rounds_completed": 0,
         "concessions_given": 0,
         "max_concessions": max_concessions,
+        "max_negotiation_rounds": max_rounds,
         "status": "active",
         "opening_offer": opening_offer,
         "history": [
@@ -147,7 +152,8 @@ def counter_session(session: dict, applicant_message: str, requested_rate: float
         }
 
     session["rounds_completed"] += 1
-    rounds_remaining = max(0, MAX_ROUNDS - session["rounds_completed"])
+    max_rounds = session.get("max_negotiation_rounds", MAX_ROUNDS)
+    rounds_remaining = max(0, max_rounds - session["rounds_completed"])
 
     no_concession = tier == "High" or session["concessions_given"] >= session["max_concessions"]
 
@@ -164,7 +170,7 @@ def counter_session(session: dict, applicant_message: str, requested_rate: float
                 "You have reached the minimum rate available for your risk tier. Further reduction is not possible within automated limits. "
                 "Would you like me to escalate this to a human loan officer for a manual review?"
             )
-        elif session["rounds_completed"] >= MAX_ROUNDS:
+        elif session["rounds_completed"] >= session.get("max_negotiation_rounds", MAX_ROUNDS):
             reasoning = (
                 f"This concludes our negotiation. Your final approved rate is {current_rate:.2f}% per annum. "
                 "This offer is valid for 48 hours. Shall I generate your sanction letter?"
@@ -218,7 +224,7 @@ def counter_session(session: dict, applicant_message: str, requested_rate: float
             "We cannot go lower than this floor rate."
         )
 
-    if session["rounds_completed"] >= MAX_ROUNDS:
+    if session["rounds_completed"] >= session.get("max_negotiation_rounds", MAX_ROUNDS):
         reasoning = (
             f"This concludes our negotiation. Your final approved rate is {proposed_rate:.2f}% per annum. "
             "This offer is valid for 48 hours. Shall I generate your sanction letter?"
