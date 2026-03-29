@@ -89,7 +89,7 @@ CREDIT_SCORE_BANDS = {
 
 def validate_pan(pan: str) -> bool:
     """Validate PAN format: 5 letters, 4 digits, 1 letter."""
-    return bool(re.match(r"[A-Z]{5}[0-9]{4}[A-Z]{1}", pan))
+    return bool(re.fullmatch(r"[A-Z]{5}[0-9]{4}[A-Z]", pan))
 
 
 def simulate_credit_score(pan: str) -> int:
@@ -130,6 +130,8 @@ def get_credit_score(pan: str) -> int:
     Returns:
         Credit score 300-900
     """
+    pan = pan.strip().upper()
+
     # Check demo PANs first for predictable demo behavior
     if pan in DEMO_PAN_SCORES:
         return DEMO_PAN_SCORES[pan]
@@ -161,6 +163,7 @@ def mask_pan(pan: str) -> str:
     Mask PAN for display: show first 5 + last 1 character.
     ABCDE1234F → ABCDE****F
     """
+    pan = pan.strip().upper()
     if len(pan) < 6:
         return pan
     return f"{pan[:5]}****{pan[-1]}"

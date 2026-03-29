@@ -70,6 +70,7 @@ def credit_score(pan_number: str) -> CreditScoreResponse:
     Returns simulated CIBIL credit score and eligibility details.
     """
     try:
+        pan_number = pan_number.strip().upper()
         credit_score_val = get_credit_score(pan_number)
         credit_band = get_credit_band(credit_score_val)
 

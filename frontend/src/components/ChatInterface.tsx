@@ -88,6 +88,32 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     ]);
   };
 
+  const DEVANAGARI_DIGIT_MAP: Record<string, string> = {
+    "०": "0",
+    "१": "1",
+    "२": "2",
+    "३": "3",
+    "४": "4",
+    "५": "5",
+    "६": "6",
+    "७": "7",
+    "८": "8",
+    "९": "9",
+  };
+
+  const toAsciiDigits = (value: string) =>
+    value.replace(/[०-९]/g, (digit) => DEVANAGARI_DIGIT_MAP[digit] ?? digit);
+
+  const normalizePan = (value: string) => toAsciiDigits(value).replace(/\s+/g, "").toUpperCase();
+
+  const extractPan = (value: string) => {
+    const normalized = toAsciiDigits(value).toUpperCase();
+    const match = normalized.match(/[A-Z]{5}[0-9]{4}[A-Z]/);
+    return match ? match[0] : "";
+  };
+
+  const isValidPan = (value: string) => /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(value);
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -159,7 +185,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     riskScore: number,
     riskTier: string,
     loanAmount: number,
-    tenureMonths: number
+    tenureMonths: number,
+    maxNegotiationRounds: number
   ) => {
     try {
       const response = await fetch("http://localhost:8001/negotiate/start", {
@@ -171,6 +198,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           risk_tier: riskTier,
           loan_amount: loanAmount,
           tenure_months: tenureMonths,
+          max_negotiation_rounds: maxNegotiationRounds,
           top_positive_factor: "good credit history",
         }),
       });
@@ -193,12 +221,15 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
   const callCreditScoreAPI = async (pan: string) => {
     try {
-      const response = await fetch(`http://localhost:8000/credit-score/${pan}`, {
+      const response = await fetch(`http://localhost:8000/credit-score/${encodeURIComponent(pan)}`, {
         method: "GET",
         headers: { "Content-Type": "application/json" },
       });
 
-      if (!response.ok) throw new Error("Credit score fetch failed");
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => null);
+        throw new Error(errBody?.detail || "Credit score fetch failed");
+      }
       const data = await response.json();
 
       setCreditScoreData(data);
@@ -207,7 +238,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       return data;
     } catch (error) {
       console.error("Credit score error:", error);
-      toast.error("Failed to fetch credit score");
+      const message = error instanceof Error ? error.message : "Failed to fetch credit score";
+      toast.error(message);
       return null;
     }
   };
@@ -227,24 +259,31 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           conversationStep.current = 1;
           break;
 
-        case 1:
-          const panNumber = userMessage.toUpperCase();
+        case 1: {
+          const panNumber = extractPan(userMessage) || normalizePan(userMessage);
+
+          if (!isValidPan(panNumber)) {
+            botResponse =
+              language === "en"
+                ? "Please enter a valid PAN in this format: ABCDE1234F. You can also type it in a sentence, like: My PAN is ABCDE1234F."
+                : "कृपया सही PAN इस format में दर्ज करें: ABCDE1234F। आप sentence में भी भेज सकते हैं, जैसे: मेरा PAN ABCDE1234F है।";
+            conversationStep.current = 1;
+            break;
+          }
+
           setUserData((prev) => ({ ...prev, pan: panNumber }));
           activateAgent("Credit Underwriting Agent", "Evaluating eligibility based on credit and risk profile.");
           botResponse = TRANSLATIONS.kyc_processing[language];
           conversationStep.current = 2;
 
           setTimeout(async () => {
-            // Call credit score API after KYC
             const creditScoreResult = await callCreditScoreAPI(panNumber);
 
             if (creditScoreResult) {
-              // Show credit score card
               setShowCreditScoreCard(true);
 
               setTimeout(() => {
                 if (creditScoreResult.eligible_for_loan) {
-                  // Eligible: proceed to /assess
                   setMessages((prev) => [
                     ...prev,
                     {
@@ -256,36 +295,32 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
                       isBot: true,
                     },
                   ]);
-
-                  // Proceed to /assess with pan_number
+                  activateAgent("Loan Recommendation Engine", "Generating personalized loan options based on risk profile.");
+                  setShowLoanOffers(true);
                   conversationStep.current = 2;
-                  // Continue flow will call /assess in the next simulateBotResponse
                 } else {
-                  // Not eligible: show rejection message
                   setMessages((prev) => [
                     ...prev,
                     {
                       id: prev.length + 1,
-                      text: creditScoreResult.message_en
-                        ? creditScoreResult.message_en
-                        : language === "en"
-                          ? "Unfortunately, your credit score does not meet our minimum requirement."
-                          : "दुर्भाग्यवश, आपका credit score हमारी न्यूनतम आवश्यकता को पूरा नहीं करता है।",
+                      text:
+                        language === "hi"
+                          ? (creditScoreResult.message_hi ||
+                              "दुर्भाग्यवश, आपका credit score हमारी न्यूनतम आवश्यकता को पूरा नहीं करता है।")
+                          : (creditScoreResult.message_en ||
+                              "Unfortunately, your credit score does not meet our minimum requirement."),
                       isBot: true,
                     },
                   ]);
-
-                  // End conversation
                   conversationStep.current = -1;
                 }
               }, 1500);
             }
           }, 2000);
           break;
+        }
 
         case 2:
-          // This case is for /assess call after credit score is approved
-          // For now, keep the flow as is - the user will proceed through handleLoanSelect
           botResponse = "";
           break;
 
@@ -375,13 +410,14 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         preferred_language: language,
       });
 
-      if (assessmentResult && assessmentResult.decision === "APPROVED") {
+      if (assessmentResult && (assessmentResult.decision === "APPROVED" || assessmentResult.decision === "APPROVED_WITH_CONDITIONS")) {
         // Then call negotiation API with max_negotiation_rounds from assessment
         const negotiationResult = await callNegotiationAPI(
           assessmentResult.risk_score,
           assessmentResult.risk_tier,
           amount,
-          tenure
+            tenure,
+            assessmentResult.max_negotiation_rounds || 0
         );
 
         // Pass max_negotiation_rounds to negotiation API
@@ -457,10 +493,10 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         </div>
         <div className="px-4 pb-3">
           <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
-            <div className="mb-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+            <div className="mb-2 text-center text-[11px] uppercase tracking-wide text-muted-foreground">
               Agent Activation Timeline
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center justify-center gap-2">
               {AGENT_PIPELINE.map((agent, index) => {
                 const isCompleted = index < activeAgentIndex;
                 const isActive = index === activeAgentIndex;
@@ -518,67 +554,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         {isTyping && <ChatMessage message="" isBot isTyping />}
 
         {showCreditScoreCard && creditScoreData && (
-          <div className="py-4 animate-slide-up">
-            <div className="bg-gradient-to-br from-yellow-500/10 to-yellow-600/10 border border-yellow-500/30 rounded-lg p-6 max-w-md">
-              <div className="text-center space-y-4">
-                <div className="text-2xl font-bold">📊 {language === "en" ? "Your Credit Score" : "आपका Credit Score"}</div>
-
-                {/* Animated score display */}
-                <div className="text-4xl font-bold text-yellow-500">
-                  {creditScoreData.credit_score} <span className="text-lg text-muted-foreground">/ 900</span>
-                </div>
-
-                {/* Score bar */}
-                <div className="w-full bg-gray-300 rounded-full h-3 overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-1500 ${
-                      creditScoreData.credit_band_color === "green"
-                        ? "bg-green-500"
-                        : creditScoreData.credit_band_color === "yellow"
-                          ? "bg-yellow-500"
-                          : creditScoreData.credit_band_color === "orange"
-                            ? "bg-orange-500"
-                            : "bg-red-500"
-                    }`}
-                    style={{
-                      width: `${(creditScoreData.credit_score / 900) * 100}%`,
-                    }}
-                  />
-                </div>
-
-                {/* Band label */}
-                <div className="text-lg font-semibold text-foreground">{creditScoreData.credit_band}</div>
-
-                {/* Message */}
-                <div className="text-sm text-muted-foreground">
-                  {creditScoreData.eligible_for_loan
-                    ? language === "en"
-                      ? "You qualify for our loan products! Proceeding with assessment..."
-                      : "आप हमारे loan products के लिए योग्य हैं! आकलन के साथ आगे बढ़ रहे हैं..."
-                    : language === "en"
-                      ? "Unfortunately, you do not meet our minimum requirement."
-                      : "दुर्भाग्यवश, आप हमारी न्यूनतम आवश्यकता को पूरा नहीं करते।"}
-                </div>
-
-                {/* Improvement tips if ineligible */}
-                {!creditScoreData.eligible_for_loan && creditScoreData.improvement_tips && (
-                  <div className="mt-4 pt-4 border-t border-yellow-500/20 text-left">
-                    <div className="text-sm font-semibold mb-2">{language === "en" ? "How to improve:" : "सुधार करने के लिए:"}</div>
-                    <ul className="text-xs space-y-1 text-muted-foreground">
-                      {creditScoreData.improvement_tips.map((tip: string, idx: number) => (
-                        <li key={idx}>• {tip}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {showCreditScore && (
           <div className="py-4">
-            <CreditScoreCard score={userData.creditScore} />
+            <CreditScoreCard score={creditScoreData.credit_score} maxScore={900} />
           </div>
         )}
 
