@@ -76,50 +76,25 @@ def credit_score(pan_number: str) -> CreditScoreResponse:
 
         # Determine which band the score falls into
         band_names = {
-            (750, 900): "excellent",
-            (700, 749): "good",
-            (550, 699): "fair",
-            (300, 549): "poor",
-            (0, 299): "ineligible",
+            (700, 900): "low_risk",
+            (301, 699): "medium_risk",
+            (0, 300): "high_risk",
         }
-        
-        applicant_band = "ineligible"
+
+        applicant_band = "medium_risk"
         for (min_score, max_score), band_label in band_names.items():
             if min_score <= credit_score_val <= max_score:
                 applicant_band = band_label
                 break
 
-        # Friendly messages
-        if credit_band["eligible"]:
-            message_en = f"Great news! Your credit score of {credit_score_val} qualifies you for our loan products. "
-            message_en += f"You fall in the {applicant_band} category."
-            message_hi = f"बहुत बढ़िया! आपका credit score {credit_score_val} है जो हमारे loan products के लिए योग्य है। "
-            message_hi += f"आप {applicant_band} category में आते हैं।"
-        else:
-            shortfall = 700 - credit_score_val
-            message_en = (
-                f"Your credit score of {credit_score_val} is below our minimum requirement of 700. "
-                f"You are short by {shortfall} points. Come back after improving your score."
-            )
-            message_hi = (
-                f"आपका credit score {credit_score_val} है जो हमारी न्यूनतम आवश्यकता 700 से कम है। "
-                f"आप {shortfall} points से कम हैं। अपना score सुधारने के बाद वापस आएं।"
-            )
-
-        improvement_tips = None
-        earliest_reapply = None
-        shortfall = None
-
-        if not credit_band["eligible"]:
-            shortfall = 700 - credit_score_val
-            improvement_tips = [
-                "Pay all existing EMIs on time",
-                "Clear any outstanding credit card dues",
-                "Avoid multiple loan applications in a short period",
-                "Maintain credit utilization below 30%",
-                "Wait 6 months before reapplying",
-            ]
-            earliest_reapply = "6 months from today"
+        message_en = (
+            f"Your credit score is {credit_score_val}. You are in the {credit_band['label']} tier. "
+            "You can continue your loan application. Interest pricing will be adjusted by risk tier."
+        )
+        message_hi = (
+            f"आपका credit score {credit_score_val} है। आप {credit_band['label']} tier में आते हैं। "
+            "आप loan application जारी रख सकते हैं। ब्याज दर risk tier के आधार पर तय होगी।"
+        )
 
         return CreditScoreResponse(
             pan_number=mask_pan(pan_number),
@@ -127,13 +102,13 @@ def credit_score(pan_number: str) -> CreditScoreResponse:
             credit_score_out_of=900,
             credit_band=credit_band["label"],
             credit_band_color=credit_band["color"],
-            eligible_for_loan=credit_band["eligible"],
+            eligible_for_loan=True,
             applicant_score_falls_in=applicant_band,
             message_en=message_en,
             message_hi=message_hi,
-            shortfall=shortfall,
-            improvement_tips=improvement_tips,
-            earliest_reapply=earliest_reapply,
+            shortfall=None,
+            improvement_tips=None,
+            earliest_reapply=None,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

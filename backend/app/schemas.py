@@ -63,17 +63,15 @@ class CreditScoreResponse(BaseModel):
     eligible_for_loan: bool
     score_breakdown: dict = Field(
         default={
-            "excellent": "750-900",
-            "good": "700-749",
-            "fair": "550-699",
-            "poor": "300-549",
-            "ineligible": "Below 700",
+            "high_risk_low_score": "0-300",
+            "medium_risk_intermediate_score": "301-699",
+            "low_risk_high_score": "700-900",
         }
     )
     applicant_score_falls_in: str
     message_en: str
     message_hi: str
-    minimum_required_score: int = 700
+    minimum_required_score: int = 0
     shortfall: int | None = None
     improvement_tips: list[str] | None = None
     earliest_reapply: str | None = None

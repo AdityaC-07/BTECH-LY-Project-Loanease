@@ -276,25 +276,14 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
     setShowCreditScoreCard(true);
     setTimeout(() => {
-      if (creditScoreResult.eligible_for_loan) {
-        addBotMessage(
-          language === "en"
-            ? "Great! Your credit profile qualifies. Now let me analyze your complete financial profile..."
-            : "बहुत बढ़िया! आपकी credit profile योग्य है। अब मैं आपकी complete financial profile का विश्लेषण करूंगा..."
-        );
-        activateAgent("Loan Recommendation Engine", "Generating personalized loan options based on risk profile.");
-        setShowLoanOffers(true);
-        conversationStep.current = 2;
-      } else {
-        addBotMessage(
-          language === "hi"
-            ? (creditScoreResult.message_hi ||
-                "दुर्भाग्यवश, आपका credit score हमारी न्यूनतम आवश्यकता को पूरा नहीं करता है।")
-            : (creditScoreResult.message_en ||
-                "Unfortunately, your credit score does not meet our minimum requirement.")
-        );
-        conversationStep.current = -1;
-      }
+      addBotMessage(
+        language === "en"
+          ? "Your credit profile has been evaluated. Continuing with personalized loan options based on your risk tier and pricing band."
+          : "आपकी credit profile का मूल्यांकन हो गया है। अब आपके risk tier और pricing band के आधार पर personalized loan options दिखाए जा रहे हैं।"
+      );
+      activateAgent("Loan Recommendation Engine", "Generating personalized loan options based on risk profile.");
+      setShowLoanOffers(true);
+      conversationStep.current = 2;
     }, 1500);
   };
 

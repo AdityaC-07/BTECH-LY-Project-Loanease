@@ -20,66 +20,40 @@ DEMO_PAN_SCORES = {
 }
 
 
-# Credit score bands: determine eligibility, rate ranges, and negotiation rounds
+# Credit score bands for pricing (all applicants remain eligible)
 CREDIT_SCORE_BANDS = {
-    "HARD_REJECT": {
+    "HIGH_RISK_LOW_SCORE": {
         "min": 0,
-        "max": 299,
-        "label": "Ineligible",
+        "max": 300,
+        "label": "High Risk (Low Score)",
         "color": "red",
-        "eligible": False,
-        "xgboost_runs": False,
-        "message_en": "Your credit score of {score} is below the minimum threshold of 300. "
-        "You are currently ineligible for a loan. "
-        "We recommend improving your credit score before reapplying.",
-        "message_hi": "आपका credit score {score} है जो न्यूनतम सीमा 300 से कम है। "
-        "आप वर्तमान में loan के लिए पात्र नहीं हैं। "
-        "हम अनुशंसा करते हैं कि पुनः आवेदन करने से पहले अपना credit score सुधारें।",
-    },
-    "HIGH_RISK": {
-        "min": 300,
-        "max": 549,
-        "label": "High Risk",
-        "color": "orange",
-        "eligible": False,
-        "rate_min": 13.5,
-        "rate_max": 14.0,
+        "eligible": True,
+        "rate_min": 13.0,
+        "rate_max": 15.0,
         "xgboost_runs": True,
         "negotiation_allowed": False,
         "max_negotiation_rounds": 0,
     },
-    "MEDIUM_RISK": {
-        "min": 550,
+    "MEDIUM_RISK_INTERMEDIATE": {
+        "min": 301,
         "max": 699,
-        "label": "Medium Risk",
+        "label": "Medium Risk (Intermediate Score)",
         "color": "yellow",
-        "eligible": False,
-        "rate_min": 12.0,
+        "eligible": True,
+        "rate_min": 11.0,
         "rate_max": 13.0,
         "xgboost_runs": True,
         "negotiation_allowed": True,
         "max_negotiation_rounds": 1,
     },
-    "LOW_MEDIUM_RISK": {
+    "LOW_RISK_HIGH_SCORE": {
         "min": 700,
-        "max": 749,
-        "label": "Low-Medium Risk",
-        "color": "yellow",
-        "eligible": True,
-        "rate_min": 11.5,
-        "rate_max": 12.0,
-        "xgboost_runs": True,
-        "negotiation_allowed": True,
-        "max_negotiation_rounds": 2,
-    },
-    "LOW_RISK": {
-        "min": 750,
         "max": 900,
-        "label": "Low Risk",
+        "label": "Low Risk (High Score)",
         "color": "green",
         "eligible": True,
-        "rate_min": 10.5,
-        "rate_max": 11.5,
+        "rate_min": 9.0,
+        "rate_max": 11.0,
         "xgboost_runs": True,
         "negotiation_allowed": True,
         "max_negotiation_rounds": 3,
@@ -154,8 +128,11 @@ def get_credit_band(score: int) -> dict:
         if band["min"] <= score <= band["max"]:
             return {**band, "band_name": band_name}
 
-    # Default to hardest reject if score out of range
-    return {**CREDIT_SCORE_BANDS["HARD_REJECT"], "band_name": "HARD_REJECT"}
+    # Default to medium risk pricing if score is unexpectedly out of range.
+    return {
+        **CREDIT_SCORE_BANDS["MEDIUM_RISK_INTERMEDIATE"],
+        "band_name": "MEDIUM_RISK_INTERMEDIATE",
+    }
 
 
 def mask_pan(pan: str) -> str:

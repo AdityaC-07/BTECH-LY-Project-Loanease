@@ -8,6 +8,7 @@ import pandas as pd
 import shap  # type: ignore[import-not-found]
 
 from app.credit_score import get_credit_score, get_credit_band
+from app.risk_combiner import evaluate_applicant
 
 
 REQUEST_TO_DATASET_COLUMN = {
@@ -136,66 +137,13 @@ class ModelService:
 
     def assess(self, payload: dict) -> dict:
         """
-        Assess loan application with credit score pre-filter.
-        STEP 1: Get credit score from PAN
-        STEP 2: Apply hard reject if score < 700
-        STEP 3: Run XGBoost only if eligible
-        STEP 4: Combine scores for final decision
-        STEP 5: Determine interest rate from credit band
+        Assess loan application using combined credit + model risk.
+        All users remain eligible; pricing depends on final risk tier.
         """
-        # STEP 1: Get credit score from PAN
         pan_number = payload.get("pan_number", "")
-        preferred_language = payload.get("preferred_language", "en")
-        
         credit_score = get_credit_score(pan_number)
         credit_band = get_credit_band(credit_score)
 
-        # STEP 2: Hard reject if below 700
-        if not credit_band["eligible"]:
-            improvement_tips = [
-                "Pay all existing EMIs on time",
-                "Clear any outstanding credit card dues",
-                "Avoid multiple loan applications in a short period",
-                "Maintain credit utilization below 30%",
-                "Wait 6 months before reapplying",
-            ]
-            
-            message = (
-                credit_band["message_en"].format(score=credit_score)
-                if preferred_language == "en"
-                else credit_band["message_hi"].format(score=credit_score)
-            )
-            
-            return {
-                "decision": "REJECTED",
-                "credit_score": credit_score,
-                "credit_score_out_of": 900,
-                "credit_band": credit_band["label"],
-                "credit_band_color": credit_band["color"],
-                "risk_score": None,
-                "risk_score_out_of": 100,
-                "approval_probability": 0.0,
-                "risk_tier": "High Risk",
-                "offered_rate": None,
-                "rate_range": None,
-                "negotiation_allowed": False,
-                "max_negotiation_rounds": 0,
-                "xgboost_probability": 0.0,
-                "xgboost_ran": False,
-                "shap_explanation": [
-                    f"Credit score {credit_score} below minimum threshold of 700",
-                    "Applicant ineligible for loan at this time",
-                    f"Score needs to improve by {700 - credit_score} points",
-                ],
-                "threshold_used": self.threshold,
-                "raw_input": payload,
-                "shap_waterfall": [],
-                "message": message,
-                "minimum_required": 700,
-                "improvement_tips": improvement_tips,
-            }
-
-        # STEP 3: Run XGBoost only if eligible
         raw_row = {
             dataset_col: payload[request_col]
             for request_col, dataset_col in REQUEST_TO_DATASET_COLUMN.items()
@@ -203,31 +151,34 @@ class ModelService:
         X_encoded = self._normalize_input(payload)
         probability = self._approval_probability(X_encoded)
         xgboost_probability = probability
-        decision, risk_tier = self._risk_decision(probability)
         waterfall, top_explanations = self._build_shap_breakdown(X_encoded, raw_row)
 
-        # STEP 4: Combine scores (60% credit + 40% XGBoost)
-        normalized_credit = (credit_score - 300) / 600 * 100  # Maps 300→0, 900→100
+        # Composite visibility score for explainability UI.
+        normalized_credit = (credit_score - 300) / 600 * 100
         combined_score = round((normalized_credit * 0.60) + (xgboost_probability * 100 * 0.40))
 
-        # Final decision uses combined score
-        if combined_score >= 75:
-            final_decision = "APPROVED"
-            final_risk_tier = "Low Risk"
-        elif combined_score >= 50:
-            final_decision = "APPROVED_WITH_CONDITIONS"
-            final_risk_tier = "Medium Risk"
-        else:
-            final_decision = "REJECTED"
-            final_risk_tier = "High Risk"
+        # Convert approval probability into model risk score (0 low risk, 100 high risk).
+        xgb_risk_score = round((1.0 - xgboost_probability) * 100, 2)
+        combined_risk = evaluate_applicant(credit_score=credit_score, xgb_risk_score=xgb_risk_score)
+        final_risk_tier = combined_risk["classification"]["final_risk"]
 
-        # STEP 5: Determine interest rate from credit band
-        # Use credit score band to set rate range
-        # Fine-tune within range using XGBoost score
-        rate = credit_band["rate_max"] - (
-            (xgboost_probability) * (credit_band["rate_max"] - credit_band["rate_min"])
-        )
-        rate = round(rate * 4) / 4  # Round to nearest 0.25%
+        if final_risk_tier == "Low Risk":
+            final_decision = "APPROVED"
+        else:
+            final_decision = "APPROVED_WITH_CONDITIONS"
+
+        rate_range = combined_risk["loan_decision"]["interest_rate_range"]
+        rate = combined_risk["loan_decision"]["suggested_interest_rate"]
+
+        if final_risk_tier == "Low Risk":
+            negotiation_allowed = True
+            max_negotiation_rounds = 3
+        elif final_risk_tier == "Medium Risk":
+            negotiation_allowed = True
+            max_negotiation_rounds = 1
+        else:
+            negotiation_allowed = False
+            max_negotiation_rounds = 0
 
         return {
             "decision": final_decision,
@@ -240,12 +191,9 @@ class ModelService:
             "approval_probability": round(probability, 4),
             "risk_tier": final_risk_tier,
             "offered_rate": rate,
-            "rate_range": {
-                "min": credit_band["rate_min"],
-                "max": credit_band["rate_max"],
-            },
-            "negotiation_allowed": credit_band.get("negotiation_allowed", False),
-            "max_negotiation_rounds": credit_band.get("max_negotiation_rounds", 0),
+            "rate_range": rate_range,
+            "negotiation_allowed": negotiation_allowed,
+            "max_negotiation_rounds": max_negotiation_rounds,
             "xgboost_probability": round(xgboost_probability, 2),
             "xgboost_ran": True,
             "shap_explanation": top_explanations,
