@@ -141,10 +141,12 @@ loanease/
 
 ## ⚙️ Backend Services
 
-LoanEase includes two separate FastAPI backends:
+LoanEase includes four FastAPI backend agents:
 
 - `backend/` for credit underwriting and explainability.
 - `negotiation_backend/` for dynamic loan-rate negotiation.
+- `translation_backend/` for multilingual translation + Hinglish intent detection.
+- `kyc_backend/` for PAN/Aadhaar OCR extraction and KYC verification.
 
 ### Credit Underwriting Backend (`backend/`)
 
@@ -208,13 +210,14 @@ Docs: `http://localhost:8000/docs`
 | Method | Endpoint | Purpose |
 | :--- | :--- | :--- |
 | `GET` | `/health` | Service health, model version, accuracy, uptime |
+| `GET` | `/credit-score/{pan_number}` | Credit score simulation, score band, and eligibility context |
 | `POST` | `/assess` | Risk assessment and decision generation |
 | `POST` | `/explain/{application_id}` | Full explanation and SHAP waterfall for a stored application |
 
-#### Risk policy
-- `probability >= 0.75`: `Low Risk` and `APPROVED`
-- `0.50 <= probability < 0.75`: `Medium Risk` and `APPROVED_WITH_CONDITIONS`
-- `probability < 0.50`: `High Risk` and `REJECTED`
+#### Risk policy (current)
+- Final risk combines credit score band + model risk score.
+- All users remain loan-eligible; risk tier changes pricing and negotiation limits.
+- Typical interest-rate guidance: `Low Risk` 9-11%, `Medium Risk` 11-13%, `High Risk` 13-15%.
 
 ### Dynamic Negotiation Backend (`negotiation_backend/`)
 
@@ -373,11 +376,47 @@ curl -X POST "http://localhost:8002/detect-hinglish-intent" \
 
 For detailed integration steps, see `MULTILINGUAL_INTEGRATION.md`.
 
+### KYC Verification Backend (`kyc_backend/`) — OCR + Document Validation
+
+#### What it does
+- Extracts PAN fields from uploaded JPG/PNG/PDF.
+- Extracts Aadhaar fields from uploaded JPG/PNG/PDF.
+- Runs cross-document validation (name + DOB + age eligibility).
+- Returns structured KYC status and reference ID for downstream flow.
+
+#### Setup
+From repository root:
+
+```powershell
+cd kyc_backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+Run service:
+
+```powershell
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8003
+```
+
+Docs: `http://localhost:8003/docs`
+
+#### API endpoints
+
+| Method | Endpoint | Purpose |
+| :--- | :--- | :--- |
+| `POST` | `/kyc/extract/pan` | Extract PAN fields + validation |
+| `POST` | `/kyc/extract/aadhaar` | Extract Aadhaar fields + validation |
+| `POST` | `/kyc/verify` | Cross-validate PAN and Aadhaar together |
+| `POST` | `/kyc/extract/auto` | Auto-detect doc type and extract |
+| `GET` | `/health` | Service health, OCR engine status, uptime |
+
 ---
 
 ## 🌍 Running All Services Locally
 
-Start three separate terminals:
+Start five separate terminals:
 
 **Terminal 1 - Frontend:**
 
@@ -409,7 +448,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 ```
 
-**Terminal 4 - Translation Backend (NEW):**
+**Terminal 4 - Translation Backend:**
 
 ```powershell
 cd translation_backend
@@ -419,11 +458,22 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8002
 ```
 
+**Terminal 5 - KYC Backend:**
+
+```powershell
+cd kyc_backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8003
+```
+
 All services are now running:
 - frontend: `http://localhost:8080`
 - underwriting: `http://localhost:8000/docs`
 - negotiation: `http://localhost:8001/docs`
 - translation: `http://localhost:8002/docs`
+- kyc: `http://localhost:8003/docs`
 
 ---
 
