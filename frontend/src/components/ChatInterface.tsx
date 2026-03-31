@@ -424,17 +424,39 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       stopKycProgress(timer);
 
       if (!verifyResult.overall_kyc_passed) {
-        addBotMessage(
-          verifyResult.cross_validation?.name_match_score < 70
-            ? kycText(
-                "The names on your PAN and Aadhaar don't match closely enough. Please check your documents.",
-                "PAN और Aadhaar पर नाम पर्याप्त रूप से मेल नहीं खा रहे हैं। कृपया दस्तावेज़ जांचें।"
-              )
-            : kycText(
-                "Applicants must be between 21 and 65 years old to apply.",
-                "आवेदन करने के लिए आयु 21 से 65 वर्ष के बीच होनी चाहिए।"
-              )
-        );
+        const nameScore = Number(verifyResult.cross_validation?.name_match_score ?? 0);
+        const dobMatch = Boolean(verifyResult.cross_validation?.dob_match);
+        const ageEligible = Boolean(verifyResult.cross_validation?.age_eligible);
+
+        if (nameScore < 70) {
+          addBotMessage(
+            kycText(
+              "The names on your PAN and Aadhaar don't match closely enough. Please check your documents.",
+              "PAN और Aadhaar पर नाम पर्याप्त रूप से मेल नहीं खा रहे हैं। कृपया दस्तावेज़ जांचें।"
+            )
+          );
+        } else if (!dobMatch) {
+          addBotMessage(
+            kycText(
+              "Date of birth on PAN and Aadhaar does not match. Please upload clearer documents or verify your details.",
+              "PAN और Aadhaar पर जन्म तिथि मेल नहीं खा रही है। कृपया अधिक स्पष्ट दस्तावेज़ अपलोड करें या विवरण जांचें।"
+            )
+          );
+        } else if (!ageEligible) {
+          addBotMessage(
+            kycText(
+              "Applicants must be between 21 and 65 years old to apply.",
+              "आवेदन करने के लिए आयु 21 से 65 वर्ष के बीच होनी चाहिए।"
+            )
+          );
+        } else {
+          addBotMessage(
+            kycText(
+              "KYC verification could not be completed. Please retry with clearer PAN and Aadhaar files.",
+              "KYC सत्यापन पूरा नहीं हो सका। कृपया अधिक स्पष्ट PAN और Aadhaar फाइलों के साथ पुनः प्रयास करें।"
+            )
+          );
+        }
         setShowAadhaarUploadCard(true);
         return;
       }

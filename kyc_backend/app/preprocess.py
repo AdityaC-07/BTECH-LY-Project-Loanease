@@ -38,7 +38,8 @@ def _load_pdf_with_pdfium(file_bytes: bytes) -> Image.Image:
         raise UnsupportedDocumentError("Unable to read first page from PDF")
 
     page = pdf[0]
-    bitmap = page.render(scale=3.0)
+    # Higher render scale improves OCR on compressed PDF scans.
+    bitmap = page.render(scale=4.0)
     pil_img = bitmap.to_pil().convert("RGB")
     page.close()
     pdf.close()

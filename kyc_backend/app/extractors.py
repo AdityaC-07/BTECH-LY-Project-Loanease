@@ -160,6 +160,8 @@ def _extract_dob(raw_text: str) -> str | None:
     normalized = normalized.replace("O", "0").replace("I", "1").replace("L", "1")
 
     patterns = [
+        r"\b(\d{1,2}\s*/\s*\d{1,2}\s*/\s*\d{4})\b",
+        r"\b(\d{1,2}\s*-\s*\d{1,2}\s*-\s*\d{4})\b",
         r"\b(\d{2}\s*/\s*\d{2}\s*/\s*\d{4})\b",
         r"\b(\d{2}\s*-\s*\d{2}\s*-\s*\d{4})\b",
         r"\b(\d{2}\s+[A-Z]{3,9}\s+\d{4})\b",
@@ -175,6 +177,14 @@ def _extract_dob(raw_text: str) -> str | None:
             value = f"{match.group(1)}/{match.group(2)}/{match.group(3)}"
         else:
             value = re.sub(r"\s+", "", match.group(1).strip())
+            if "/" in value:
+                parts = value.split("/")
+                if len(parts) == 3:
+                    value = f"{parts[0].zfill(2)}/{parts[1].zfill(2)}/{parts[2]}"
+            elif "-" in value:
+                parts = value.split("-")
+                if len(parts) == 3:
+                    value = f"{parts[0].zfill(2)}-{parts[1].zfill(2)}-{parts[2]}"
 
         fmts = ["%d/%m/%Y", "%d-%m-%Y", "%d %b %Y", "%d %B %Y"]
         for fmt in fmts:

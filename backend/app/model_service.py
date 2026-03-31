@@ -138,7 +138,7 @@ class ModelService:
         """
         Assess loan application with credit score pre-filter.
         STEP 1: Get credit score from PAN
-        STEP 2: Apply hard reject if score < 300
+        STEP 2: Apply hard reject if score < 700
         STEP 3: Run XGBoost only if eligible
         STEP 4: Combine scores for final decision
         STEP 5: Determine interest rate from credit band
@@ -150,7 +150,7 @@ class ModelService:
         credit_score = get_credit_score(pan_number)
         credit_band = get_credit_band(credit_score)
 
-        # STEP 2: Hard reject if below 300
+        # STEP 2: Hard reject if below 700
         if not credit_band["eligible"]:
             improvement_tips = [
                 "Pay all existing EMIs on time",
@@ -183,15 +183,15 @@ class ModelService:
                 "xgboost_probability": 0.0,
                 "xgboost_ran": False,
                 "shap_explanation": [
-                    f"Credit score {credit_score} below minimum threshold of 300",
+                    f"Credit score {credit_score} below minimum threshold of 700",
                     "Applicant ineligible for loan at this time",
-                    f"Score needs to improve by {300 - credit_score} points",
+                    f"Score needs to improve by {700 - credit_score} points",
                 ],
                 "threshold_used": self.threshold,
                 "raw_input": payload,
                 "shap_waterfall": [],
                 "message": message,
-                "minimum_required": 300,
+                "minimum_required": 700,
                 "improvement_tips": improvement_tips,
             }
 

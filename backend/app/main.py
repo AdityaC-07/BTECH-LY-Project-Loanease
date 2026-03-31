@@ -96,13 +96,13 @@ def credit_score(pan_number: str) -> CreditScoreResponse:
             message_hi = f"बहुत बढ़िया! आपका credit score {credit_score_val} है जो हमारे loan products के लिए योग्य है। "
             message_hi += f"आप {applicant_band} category में आते हैं।"
         else:
-            shortfall = 300 - credit_score_val
+            shortfall = 700 - credit_score_val
             message_en = (
-                f"Your credit score of {credit_score_val} is below our minimum requirement of 300. "
+                f"Your credit score of {credit_score_val} is below our minimum requirement of 700. "
                 f"You are short by {shortfall} points. Come back after improving your score."
             )
             message_hi = (
-                f"आपका credit score {credit_score_val} है जो हमारी न्यूनतम आवश्यकता 300 से कम है। "
+                f"आपका credit score {credit_score_val} है जो हमारी न्यूनतम आवश्यकता 700 से कम है। "
                 f"आप {shortfall} points से कम हैं। अपना score सुधारने के बाद वापस आएं।"
             )
 
@@ -111,7 +111,7 @@ def credit_score(pan_number: str) -> CreditScoreResponse:
         shortfall = None
 
         if not credit_band["eligible"]:
-            shortfall = 300 - credit_score_val
+            shortfall = 700 - credit_score_val
             improvement_tips = [
                 "Pay all existing EMIs on time",
                 "Clear any outstanding credit card dues",

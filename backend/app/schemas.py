@@ -67,13 +67,13 @@ class CreditScoreResponse(BaseModel):
             "good": "700-749",
             "fair": "550-699",
             "poor": "300-549",
-            "ineligible": "Below 300",
+            "ineligible": "Below 700",
         }
     )
     applicant_score_falls_in: str
     message_en: str
     message_hi: str
-    minimum_required_score: int = 300
+    minimum_required_score: int = 700
     shortfall: int | None = None
     improvement_tips: list[str] | None = None
     earliest_reapply: str | None = None
