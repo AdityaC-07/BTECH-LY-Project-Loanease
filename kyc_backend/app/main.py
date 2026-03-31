@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.preprocess import MAX_UPLOAD_BYTES, UnsupportedDocumentError, get_tesseract_info
+from app.preprocess import MAX_UPLOAD_BYTES, UnsupportedDocumentError, get_ocr_engine_info
 from app.schemas import (
     AadhaarExtractResponse,
     AutoExtractResponse,
@@ -90,8 +90,15 @@ async def extract_pan(
             HI_MESSAGES["age_ineligible"] if language == "hi" else EN_MESSAGES["age_ineligible"]
         )
 
-    result["validation"]["overall_valid"] = (
-        result["validation"]["overall_valid"] and conf >= 0.70
+    # Permit low-confidence reads when critical PAN fields are correctly extracted.
+    core_pan_fields_ok = bool(
+        result["validation"].get("pan_format_valid")
+        and result["validation"].get("dob_found")
+        and result["validation"].get("name_found")
+    )
+    result["validation"]["overall_valid"] = bool(
+        result["validation"].get("overall_valid")
+        or (core_pan_fields_ok and conf >= 0.35)
     )
 
     return PanExtractResponse(
@@ -119,8 +126,10 @@ async def extract_aadhaar(document: UploadFile = File(...)) -> AadhaarExtractRes
     if result["extracted_fields"].get("age_eligible") is False:
         result["validation"]["issues"].append(EN_MESSAGES["age_ineligible"])
 
-    result["validation"]["overall_valid"] = (
-        result["validation"]["overall_valid"] and conf >= 0.70
+    core_aadhaar_fields_ok = bool(result["validation"].get("aadhaar_format_valid"))
+    result["validation"]["overall_valid"] = bool(
+        result["validation"].get("overall_valid")
+        or (core_aadhaar_fields_ok and conf >= 0.35)
     )
 
     return AadhaarExtractResponse(
@@ -216,13 +225,14 @@ async def extract_auto(document: UploadFile = File(...)) -> AutoExtractResponse:
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    version, langs = get_tesseract_info()
+    version, langs = get_ocr_engine_info()
 
     return HealthResponse(
         status="ok",
         uptime_seconds=service.uptime_seconds(),
-        tesseract_version=version,
-        installed_language_packs=langs,
+        ocr_engine="rapidocr-onnxruntime",
+        ocr_engine_version=version,
+        supported_languages=langs,
         total_docs_processed_today=service._today_processed(),
         server_time=datetime.now(timezone.utc),
     )

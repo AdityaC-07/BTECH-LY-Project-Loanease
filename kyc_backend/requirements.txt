@@ -1,6 +1,5 @@
 fastapi
 uvicorn
-pytesseract
 opencv-python
 Pillow
 pypdfium2

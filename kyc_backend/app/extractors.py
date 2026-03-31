@@ -14,6 +14,59 @@ PINCODE_PATTERN = re.compile(r"\b\d{6}\b")
 PAN_KEYWORDS = ["INCOME TAX DEPARTMENT", "PERMANENT ACCOUNT NUMBER", "INCOME TAX"]
 AADHAAR_KEYWORDS = ["UNIQUE IDENTIFICATION AUTHORITY", "UIDAI", "AADHAAR", "आधार"]
 
+PAN_NON_NAME_HINTS = {
+    "INCOME",
+    "TAX",
+    "DEPARTMENT",
+    "PERMANENT",
+    "ACCOUNT",
+    "NUMBER",
+    "GOVT",
+    "GOVERNMENT",
+    "INDIA",
+    "SIGNATURE",
+    "FATHER",
+    "DOB",
+}
+
+AADHAAR_NON_NAME_HINTS = {
+    "GOVERNMENT",
+    "INDIA",
+    "UNIQUE",
+    "IDENTIFICATION",
+    "AUTHORITY",
+    "UIDAI",
+    "AADHAAR",
+    "ADDRESS",
+    "DOB",
+    "YEAR",
+    "BIRTH",
+    "MALE",
+    "FEMALE",
+    "TRANSGENDER",
+}
+
+OCR_DIGIT_MAP = str.maketrans({
+    "O": "0",
+    "Q": "0",
+    "D": "0",
+    "I": "1",
+    "L": "1",
+    "Z": "2",
+    "S": "5",
+    "B": "8",
+    "०": "0",
+    "१": "1",
+    "२": "2",
+    "३": "3",
+    "४": "4",
+    "५": "5",
+    "६": "6",
+    "७": "7",
+    "८": "8",
+    "९": "9",
+})
+
 
 def _clean_caps_name(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z\s]", " ", value)
@@ -38,19 +91,91 @@ def _extract_next_line(lines: list[str], keywords: list[str]) -> str | None:
     return None
 
 
+def _normalize_pan_candidate(candidate: str) -> str:
+    token = re.sub(r"[^A-Z0-9]", "", candidate.upper())
+    if len(token) != 10:
+        return token
+
+    chars = list(token)
+
+    # PAN format positions: LLLLLDDDDL
+    letter_map = {"0": "O", "1": "I", "2": "Z", "5": "S", "6": "G", "8": "B"}
+    digit_map = {
+        "I": "1",
+        "L": "1",
+        "O": "0",
+        "Q": "0",
+        "D": "0",
+        "S": "5",
+        "B": "8",
+        "Z": "2",
+    }
+
+    for i in [0, 1, 2, 3, 4, 9]:
+        chars[i] = letter_map.get(chars[i], chars[i])
+    for i in [5, 6, 7, 8]:
+        chars[i] = digit_map.get(chars[i], chars[i])
+
+    return "".join(chars)
+
+
+def _extract_pan_number(raw_text: str) -> str | None:
+    upper = raw_text.upper()
+
+    direct_match = PAN_PATTERN.search(upper)
+    if direct_match:
+        return direct_match.group(0)
+
+    # OCR fallback: inspect 10-char alpha-numeric tokens and normalize common misreads.
+    candidates = re.findall(r"\b[A-Z0-9]{10}\b", re.sub(r"[^A-Z0-9\s]", " ", upper))
+    for cand in candidates:
+        normalized = _normalize_pan_candidate(cand)
+        if _validate_pan_format(normalized):
+            return normalized
+
+    return None
+
+
+def _fallback_pan_name(lines: list[str], pan_number: str | None) -> str | None:
+    for line in lines:
+        upper = line.upper().strip()
+        if not upper:
+            continue
+        if any(hint in upper for hint in PAN_NON_NAME_HINTS):
+            continue
+        if re.search(r"\d", upper):
+            continue
+        if pan_number and pan_number in upper:
+            continue
+        if len(upper) < 3 or len(upper) > 50:
+            continue
+        if re.fullmatch(r"[A-Z\s]{3,50}", upper):
+            return _clean_caps_name(upper)
+    return None
+
+
 def _extract_dob(raw_text: str) -> str | None:
+    # Normalize common OCR confusions before date parsing.
+    normalized = raw_text.upper()
+    normalized = normalized.replace("O", "0").replace("I", "1").replace("L", "1")
+
     patterns = [
-        r"\b(\d{2}/\d{2}/\d{4})\b",
-        r"\b(\d{2}-\d{2}-\d{4})\b",
-        r"\b(\d{2}\s+[A-Za-z]{3,9}\s+\d{4})\b",
+        r"\b(\d{2}\s*/\s*\d{2}\s*/\s*\d{4})\b",
+        r"\b(\d{2}\s*-\s*\d{2}\s*-\s*\d{4})\b",
+        r"\b(\d{2}\s+[A-Z]{3,9}\s+\d{4})\b",
+        r"\b(\d{2})(\d{2})(\d{4})\b",
     ]
 
     for pattern in patterns:
-        match = re.search(pattern, raw_text, flags=re.IGNORECASE)
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
         if not match:
             continue
 
-        value = match.group(1).strip()
+        if len(match.groups()) == 3:
+            value = f"{match.group(1)}/{match.group(2)}/{match.group(3)}"
+        else:
+            value = re.sub(r"\s+", "", match.group(1).strip())
+
         fmts = ["%d/%m/%Y", "%d-%m-%Y", "%d %b %Y", "%d %B %Y"]
         for fmt in fmts:
             try:
@@ -62,7 +187,8 @@ def _extract_dob(raw_text: str) -> str | None:
 
 
 def _extract_year_of_birth(raw_text: str) -> int | None:
-    match = re.search(r"(?:YEAR\s+OF\s+BIRTH|YOB)\s*[:\-]?\s*(\d{4})", raw_text, flags=re.IGNORECASE)
+    normalized = raw_text.upper().translate(OCR_DIGIT_MAP)
+    match = re.search(r"(?:YEAR\s+OF\s+BIRTH|YOB)\s*[:\-]?\s*(\d{4})", normalized, flags=re.IGNORECASE)
     if not match:
         return None
     year = int(match.group(1))
@@ -108,13 +234,12 @@ def extract_pan(raw_text: str) -> dict:
     text_upper = raw_text.upper()
     lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
 
-    pan_match = PAN_PATTERN.search(text_upper)
-    pan_number = pan_match.group(0) if pan_match else None
+    pan_number = _extract_pan_number(raw_text)
 
     name_line = _extract_next_line(lines, ["NAME"]) or ""
     father_line = _extract_next_line(lines, ["FATHER", "FATHER'S NAME"]) or ""
 
-    name = _clean_caps_name(name_line) if name_line else None
+    name = _clean_caps_name(name_line) if name_line else _fallback_pan_name(lines, pan_number)
     fathers_name = _clean_caps_name(father_line) if father_line else None
 
     dob = _extract_dob(raw_text)
@@ -171,23 +296,58 @@ def _extract_aadhaar_name(lines: list[str]) -> str | None:
         candidates = lines[header_idx + 1 : header_idx + 7]
 
     for line in candidates:
-        upper = line.upper()
-        if "DOB" in upper or "YEAR OF BIRTH" in upper or "MALE" in upper or "FEMALE" in upper:
+        upper = line.upper().strip()
+        if not upper:
+            continue
+        if any(h in upper for h in AADHAAR_NON_NAME_HINTS):
+            continue
+        if re.search(r"\d", upper):
             continue
         if re.fullmatch(r"[A-Za-z\s]{3,50}", line.strip()):
             return _clean_name_mixed(line)
+
+    # Fallback scan across full document for best name-like line.
+    for line in lines:
+        upper = line.upper().strip()
+        if not upper:
+            continue
+        if any(h in upper for h in AADHAAR_NON_NAME_HINTS):
+            continue
+        if re.search(r"\d", upper):
+            continue
+        if 3 <= len(upper) <= 50 and re.fullmatch(r"[A-Za-z\s]{3,50}", line.strip()):
+            return _clean_name_mixed(line)
+
     return None
 
 
 def _extract_gender(raw_text: str) -> str:
     upper = raw_text.upper()
-    if "FEMALE" in upper or "महिला" in raw_text:
+    if any(token in upper for token in ["FEMALE", "FEM ALE", "FEMA1E"]) or "महिला" in raw_text:
         return "Female"
-    if "MALE" in upper or "पुरुष" in raw_text:
+    if any(token in upper for token in ["MALE", "M ALE", "MA1E"]) or "पुरुष" in raw_text:
         return "Male"
     if "TRANSGENDER" in upper or "ट्रांसजेंडर" in raw_text:
         return "Other"
     return "Unknown"
+
+
+def _extract_aadhaar_number(raw_text: str) -> str | None:
+    normalized = raw_text.upper().translate(OCR_DIGIT_MAP)
+
+    # Prefer grouped formats first.
+    grouped = re.search(r"\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b", normalized)
+    if grouped:
+        digits = re.sub(r"\D", "", grouped.group(0))
+        if len(digits) == 12:
+            return digits
+
+    # Fallback: any 12-digit run.
+    plain = re.search(r"\b\d{12}\b", normalized)
+    if plain:
+        return plain.group(0)
+
+    return None
 
 
 def _extract_address(lines: list[str]) -> dict:
@@ -198,13 +358,33 @@ def _extract_address(lines: list[str]) -> dict:
             break
 
     if start == -1:
+        # Fallback: collect contiguous tail lines that end at pincode.
+        fallback_block: list[str] = []
+        for line in lines[-8:]:
+            fallback_block.append(line)
+            if PINCODE_PATTERN.search(line):
+                break
+        full = re.sub(r"\s+", " ", ", ".join(fallback_block)).strip(" ,")
+        pincode_match = PINCODE_PATTERN.search(full)
+        pincode = pincode_match.group(0) if pincode_match else None
+        if not pincode:
+            return {
+                "full": None,
+                "house_no": None,
+                "street": None,
+                "city": None,
+                "state": None,
+                "pincode": None,
+            }
+
+        parts = [p.strip() for p in full.split(",") if p.strip()]
         return {
-            "full": None,
-            "house_no": None,
-            "street": None,
-            "city": None,
-            "state": None,
-            "pincode": None,
+            "full": full or None,
+            "house_no": parts[0] if len(parts) > 0 else None,
+            "street": parts[1] if len(parts) > 1 else None,
+            "city": parts[-2] if len(parts) >= 2 else None,
+            "state": parts[-1] if len(parts) >= 1 else None,
+            "pincode": pincode,
         }
 
     block: list[str] = []
@@ -237,8 +417,7 @@ def extract_aadhaar(raw_text: str) -> dict:
     lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
     text_upper = raw_text.upper()
 
-    aadhaar_match = AADHAAR_PATTERN.search(raw_text)
-    digits = re.sub(r"\D", "", aadhaar_match.group(0)) if aadhaar_match else None
+    digits = _extract_aadhaar_number(raw_text)
 
     aadhaar_ok = bool(digits and len(digits) == 12 and digits[0] not in {"0", "1"})
     aadhaar_last4 = digits[-4:] if digits else None
@@ -255,7 +434,10 @@ def extract_aadhaar(raw_text: str) -> dict:
     vid_match = VID_PATTERN.search(raw_text)
     vid = vid_match.group(0) if vid_match else None
 
-    doc_ok = _confirm_document_type(text_upper, AADHAAR_KEYWORDS)
+    doc_ok = _confirm_document_type(
+        text_upper,
+        AADHAAR_KEYWORDS + ["GOVERNMENT OF INDIA", "भारत सरकार", "AADHAR"],
+    )
 
     issues: list[str] = []
     if not aadhaar_ok:
@@ -308,7 +490,20 @@ def cross_validate_kyc(pan_data: dict, aadhaar_data: dict) -> dict:
     pan_name = (pan_data.get("extracted_fields", {}).get("name") or "").strip()
     aadhaar_name = (aadhaar_data.get("extracted_fields", {}).get("name") or "").strip()
 
-    name_score = int(round(fuzz.token_sort_ratio(pan_name.upper(), aadhaar_name.upper()))) if pan_name and aadhaar_name else 0
+    def _normalize_name(value: str) -> str:
+        cleaned = re.sub(r"[^A-Z\s]", " ", value.upper())
+        return re.sub(r"\s+", " ", cleaned).strip()
+
+    pan_norm = _normalize_name(pan_name)
+    aadhaar_norm = _normalize_name(aadhaar_name)
+
+    if pan_norm and aadhaar_norm:
+        score_sort = fuzz.token_sort_ratio(pan_norm, aadhaar_norm)
+        score_set = fuzz.token_set_ratio(pan_norm, aadhaar_norm)
+        score_partial = fuzz.partial_ratio(pan_norm, aadhaar_norm)
+        name_score = int(round(max(score_sort, score_set, score_partial)))
+    else:
+        name_score = 0
 
     if name_score >= 85:
         name_status = "MATCH"

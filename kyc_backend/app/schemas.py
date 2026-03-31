@@ -97,7 +97,8 @@ class AutoExtractResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok"]
     uptime_seconds: int
-    tesseract_version: str
-    installed_language_packs: list[str]
+    ocr_engine: str
+    ocr_engine_version: str
+    supported_languages: list[str]
     total_docs_processed_today: int
     server_time: datetime

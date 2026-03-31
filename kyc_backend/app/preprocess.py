@@ -6,7 +6,6 @@ import io
 import cv2
 import numpy as np
 from PIL import Image
-import pytesseract
 
 try:
     import pypdfium2 as pdfium
@@ -96,11 +95,14 @@ def _deskew(binary_img: np.ndarray) -> np.ndarray:
     return rotated
 
 
-def preprocess_image(file_bytes: bytes, extension: str) -> np.ndarray:
+def load_document_rgb(file_bytes: bytes, extension: str) -> np.ndarray:
     pil_img = _load_image_from_bytes(file_bytes, extension)
     pil_img = _upscale_for_ocr(pil_img)
+    return np.array(pil_img)
 
-    img = np.array(pil_img)
+
+def preprocess_image(file_bytes: bytes, extension: str) -> list[np.ndarray]:
+    img = load_document_rgb(file_bytes, extension)
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
@@ -117,46 +119,34 @@ def preprocess_image(file_bytes: bytes, extension: str) -> np.ndarray:
         2,
     )
 
-    return _deskew(thresh)
+    deskewed = _deskew(thresh)
+
+    # Multi-pass OCR candidates improve recall on real card textures.
+    gray_rgb = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+    contrast_rgb = cv2.cvtColor(contrast, cv2.COLOR_GRAY2RGB)
+    deskewed_rgb = cv2.cvtColor(deskewed, cv2.COLOR_GRAY2RGB)
+
+    return [img, gray_rgb, contrast_rgb, deskewed_rgb]
 
 
-def run_ocr(preprocessed_img: np.ndarray) -> tuple[str, float]:
-    config = "--oem 3 --psm 6"
-
-    # Primary OCR path: Tesseract
-    try:
-        text = pytesseract.image_to_string(preprocessed_img, lang="eng+hin", config=config)
-
-        data = pytesseract.image_to_data(
-            preprocessed_img,
-            lang="eng+hin",
-            config=config,
-            output_type=pytesseract.Output.DICT,
-        )
-
-        confidences = []
-        for conf in data.get("conf", []):
-            try:
-                val = float(conf)
-                if val >= 0:
-                    confidences.append(val)
-            except Exception:
-                continue
-
-        avg_conf = (sum(confidences) / len(confidences)) / 100 if confidences else 0.0
-        return text, round(max(0.0, min(1.0, avg_conf)), 2)
-    except Exception:
-        pass
-
-    # Fallback OCR path 1: RapidOCR (Python-only)
+def run_ocr(preprocessed_img: np.ndarray | list[np.ndarray]) -> tuple[str, float]:
+    # OCR path: RapidOCR (Python-only, no system dependency)
     global _rapidocr_engine
     rapidocr_module = _load_optional_module("rapidocr_onnxruntime")
     if rapidocr_module is not None:
         if _rapidocr_engine is None:
             _rapidocr_engine = rapidocr_module.RapidOCR()
 
-        rapid_result, _ = _rapidocr_engine(preprocessed_img)
-        if rapid_result:
+        candidates = preprocessed_img if isinstance(preprocessed_img, list) else [preprocessed_img]
+        best_text = ""
+        best_conf = 0.0
+        best_score = -1.0
+
+        for candidate in candidates:
+            rapid_result, _ = _rapidocr_engine(candidate)
+            if not rapid_result:
+                continue
+
             text_lines = []
             conf_vals = []
             for item in rapid_result:
@@ -169,24 +159,27 @@ def run_ocr(preprocessed_img: np.ndarray) -> tuple[str, float]:
                     except Exception:
                         pass
 
-            text = "\n".join(text_lines)
+            text = "\n".join(text_lines).strip()
             avg_conf = sum(conf_vals) / len(conf_vals) if conf_vals else 0.0
-            return text, round(max(0.0, min(1.0, avg_conf)), 2)
+            # Prefer higher confidence with a slight bonus for richer extracted text.
+            score = avg_conf + min(len(text) / 250.0, 0.25)
 
-    raise RuntimeError(
-        "No OCR engine available. Install Tesseract (eng+hin) or install rapidocr-onnxruntime."
-    )
+            if score > best_score:
+                best_score = score
+                best_text = text
+                best_conf = avg_conf
+
+        if best_text:
+            return best_text, round(max(0.0, min(1.0, best_conf)), 2)
+
+    raise RuntimeError("RapidOCR is not available. Install rapidocr-onnxruntime.")
 
 
-def get_tesseract_info() -> tuple[str, list[str]]:
-    try:
-        version = str(pytesseract.get_tesseract_version())
-    except Exception:
-        version = "unavailable"
+def get_ocr_engine_info() -> tuple[str, list[str]]:
+    rapidocr_module = _load_optional_module("rapidocr_onnxruntime")
+    if rapidocr_module is None:
+        return "unavailable", []
 
-    try:
-        langs = sorted(pytesseract.get_languages(config=""))
-    except Exception:
-        langs = []
-
-    return version, langs
+    version = getattr(rapidocr_module, "__version__", "installed")
+    # RapidOCR does not require language packs like tesseract.
+    return str(version), ["en", "hi"]

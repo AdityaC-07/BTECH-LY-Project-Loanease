@@ -315,14 +315,56 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       stopKycProgress(timer);
 
       setPanKycData(result.extracted_fields);
-      const valid = result.validation?.overall_valid && result.confidence_score >= 0.7;
+      const issues: string[] = result.validation?.issues || [];
+      const confidence = Number(result.confidence_score || 0);
+      const panFound = Boolean(result.validation?.pan_format_valid);
+      const nameFound = Boolean(result.validation?.name_found);
+      const dobFound = Boolean(result.validation?.dob_found);
+
+      // Accept when critical PAN fields are present, even if OCR confidence is modest.
+      const valid = panFound && dobFound && (nameFound || confidence >= 0.45);
+
       if (!valid) {
-        addBotMessage(
-          kycText(
-            "The document image is unclear. Please upload a better quality photo in good lighting.",
-            "दस्तावेज़ स्पष्ट नहीं है। कृपया अच्छी रोशनी में स्पष्ट फोटो अपलोड करें।"
-          )
-        );
+        const hasPanMissingIssue = issues.some((i) => i.toLowerCase().includes("pan format"));
+        const hasAgeIssue = issues.some((i) => i.toLowerCase().includes("age"));
+
+        if (!panFound && confidence > 0.2) {
+          addBotMessage(
+            kycText(
+              "This file doesn't look like a PAN card. Please upload the PAN card front image or PAN PDF.",
+              "यह फ़ाइल PAN कार्ड जैसी नहीं लग रही है। कृपया PAN कार्ड का front image या PAN PDF अपलोड करें।"
+            )
+          );
+        } else if (confidence <= 0.2 || !nameFound || !dobFound) {
+          addBotMessage(
+            kycText(
+              "OCR could not read key PAN fields clearly. Please upload a sharper PAN image/PDF in good lighting.",
+              "OCR PAN के मुख्य fields साफ़ नहीं पढ़ पाया। कृपया अच्छी रोशनी में अधिक साफ PAN image/PDF अपलोड करें।"
+            )
+          );
+        } else if (hasAgeIssue) {
+          addBotMessage(
+            kycText(
+              "Applicants must be between 21 and 65 years old to apply.",
+              "आवेदन करने के लिए आयु 21 से 65 वर्ष के बीच होनी चाहिए।"
+            )
+          );
+        } else if (hasPanMissingIssue) {
+          addBotMessage(
+            kycText(
+              "PAN number couldn't be validated. Please upload a clear PAN card image where the PAN number is fully visible.",
+              "PAN number validate नहीं हो पाया। कृपया ऐसा PAN कार्ड image अपलोड करें जिसमें PAN number पूरी तरह दिखाई दे।"
+            )
+          );
+        } else {
+          addBotMessage(
+            kycText(
+              issues[0] || "The document image is unclear. Please upload a better quality photo in good lighting.",
+              issues[0] || "दस्तावेज़ स्पष्ट नहीं है। कृपया अच्छी रोशनी में स्पष्ट फोटो अपलोड करें।"
+            )
+          );
+        }
+
         setShowPanUploadCard(true);
         return;
       }
@@ -350,6 +392,33 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     try {
       const aadhaarResult = await callKycAadhaarExtractAPI(file);
       setAadhaarKycData(aadhaarResult.extracted_fields);
+
+      const aadhaarIssues: string[] = aadhaarResult.validation?.issues || [];
+      const aadhaarConfidence = Number(aadhaarResult.confidence_score || 0);
+      const aadhaarValid = Boolean(aadhaarResult.validation?.aadhaar_format_valid);
+      if (!aadhaarValid) {
+        stopKycProgress(timer);
+        if (aadhaarConfidence > 0.2) {
+          addBotMessage(
+            kycText(
+              "This file doesn't look like an Aadhaar card. Please upload a valid Aadhaar front image/PDF.",
+              "यह फ़ाइल Aadhaar कार्ड जैसी नहीं लग रही है। कृपया valid Aadhaar front image/PDF अपलोड करें।"
+            )
+          );
+        } else {
+          addBotMessage(
+            kycText(
+              "OCR could not read your Aadhaar clearly. Please upload a sharper image/PDF in good lighting.",
+              "OCR Aadhaar साफ़ नहीं पढ़ पाया। कृपया अच्छी रोशनी में अधिक साफ image/PDF अपलोड करें।"
+            )
+          );
+        }
+        if (aadhaarIssues.length > 0) {
+          toast.error(aadhaarIssues[0]);
+        }
+        setShowAadhaarUploadCard(true);
+        return;
+      }
 
       const verifyResult = await callKycVerifyAPI(panFile, file);
       stopKycProgress(timer);

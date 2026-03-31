@@ -7,13 +7,29 @@ Runs independently on port `8003` and does not modify frontend code.
 
 - Python 3.10+
 - FastAPI
-- pytesseract
+- rapidocr-onnxruntime
 - opencv-python
 - Pillow
-- pdf2image
+- pypdfium2
 - rapidfuzz
 - python-multipart
 - numpy
+
+## Optional Roboflow field mapping
+
+You can optionally enrich PAN extraction with Roboflow workflow detections.
+This is an add-on and the backend works without it.
+
+Set either:
+
+- `ROBOFLOW_WORKFLOW_URL` (full workflow endpoint URL), or
+- both `ROBOFLOW_WORKSPACE` and `ROBOFLOW_WORKFLOW_ID`
+
+Also set:
+
+- `ROBOFLOW_API_KEY`
+
+When not configured (or if the call fails), the service automatically falls back to local OCR-only extraction.
 
 ## Install
 
@@ -41,28 +57,10 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3) Install Tesseract OCR with English + Hindi packs
+### 3) OCR engine
 
-#### Ubuntu/Debian
-
-```bash
-sudo apt update
-sudo apt install tesseract-ocr tesseract-ocr-hin
-```
-
-#### Windows
-
-- Download Tesseract installer from UB Mannheim
-- During installation, select Hindi language pack
-- Add Tesseract install directory to PATH
-- Typical binary path: `C:\Program Files\Tesseract-OCR\tesseract.exe`
-
-#### macOS
-
-```bash
-brew install tesseract
-brew install tesseract-lang
-```
+OCR runs via `rapidocr-onnxruntime` (Python package only).
+No system Tesseract installation, PATH setup, or language pack download is required.
 
 ### 4) PDF support
 
