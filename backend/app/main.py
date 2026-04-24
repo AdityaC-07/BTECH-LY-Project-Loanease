@@ -14,6 +14,9 @@ from app.schemas import (
     CreditScoreResponse,
     ExplainResponse,
     HealthResponse,
+    SessionSaveRequest,
+    SessionResponse,
+    EscalationPreferenceRequest,
 )
 from app.storage import ApplicationStore
 from app.credit_score import get_credit_score, get_credit_band, mask_pan
@@ -35,6 +38,10 @@ app.add_middleware(
 service: ModelService | None = None
 store = ApplicationStore(STORE_PATH)
 boot_time = datetime.now(timezone.utc)
+
+# In-memory storage for sessions and escalations
+sessions: dict[str, dict] = {}
+escalations: dict[str, dict] = {}
 
 
 @app.on_event("startup")
@@ -157,3 +164,22 @@ def explain(application_id: str) -> ExplainResponse:
         top_explanations=record["shap_explanation"],
         shap_waterfall=record["shap_waterfall"],
     )
+
+
+@app.post("/session/save", response_model=SessionResponse)
+def save_session(payload: SessionSaveRequest) -> SessionResponse:
+    sessions[payload.session_id] = payload.model_dump()
+    return SessionResponse(**sessions[payload.session_id])
+
+
+@app.get("/session/{session_id}", response_model=SessionResponse)
+def get_session(session_id: str) -> SessionResponse:
+    if session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return SessionResponse(**sessions[session_id])
+
+
+@app.post("/escalation/callback-preference")
+def save_escalation_preference(payload: EscalationPreferenceRequest):
+    escalations[payload.session_id] = payload.model_dump()
+    return {"status": "success", "message": "Callback preference saved"}

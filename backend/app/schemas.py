@@ -82,3 +82,23 @@ class HealthResponse(BaseModel):
     model_version: str
     accuracy: float
     uptime_seconds: int
+
+
+class SessionSaveRequest(BaseModel):
+    session_id: str
+    messages: list[dict]
+    stage: str
+    applicant_data: dict
+
+
+class SessionResponse(BaseModel):
+    session_id: str
+    messages: list[dict]
+    stage: str
+    applicant_data: dict
+
+
+class EscalationPreferenceRequest(BaseModel):
+    session_id: str
+    preferred_time: str  # "Morning", "Afternoon", "Evening"
+    whatsapp_opt_in: bool

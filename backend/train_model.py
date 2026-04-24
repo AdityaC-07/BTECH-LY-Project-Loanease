@@ -134,7 +134,7 @@ def train_model(X: pd.DataFrame, y: pd.Series) -> tuple[XGBClassifier, dict]:
         param_grid=param_grid,
         cv=5,
         scoring="accuracy",
-        n_jobs=-1,
+        n_jobs=1,
         verbose=1,
     )
     grid.fit(X_train, y_train)

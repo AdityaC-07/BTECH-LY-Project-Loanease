@@ -8,9 +8,15 @@ import { SanctionLetter } from "./SanctionLetter";
 import { AnalyticsDashboard } from "./AnalyticsDashboard";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Send, ArrowLeft, MessageCircle, Upload, CheckCircle2, FileText, Pencil } from "lucide-react";
+import { toast } from "sonner";
+import { QuickReplies } from "./QuickReplies";
+import { EmiCalculatorWidget } from "./EmiCalculatorWidget";
+import { LoanComparisonCards } from "./LoanComparisonCards";
+import { Badge } from "@/components/ui/badge";
 import { TRANSLATIONS } from "@/lib/translations";
 import { formatIndianCurrency, detectLanguage, formatEMI } from "@/lib/languageUtils";
-import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import { User } from "lucide-react";
 
 const AGENT_PIPELINE = [
   "Master Agent",
@@ -20,10 +26,21 @@ const AGENT_PIPELINE = [
   "Dynamic Negotiation Agent",
 ];
 
+const APP_STAGES = [
+  { id: "kyc", label: "KYC" },
+  { id: "credit", label: "Credit Check" },
+  { id: "offer", label: "Offer" },
+  { id: "negotiate", label: "Negotiate" },
+  { id: "sanction", label: "Sanction" },
+];
+
 interface Message {
   id: number;
   text: string;
   isBot: boolean;
+  status?: "sent" | "delivered" | "responded";
+  quickReplies?: { label: string; value: string }[];
+  type?: "emi-calculator" | "escalation" | "comparison-cards";
 }
 
 interface ChatInterfaceProps {
@@ -87,11 +104,18 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     creditScore: 0,
     selectedLoan: { amount: 0, interest: 0, tenure: 0, emi: 0 },
     assessmentId: "",
-    sessionId: "",
+    sessionId: `LE-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`,
     riskScore: 0,
     riskTier: "",
     maxNegotiationRounds: 0,
+    stage: "kyc",
   });
+
+  const [showSessionBanner, setShowSessionBanner] = useState(false);
+  const [sessionToResume, setSessionToResume] = useState<any>(null);
+  const [pulseBadge, setPulseBadge] = useState(false);
+  const [isEscalated, setIsEscalated] = useState(false);
+  const [escalationData, setEscalationData] = useState({ preferredTime: "", whatsapp: false });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationStep = useRef(0);
@@ -109,8 +133,64 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     toast.success(message);
   };
 
+  const saveSession = async (currentMessages: Message[], currentStage: string, currentData: any) => {
+    const sessionKey = `loanease_session_${new Date().toISOString().split('T')[0]}`;
+    const sessionData = {
+      messages: currentMessages,
+      stage: currentStage,
+      applicant_data: currentData,
+      timestamp: Date.now()
+    };
+    localStorage.setItem(sessionKey, JSON.stringify(sessionData));
+
+    try {
+      await fetch("http://localhost:8000/session/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: currentData.sessionId,
+          messages: currentMessages,
+          stage: currentStage,
+          applicant_data: currentData
+        }),
+      });
+    } catch (e) {
+      console.warn("Failed to save session to backend", e);
+    }
+  };
+
+  const handleResume = () => {
+    if (sessionToResume) {
+      setMessages(sessionToResume.messages);
+      setUserData(sessionToResume.applicant_data);
+      setShowSessionBanner(false);
+      toast.success("Session restored successfully!");
+    }
+  };
+
+  const handleStartFresh = () => {
+    const sessionKey = `loanease_session_${new Date().toISOString().split('T')[0]}`;
+    localStorage.removeItem(sessionKey);
+    setShowSessionBanner(false);
+    toast.info("Started a new session.");
+  };
+
+  useEffect(() => {
+    const sessionKey = `loanease_session_${new Date().toISOString().split('T')[0]}`;
+    const saved = localStorage.getItem(sessionKey);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Date.now() - parsed.timestamp < 24 * 60 * 60 * 1000) {
+        setSessionToResume(parsed);
+        setShowSessionBanner(true);
+      }
+    }
+  }, []);
+
   const activateAgent = (agentName: string, note: string) => {
     setActiveAgent(agentName);
+    setPulseBadge(true);
+    setTimeout(() => setPulseBadge(false), 2000);
     setMessages((prev) => [
       ...prev,
       {
@@ -575,6 +655,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
   const simulateBotResponse = (userMessage: string) => {
     setIsTyping(true);
+    const prevMessages = [...messages];
 
     setTimeout(async () => {
       setIsTyping(false);
@@ -589,16 +670,11 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           conversationStep.current = 1;
           break;
 
-        case 1: {
+        case 1:
           botResponse = kycText(
             "Please use the upload card below to upload your PAN document.",
             "कृपया PAN दस्तावेज़ अपलोड करने के लिए नीचे दिए गए upload card का उपयोग करें।"
           );
-          break;
-        }
-
-        case 2:
-          botResponse = "";
           break;
 
         case 3:
@@ -606,28 +682,68 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           break;
 
         default:
+          if (userMessage.toLowerCase().includes("human") || userMessage.toLowerCase().includes("talk to agent")) {
+            handleEscalationTrigger();
+            return;
+          }
           botResponse = "Thank you for your message. Is there anything else I can help you with?";
       }
 
       if (botResponse) {
-        setMessages((prev) => [
-          ...prev,
-          { id: prev.length + 1, text: botResponse, isBot: true },
-        ]);
+        let quickReplies = undefined;
+        let type: "emi-calculator" | "escalation" | "comparison-cards" | undefined = undefined;
+
+        if (conversationStep.current === 1) {
+          quickReplies = [
+            { label: language === "hi" ? "लोन के लिए आवेदन करें" : "Apply for a Loan", value: "apply" },
+            { label: language === "hi" ? "पात्रता जांचें" : "Check Eligibility", value: "eligibility" },
+            { label: language === "hi" ? "यह कैसे काम करता है?" : "How does it work?", value: "how" }
+          ];
+        } else if (conversationStep.current === 3) {
+          quickReplies = [
+            { label: language === "hi" ? "मेरे लोन विकल्प देखें →" : "Check My Loan Options →", value: "options" },
+            { label: language === "hi" ? "मेरे स्कोर को क्या प्रभावित करता है?" : "What affects my score?", value: "factors" }
+          ];
+        }
+
+        const newMsg: Message = { id: prevMessages.length + 1, text: botResponse, isBot: true, quickReplies, type };
+        setMessages((prev) => [...prev, newMsg]);
+        saveSession([...prevMessages, newMsg], userData.stage, userData);
       }
     }, 1500);
   };
 
   const handleSend = () => {
-    if (!input.trim()) return;
+    if (!input.trim() || isEscalated) return;
 
     const userMessage = input.trim();
-    setMessages((prev) => [
-      ...prev,
-      { id: prev.length + 1, text: userMessage, isBot: false },
-    ]);
+    const newMsg: Message = { id: messages.length + 1, text: userMessage, isBot: false, status: "sent" };
+    setMessages((prev) => [...prev, newMsg]);
     setInput("");
-    simulateBotResponse(userMessage);
+
+    // Simulate delivery
+    setTimeout(() => {
+      setMessages(prev => prev.map(m => m.id === newMsg.id ? { ...m, status: "delivered" } : m));
+      
+      // Check for EMI keywords
+      if (userMessage.toLowerCase().includes("emi") || userMessage.toLowerCase().includes("tenure") || userMessage.toLowerCase().includes("किस्त")) {
+         setTimeout(() => {
+           setMessages(prev => [
+             ...prev, 
+             { id: prev.length + 1, text: "Sure! You can use this calculator to see how different amounts and tenures affect your EMI.", isBot: true, type: "emi-calculator" }
+           ]);
+         }, 800);
+      } else {
+        simulateBotResponse(userMessage);
+      }
+    }, 500);
+  };
+
+  const handleEmiTerms = (amount: number, rate: number, tenure: number) => {
+    addBotMessage(`Perfect. I'll use these terms: ${formatIndianCurrency(amount)} at ${rate}% for ${tenure} months.`);
+    setUserData(prev => ({ ...prev, selectedLoan: { amount, interest: rate, tenure, emi: 0 }, stage: "negotiate" }));
+    // Trigger negotiation with these terms
+    handleLoanSelect(rate, tenure, amount);
   };
 
   const handleLoanSelect = async (interest: number, tenure: number, amount: number) => {
@@ -749,31 +865,147 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     }, 2500);
   };
 
+  const handleEscalationTrigger = () => {
+    setIsTyping(true);
+    setTimeout(() => {
+      setIsTyping(false);
+      setMessages(prev => [
+        ...prev,
+        {
+          id: prev.length + 1,
+          text: "Connecting to Human Agent",
+          isBot: true,
+          type: "escalation"
+        }
+      ]);
+    }, 1000);
+  };
+
+  const handleEscalationSubmit = async (preferredTime: string, whatsapp: boolean) => {
+    setEscalationData({ preferredTime, whatsapp });
+    setIsEscalated(true);
+    
+    try {
+      await fetch("http://localhost:8000/escalation/callback-preference", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: userData.sessionId,
+          preferred_time: preferredTime,
+          whatsapp_opt_in: whatsapp
+        }),
+      });
+    } catch (e) {
+      console.warn("Escalation preference save failed", e);
+    }
+
+    addBotMessage("Your application is on hold pending human review. We'll reach out shortly.");
+  };
+
+  const handleQuickReply = (value: string) => {
+    // Clear quick replies from last message
+    setMessages(prev => {
+      const last = prev[prev.length - 1];
+      if (last.isBot && last.quickReplies) {
+        return [...prev.slice(0, -1), { ...last, quickReplies: undefined }];
+      }
+      return prev;
+    });
+
+    handleSendWithText(value);
+  };
+
+  const handleSendWithText = (text: string) => {
+    const newMsg: Message = { id: messages.length + 1, text, isBot: false, status: "sent" };
+    setMessages((prev) => [...prev, newMsg]);
+    
+    setTimeout(() => {
+      setMessages(prev => prev.map(m => m.id === newMsg.id ? { ...m, status: "delivered" } : m));
+      simulateBotResponse(text);
+    }, 500);
+  };
+
   return (
     <div className="fixed inset-0 bg-background z-50 flex flex-col">
+      {/* Session Resume Banner */}
+      {showSessionBanner && (
+        <div className="absolute inset-x-0 top-0 z-[60] bg-yellow-400 text-black px-4 py-3 flex items-center justify-between animate-in slide-in-from-top duration-500 shadow-xl">
+          <div className="text-sm font-bold flex items-center gap-2">
+            <MessageCircle className="w-4 h-4" />
+            Welcome back! Continue your application?
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="secondary" className="bg-black text-white hover:bg-black/80" onClick={handleResume}>Resume</Button>
+            <Button size="sm" variant="ghost" className="hover:bg-black/10" onClick={handleStartFresh}>Start Fresh</Button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
-      <div className="bg-card border-b border-border">
+      <div className="bg-card border-b border-border shadow-md">
         <div className="flex items-center justify-between px-4 py-3">
           <Button variant="ghost" size="icon" onClick={onClose}>
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center relative">
               <MessageCircle className="w-4 h-4 text-primary-foreground" />
+              <div className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full border-2 border-card" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold">Loan Assistant</h2>
-              <p className="text-xs text-accent">Online • {activeAgent}</p>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-bold">Loan Assistant</h2>
+                <Badge variant="outline" className="text-[10px] py-0 px-1.5 h-4 border-yellow-400/50 text-yellow-400">PRO</Badge>
+              </div>
+              <p className="text-[10px] text-muted-foreground font-mono">
+                {userData.sessionId} | Stage: <span className="text-yellow-400 uppercase">{userData.stage}</span>
+              </p>
             </div>
           </div>
           <LanguageSwitcher currentLanguage={language} onLanguageChange={handleLanguageChange} />
         </div>
+
+        {/* Progress Indicator */}
+        <div className="px-4 pb-2">
+          <div className="flex items-center justify-between max-w-lg mx-auto">
+            {APP_STAGES.map((s, idx) => {
+              const stagesOrder = APP_STAGES.map(st => st.id);
+              const currentIdx = stagesOrder.indexOf(userData.stage);
+              const isCompleted = idx < currentIdx;
+              const isActive = idx === currentIdx;
+
+              return (
+                <div key={s.id} className="flex flex-col items-center gap-1 group cursor-pointer" onClick={() => isCompleted && toast.info(`Summary of ${s.label} completed`)}>
+                  <div className={cn(
+                    "w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold transition-all duration-300",
+                    isCompleted ? "bg-green-500 text-white" : 
+                    isActive ? "bg-yellow-400 text-black ring-4 ring-yellow-400/20" : 
+                    "bg-muted border border-border text-muted-foreground"
+                  )}>
+                    {isCompleted ? "✓" : idx + 1}
+                  </div>
+                  <span className={cn(
+                    "text-[8px] uppercase tracking-tighter font-bold",
+                    isActive ? "text-yellow-400" : isCompleted ? "text-green-500" : "text-muted-foreground"
+                  )}>{s.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         <div className="px-4 pb-3">
-          <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
-            <div className="mb-2 text-center text-[11px] uppercase tracking-wide text-muted-foreground">
-              Agent Activation Timeline
+          <div className="rounded-lg border border-border/60 bg-muted/10 p-2">
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">Agent Activity Panel</div>
+              <div className={cn(
+                "px-2 py-0.5 rounded-full text-[9px] font-bold transition-all duration-500",
+                pulseBadge ? "bg-yellow-400 text-black scale-110" : "bg-primary/20 text-primary"
+              )}>
+                🤖 AGENTS ({activeAgentIndex + 1})
+              </div>
             </div>
-            <div className="flex flex-wrap items-center justify-center gap-2">
+            <div className="flex flex-wrap items-center justify-center gap-1.5 overflow-hidden">
               {AGENT_PIPELINE.map((agent, index) => {
                 const isCompleted = index < activeAgentIndex;
                 const isActive = index === activeAgentIndex;
@@ -819,16 +1051,66 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] bg-fixed">
         {messages.map((message) => (
-          <ChatMessage
-            key={message.id}
-            message={message.text}
-            isBot={message.isBot}
-          />
+          <div key={message.id} className="space-y-3">
+            <ChatMessage
+              message={message.text}
+              isBot={message.isBot}
+              status={message.status}
+            />
+            
+            {message.isBot && message.quickReplies && (
+              <QuickReplies options={message.quickReplies} onSelect={handleQuickReply} />
+            )}
+
+            {message.isBot && message.type === "emi-calculator" && (
+              <EmiCalculatorWidget onUseTerms={handleEmiTerms} />
+            )}
+
+            {message.isBot && message.type === "escalation" && (
+              <div className="max-w-md rounded-2xl p-6 bg-card border border-border shadow-2xl animate-in slide-in-from-left duration-500">
+                 <div className="flex items-center gap-3 mb-4">
+                   <div className="w-10 h-10 rounded-full bg-yellow-400 flex items-center justify-center">
+                     <User className="text-black w-5 h-5" />
+                   </div>
+                   <div>
+                     <h3 className="font-bold">Connecting to Human Agent</h3>
+                     <p className="text-xs text-muted-foreground">Ticket: ESC-2026-{Math.floor(100 + Math.random() * 899)}</p>
+                   </div>
+                 </div>
+                 <p className="text-sm mb-6 text-muted-foreground">A loan officer will call you within 2 business hours. Your application is saved.</p>
+                 
+                 <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase font-bold text-muted-foreground">Preferred Callback Time</label>
+                      <div className="flex gap-2">
+                        {["Morning", "Afternoon", "Evening"].map(t => (
+                          <Button key={t} size="sm" variant={escalationData.preferredTime === t ? "accent" : "outline"} className="flex-1 text-[10px]" onClick={() => setEscalationData(prev => ({ ...prev, preferredTime: t }))}>{t}</Button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between bg-muted/30 p-3 rounded-lg border border-border/50">
+                      <span className="text-xs font-medium">Get updates on WhatsApp?</span>
+                      <Button size="sm" variant={escalationData.whatsapp ? "accent" : "outline"} onClick={() => setEscalationData(prev => ({ ...prev, whatsapp: !prev.whatsapp }))}>{escalationData.whatsapp ? "Yes ✓" : "No"}</Button>
+                    </div>
+                    <Button className="w-full bg-yellow-400 hover:bg-yellow-500 text-black font-bold" disabled={!escalationData.preferredTime} onClick={() => handleEscalationSubmit(escalationData.preferredTime, escalationData.whatsapp)}>Confirm Preference</Button>
+                 </div>
+              </div>
+            )}
+          </div>
         ))}
 
-        {isTyping && <ChatMessage message="" isBot isTyping />}
+        {isTyping && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground animate-pulse ml-12">
+            <div className="flex gap-1">
+              <div className="w-1.5 h-1.5 bg-yellow-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+              <div className="w-1.5 h-1.5 bg-yellow-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+              <div className="w-1.5 h-1.5 bg-yellow-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+            </div>
+            Loan Assistant is typing...
+          </div>
+        )}
 
         {isKycProcessing && (
           <div className="max-w-md rounded-xl border border-yellow-500/40 bg-gradient-to-br from-card to-card/80 p-4 shadow-lg shadow-yellow-500/10">
@@ -948,33 +1230,14 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         )}
 
         {showLoanOffers && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 py-4">
-            <LoanCard
-              amount={200000}
-              minInterest={10.5}
-              maxInterest={14}
-              minTenure={12}
-              maxTenure={60}
-              onSelect={(interest, tenure) => handleLoanSelect(interest, tenure, 200000)}
-            />
-            <LoanCard
-              amount={500000}
-              minInterest={10}
-              maxInterest={13.5}
-              minTenure={12}
-              maxTenure={72}
-              isRecommended
-              onSelect={(interest, tenure) => handleLoanSelect(interest, tenure, 500000)}
-            />
-            <LoanCard
-              amount={1000000}
-              minInterest={9.5}
-              maxInterest={12.5}
-              minTenure={12}
-              maxTenure={84}
-              onSelect={(interest, tenure) => handleLoanSelect(interest, tenure, 1000000)}
-            />
-          </div>
+          <LoanComparisonCards 
+            offers={[
+              { id: 'std', name: 'Standard', amount: 500000, rate: 11.5, tenure: 36, emi: 16607, total: '6.2L' },
+              { id: 'bv', name: 'Premium', amount: 500000, rate: 11.0, tenure: 60, emi: 10747, total: '6.45L', isRecommended: true },
+              { id: 'flx', name: 'Flexi', amount: 500000, rate: 10.75, tenure: 84, emi: 8234, total: '6.92L' }
+            ]}
+            onSelect={(offer) => handleLoanSelect(offer.rate, offer.tenure, offer.amount)}
+          />
         )}
 
         {showSanction && (
@@ -1013,10 +1276,11 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Type your message..."
+            placeholder={isEscalated ? "Chat disabled pending human review" : "Type your message..."}
             onKeyPress={(e) => e.key === "Enter" && handleSend()}
             className="flex-1"
             disabled={
+              isEscalated ||
               showLoanOffers ||
               showSanction ||
               isKycProcessing ||
