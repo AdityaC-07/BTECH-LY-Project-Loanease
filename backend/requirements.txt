@@ -6,3 +6,6 @@ scikit-learn==1.7.1
 xgboost==3.0.4
 shap==0.48.0
 joblib==1.5.1
+# Agent orchestration dependencies
+groq==0.11.0
+python-dotenv==1.0.1

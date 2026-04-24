@@ -183,3 +183,13 @@ def get_session(session_id: str) -> SessionResponse:
 def save_escalation_preference(payload: EscalationPreferenceRequest):
     escalations[payload.session_id] = payload.model_dump()
     return {"status": "success", "message": "Callback preference saved"}
+
+
+# =============================================================================
+# AGENT ORCHESTRATION ROUTES
+# =============================================================================
+
+from app.agent_routes import router as agent_router
+
+# Include agent orchestration routes
+app.include_router(agent_router)
