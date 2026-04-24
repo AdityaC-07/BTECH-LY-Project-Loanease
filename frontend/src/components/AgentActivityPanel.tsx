@@ -1,6 +1,5 @@
-import { useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, Circle, Loader2, CheckCircle2, Bot } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useMemo, useState, useEffect } from "react";
+import { ChevronDown, Loader2, CheckCircle2, Bot, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface AgentTraceItem {
@@ -34,60 +33,134 @@ const LABELS: Record<string, string> = {
 };
 
 export const AgentActivityPanel = ({ trace, pipelineStatus }: AgentActivityPanelProps) => {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const doneSet = useMemo(() => new Set(trace.map((item) => item.agent)), [trace]);
+  
   const activeAgent = useMemo(() => {
     const next = AGENT_ORDER.find((agent) => !doneSet.has(agent));
-    return pipelineStatus === "SANCTIONED" ? null : next ?? null;
+    return pipelineStatus === "SANCTIONED" || pipelineStatus === "FAILED" ? null : next ?? null;
   }, [doneSet, pipelineStatus]);
 
-  return (
-    <div className="rounded-xl border border-border bg-card p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <div className="text-sm font-semibold">🤖 Agent Activity</div>
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setCollapsed((v) => !v)}>
-          {collapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-        </Button>
-      </div>
+  // Auto-expand when active, but allow manual collapse
+  useEffect(() => {
+    if (activeAgent) {
+      setCollapsed(false);
+    }
+  }, [activeAgent]);
 
-      {!collapsed && (
-        <div className="space-y-2">
+  const hasActiveAgent = activeAgent !== null;
+
+  if (collapsed) {
+    return (
+      <div 
+        className="fixed bottom-6 right-6 z-50 animate-slide-up"
+        onClick={() => setCollapsed(false)}
+      >
+        <button className={cn(
+          "w-14 h-14 rounded-full bg-card border-2 shadow-2xl flex items-center justify-center transition-all duration-300 hover:scale-110",
+          hasActiveAgent ? "border-yellow-400" : "border-border"
+        )}>
+          <span className={cn("text-2xl", hasActiveAgent && "animate-pulse")}>🤖</span>
+          {hasActiveAgent && (
+            <span className="absolute top-0 right-0 w-3 h-3 bg-yellow-400 rounded-full border-2 border-card animate-pulse" />
+          )}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed bottom-6 right-6 z-50 w-80 animate-in slide-in-from-bottom-5 duration-300">
+      <div className="rounded-xl border border-border bg-card shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+        <div className="flex items-center justify-between p-3 border-b border-border/50 bg-muted/30">
+          <div className="flex items-center gap-2">
+            <span className="text-xl">🤖</span>
+            <div className="text-sm font-bold tracking-tight">Agent Activity</div>
+          </div>
+          <button 
+            className="p-1 hover:bg-muted rounded-md transition-colors"
+            onClick={() => setCollapsed(true)}
+          >
+            <X className="w-4 h-4 text-muted-foreground" />
+          </button>
+        </div>
+
+        <div className="p-3 space-y-2 overflow-y-auto overflow-x-hidden scrollbar-hide">
           {AGENT_ORDER.map((agent) => {
             const item = trace.find((t) => t.agent === agent);
             const isDone = Boolean(item);
             const isActive = activeAgent === agent;
-            const statusIcon = isDone ? (
-              <CheckCircle2 className="h-4 w-4 text-green-500" />
-            ) : isActive ? (
-              <Loader2 className="h-4 w-4 animate-spin text-yellow-400" />
-            ) : (
-              <Circle className="h-4 w-4 text-muted-foreground" />
-            );
-            const statusText = isDone
-              ? `${item?.action ?? "Completed"}${item?.duration_ms ? ` (${(item.duration_ms / 1000).toFixed(1)}s)` : ""}`
-              : isActive
-                ? "Processing..."
-                : "Waiting";
+            
             return (
-              <div key={agent} className="flex items-center gap-2 rounded-md border border-border/70 p-2">
-                <Bot className="h-4 w-4 text-muted-foreground" />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-xs font-medium">{LABELS[agent]}</div>
-                  <div
-                    className={cn(
-                      "truncate text-[11px]",
-                      isDone ? "text-green-500" : isActive ? "text-yellow-400" : "text-muted-foreground"
-                    )}
-                  >
-                    {statusText}
+              <div 
+                key={agent} 
+                className={cn(
+                  "flex flex-col gap-1 p-2.5 rounded-lg border transition-all duration-500",
+                  isDone ? "border-border/50 bg-card border-l-4 border-l-green-500" : 
+                  isActive ? "border-yellow-400/50 bg-yellow-400/5 shadow-[0_0_15px_rgba(250,204,21,0.15)] ring-1 ring-yellow-400 animate-pulse-soft" : 
+                  "border-transparent bg-transparent opacity-60"
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  {isDone ? (
+                    <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+                  ) : isActive ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-yellow-400 shrink-0" />
+                  ) : (
+                    <div className="h-4 w-4 rounded-full border-2 border-muted-foreground shrink-0" />
+                  )}
+                  
+                  <div className="min-w-0 flex-1">
+                    <div className={cn(
+                      "truncate text-sm font-semibold",
+                      isActive && "text-yellow-400"
+                    )}>
+                      {LABELS[agent]}
+                    </div>
                   </div>
                 </div>
-                {statusIcon}
+
+                <div className="pl-6">
+                  {isDone && item && (
+                    <div className="text-xs text-muted-foreground break-words leading-tight">
+                      {item.action || "Completed successfully"}
+                      <div className="mt-1 text-[10px] opacity-70 font-mono">
+                        {(item.duration_ms / 1000).toFixed(1)}s ago
+                      </div>
+                    </div>
+                  )}
+                  
+                  {isActive && (
+                    <div className="text-xs text-muted-foreground break-words leading-tight">
+                      <div className="w-full bg-muted rounded-full h-1.5 mt-1 mb-1.5 overflow-hidden">
+                        <div className="bg-yellow-400 h-full w-2/3 animate-pulse" />
+                      </div>
+                      Processing...
+                    </div>
+                  )}
+
+                  {!isDone && !isActive && (
+                    <div className="text-xs text-muted-foreground">Waiting</div>
+                  )}
+                </div>
               </div>
             );
           })}
         </div>
-      )}
+        
+        {hasActiveAgent && (
+          <div className="p-2 border-t border-border/50 bg-muted/10 flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+              </span>
+              <span className="text-[10px] font-medium text-muted-foreground">Groq LLaMA 70B: Active</span>
+            </div>
+            <span className="text-[10px] text-muted-foreground font-mono">📡 loanease.local:8000</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

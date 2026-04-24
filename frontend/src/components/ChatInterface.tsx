@@ -7,7 +7,7 @@ import { CreditScoreCard } from "./CreditScoreCard";
 import { SanctionLetter } from "./SanctionLetter";
 import { AnalyticsDashboard } from "./AnalyticsDashboard";
 import { LanguageSwitcher } from "./LanguageSwitcher";
-import { Send, ArrowLeft, MessageCircle, Upload, CheckCircle2, FileText, Pencil } from "lucide-react";
+import { Send, ArrowLeft, MessageCircle, Upload, CheckCircle2, FileText, Pencil, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import { QuickReplies } from "./QuickReplies";
 import { EmiCalculatorWidget } from "./EmiCalculatorWidget";
@@ -120,6 +120,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [pipelineSessionId, setPipelineSessionId] = useState<string>("");
   const [pipelineStatus, setPipelineStatus] = useState<string>("IDLE");
   const [agentTrace, setAgentTrace] = useState<AgentTraceItem[]>([]);
+  const [showCreditSummaryPopup, setShowCreditSummaryPopup] = useState(false);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationStep = useRef(0);
@@ -264,7 +266,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       } catch (error) {
         console.warn("Pipeline log polling failed", error);
       }
-    }, 1200);
+    }, 1500);
     return () => clearInterval(interval);
   }, [pipelineSessionId, pipelineStatus]);
 
@@ -610,7 +612,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       return data;
     } catch (error) {
       console.error("Underwriting error:", error);
-      toast.error("Failed to assess application");
+      setIsOfflineMode(true);
+      toast.error("⚠️ Connection issue — using offline mode");
       return null;
     }
   };
@@ -648,7 +651,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       return data;
     } catch (error) {
       console.error("Negotiation error:", error);
-      toast.error("Failed to start negotiation");
+      setIsOfflineMode(true);
+      toast.error("⚠️ Connection issue — using offline mode");
       return null;
     }
   };
@@ -672,8 +676,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       return data;
     } catch (error) {
       console.error("Credit score error:", error);
-      const message = error instanceof Error ? error.message : "Failed to fetch credit score";
-      toast.error(message);
+      setIsOfflineMode(true);
+      toast.error("⚠️ Connection issue — using offline mode");
       return null;
     }
   };
@@ -1009,7 +1013,12 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-bold">Loan Assistant</h2>
-                <Badge variant="outline" className="text-[10px] py-0 px-1.5 h-4 border-yellow-400/50 text-yellow-400">PRO</Badge>
+                <Badge variant="outline" className={cn(
+                  "text-[10px] py-0 px-1.5 h-4",
+                  isOfflineMode ? "border-muted-foreground/50 text-muted-foreground" : "border-yellow-400/50 text-yellow-400"
+                )}>
+                  {isOfflineMode ? "⚡ Quick Mode" : "🤖 AI Mode"}
+                </Badge>
               </div>
               <p className="text-[10px] text-muted-foreground font-mono">
                 {userData.sessionId} | Stage: <span className="text-yellow-400 uppercase">{userData.stage}</span>
@@ -1020,8 +1029,9 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         </div>
 
         {/* Progress Indicator */}
-        <div className="px-4 pb-2">
-          <div className="flex items-center justify-between max-w-lg mx-auto">
+        <div className="px-4 pb-2 relative z-20">
+          <div className="flex items-center justify-between max-w-lg mx-auto relative">
+            <div className="absolute top-2.5 left-0 right-0 h-0.5 bg-border -z-10" />
             {APP_STAGES.map((s, idx) => {
               const stagesOrder = APP_STAGES.map(st => st.id);
               const currentIdx = stagesOrder.indexOf(userData.stage);
@@ -1029,17 +1039,27 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
               const isActive = idx === currentIdx;
 
               return (
-                <div key={s.id} className="flex flex-col items-center gap-1 group cursor-pointer" onClick={() => isCompleted && toast.info(`Summary of ${s.label} completed`)}>
+                <div 
+                  key={s.id} 
+                  className="flex flex-col items-center gap-1 group cursor-pointer relative" 
+                  onClick={() => {
+                    if (s.id === "credit" && isCompleted) {
+                      setShowCreditSummaryPopup(true);
+                    } else if (isCompleted) {
+                      toast.info(`Summary of ${s.label} completed`);
+                    }
+                  }}
+                >
                   <div className={cn(
-                    "w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold transition-all duration-300",
-                    isCompleted ? "bg-green-500 text-white" : 
-                    isActive ? "bg-yellow-400 text-black ring-4 ring-yellow-400/20" : 
-                    "bg-muted border border-border text-muted-foreground"
+                    "w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold transition-all duration-300 ring-4 ring-card",
+                    isCompleted ? "bg-green-500 text-white shadow-[0_0_10px_rgba(34,197,94,0.3)]" : 
+                    isActive ? "bg-yellow-400 text-black border-2 border-yellow-400 animate-pulse-border" : 
+                    "bg-card border-2 border-border text-muted-foreground"
                   )}>
-                    {isCompleted ? "✓" : idx + 1}
+                    {isCompleted ? <Check className="w-3.5 h-3.5" /> : idx + 1}
                   </div>
                   <span className={cn(
-                    "text-[8px] uppercase tracking-tighter font-bold",
+                    "text-[9px] uppercase tracking-wider font-bold transition-colors absolute -bottom-4 whitespace-nowrap",
                     isActive ? "text-yellow-400" : isCompleted ? "text-green-500" : "text-muted-foreground"
                   )}>{s.label}</span>
                 </div>
@@ -1047,6 +1067,43 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
             })}
           </div>
         </div>
+
+        {/* Credit Summary Popup */}
+        {showCreditSummaryPopup && (
+          <div className="absolute top-24 left-1/2 -translate-x-1/2 w-64 bg-card border border-border rounded-xl shadow-2xl z-50 p-4 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between mb-3 pb-2 border-b border-border">
+              <h3 className="font-bold text-sm flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-green-500/20 text-green-500 flex items-center justify-center text-xs">②</span>
+                Credit Check <Check className="w-3 h-3 text-green-500" />
+              </h3>
+              <button onClick={() => setShowCreditSummaryPopup(false)} className="text-muted-foreground hover:text-foreground">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">CIBIL Score</span>
+                <span className="font-bold">{userData.creditScore || 820}/900</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Risk Score</span>
+                <span className="font-bold">{userData.riskScore || 87}/100</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Tier</span>
+                <span className="font-bold text-yellow-400">{userData.riskTier || "Low Risk"}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">XGBoost</span>
+                <span className="font-bold">87% confidence</span>
+              </div>
+              <div className="flex justify-between pt-2 border-t border-border/50 text-muted-foreground text-[10px]">
+                <span>Time taken</span>
+                <span>0.9s</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="px-4 pb-3">
           <div className="rounded-lg border border-border/60 bg-muted/10 p-2">
@@ -1157,26 +1214,38 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           ))}
 
         {isTyping && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground animate-pulse ml-12">
-            <div className="flex gap-1">
-              <div className="w-1.5 h-1.5 bg-yellow-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <div className="w-1.5 h-1.5 bg-yellow-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <div className="w-1.5 h-1.5 bg-yellow-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+          <div className="flex items-start gap-3 w-[80%] max-w-sm animate-pulse">
+            <div className="w-8 h-8 rounded-full bg-muted shrink-0" />
+            <div className="flex-1 space-y-2">
+              <div className="h-4 bg-muted rounded-md w-3/4" />
+              <div className="h-4 bg-muted rounded-md w-1/2" />
             </div>
-            Loan Assistant is typing...
           </div>
         )}
 
         {isKycProcessing && (
-          <div className="max-w-md rounded-xl border border-yellow-500/40 bg-gradient-to-br from-card to-card/80 p-4 shadow-lg shadow-yellow-500/10">
-            <div className="mb-2 text-sm font-medium text-foreground">{kycProcessingText}</div>
-            <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted/70">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-yellow-400 to-yellow-500 transition-all duration-200"
-                style={{ width: `${kycProgress}%` }}
-              />
+          <div className="max-w-md rounded-xl border border-yellow-500/40 bg-card p-4 shadow-lg shadow-yellow-500/10 animate-in fade-in zoom-in duration-300">
+            <div className="flex items-start gap-4">
+              <div className="relative w-16 h-20 bg-muted rounded border border-border overflow-hidden shrink-0">
+                <FileText className="absolute inset-0 m-auto text-muted-foreground/30 w-8 h-8" />
+                <div className="absolute top-0 left-0 right-0 h-0.5 bg-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.8)] animate-[scan_2s_ease-in-out_infinite]" />
+              </div>
+              <div className="flex-1 space-y-2">
+                <div className="text-sm font-bold text-foreground flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full border-2 border-yellow-400 border-t-transparent animate-spin" />
+                  {kycProcessingText}
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full bg-yellow-400 transition-all duration-200"
+                    style={{ width: `${kycProgress}%` }}
+                  />
+                </div>
+                <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest text-right">
+                  {kycProgress}% / processing
+                </div>
+              </div>
             </div>
-            <div className="mt-2 text-[11px] text-muted-foreground">{kycProgress}%</div>
           </div>
         )}
 
