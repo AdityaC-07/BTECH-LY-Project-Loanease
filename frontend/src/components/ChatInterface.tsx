@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { QuickReplies } from "./QuickReplies";
 import { EmiCalculatorWidget } from "./EmiCalculatorWidget";
 import { LoanComparisonCards } from "./LoanComparisonCards";
+import { AgentActivityPanel, type AgentTraceItem } from "./AgentActivityPanel";
 import { Badge } from "@/components/ui/badge";
 import { TRANSLATIONS } from "@/lib/translations";
 import { formatIndianCurrency, detectLanguage, formatEMI } from "@/lib/languageUtils";
@@ -116,6 +117,9 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [pulseBadge, setPulseBadge] = useState(false);
   const [isEscalated, setIsEscalated] = useState(false);
   const [escalationData, setEscalationData] = useState({ preferredTime: "", whatsapp: false });
+  const [pipelineSessionId, setPipelineSessionId] = useState<string>("");
+  const [pipelineStatus, setPipelineStatus] = useState<string>("IDLE");
+  const [agentTrace, setAgentTrace] = useState<AgentTraceItem[]>([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationStep = useRef(0);
@@ -247,6 +251,22 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   useEffect(() => {
     scrollToBottom();
   }, [messages, showCreditScore, showLoanOffers, showSanction, showAnalytics]);
+
+  useEffect(() => {
+    if (!pipelineSessionId || pipelineStatus === "SANCTIONED" || pipelineStatus === "FAILED") return;
+    const interval = setInterval(async () => {
+      try {
+        const response = await fetch(`http://localhost:8004/pipeline/log/${pipelineSessionId}`);
+        if (!response.ok) return;
+        const data = await response.json();
+        setAgentTrace(data.agent_trace || []);
+        setPipelineStatus(data.pipeline_status || "ACTIVE");
+      } catch (error) {
+        console.warn("Pipeline log polling failed", error);
+      }
+    }, 1200);
+    return () => clearInterval(interval);
+  }, [pipelineSessionId, pipelineStatus]);
 
   // Detect language from user input
   useEffect(() => {
@@ -792,6 +812,35 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       ]);
 
       // First call /assess with pan_number and full details
+      try {
+        const pipelineStart = await fetch("http://localhost:8004/pipeline/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: userData.sessionId,
+            applicant_name: userData.name || "Applicant",
+            pan_number: userData.pan || "ABCDE1234F",
+            aadhaar_number: "123456789012",
+            applicant_income: 75000,
+            loan_amount: amount,
+            loan_term: tenure,
+            offered_rate: interest,
+            risk_tier: userData.riskTier || "Low Risk",
+            max_negotiation_rounds: userData.maxNegotiationRounds || 3,
+            negotiation_requested: true,
+            counter_rate: Math.max(10.5, interest - 0.5),
+          }),
+        });
+        if (pipelineStart.ok) {
+          const startData = await pipelineStart.json();
+          setPipelineSessionId(startData.session_id);
+          setPipelineStatus(startData.status || "ACTIVE");
+        }
+      } catch (error) {
+        console.warn("Pipeline start failed", error);
+      }
+
+      // First call /assess with pan_number and full details
       const assessmentResult = await callUnderwritingAPI({
         pan_number: userData.pan,
         gender: "Male",
@@ -1055,9 +1104,10 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] bg-fixed">
-        {messages.map((message) => (
+      <div className="flex flex-1 flex-col gap-4 p-4 lg:flex-row">
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto space-y-6 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] bg-fixed pr-1">
+          {messages.map((message) => (
           <div key={message.id} className="space-y-3">
             <ChatMessage
               message={message.text}
@@ -1104,7 +1154,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
               </div>
             )}
           </div>
-        ))}
+          ))}
 
         {isTyping && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground animate-pulse ml-12">
@@ -1272,7 +1322,12 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           </div>
         )}
 
-        <div ref={messagesEndRef} />
+          <div ref={messagesEndRef} />
+        </div>
+
+        <div className="lg:w-[340px]">
+          <AgentActivityPanel trace={agentTrace} pipelineStatus={pipelineStatus} />
+        </div>
       </div>
 
       {/* Input */}

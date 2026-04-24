@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import os
 import time
+import base64
+import hashlib
+import io
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1107,14 +1110,14 @@ class NegotiationAgent(BaseAgent):
     """
     Negotiation Agent
     
-    Role: Handle interest rate negotiations with applicants.
-    Manages counter-offers and tracks negotiation history.
-    
+    Role: Loan offer generation and rate negotiation.
+
     Tools:
-    - start_negotiation: Initialize negotiation session
-    - process_counter: Process applicant's counter-offer
-    - calculate_concession: Calculate valid concession amount
-    - finalize_offer: Finalize the loan offer
+    - generate_opening_offer: Build first offer from credit result
+    - process_counter: Parse applicant counter/acceptance from message
+    - calculate_emi: Compute EMI and repayment components
+    - check_floor_reached: Check if floor rate is reached
+    - escalate_to_human: Escalate negotiation to a human officer
     """
 
     def __init__(self):
@@ -1127,237 +1130,417 @@ class NegotiationAgent(BaseAgent):
     def _create_tools(self) -> list[Tool]:
         return [
             Tool(
-                name="start_negotiation",
-                description="Initialize a negotiation session with opening offer",
-                func=self._mock_start_negotiation,
-                parameters={"loan_amount": "int", "tenure": "int", "rate": "float", "risk_tier": "str"}
+                name="generate_opening_offer",
+                description="Generate opening offer from credit result",
+                func=self._generate_opening_offer,
+                parameters={"credit_result": "dict", "loan_amount": "int", "tenure_months": "int"}
             ),
             Tool(
                 name="process_counter",
-                description="Process applicant's counter-offer",
-                func=self._mock_process_counter,
-                parameters={"current_rate": "float", "counter_rate": "float", "round": "int"}
+                description="Process applicant counter message and intent",
+                func=self._process_counter,
+                parameters={"session_id": "str", "user_message": "str"}
             ),
             Tool(
-                name="calculate_concession",
-                description="Calculate valid concession amount",
-                func=self._mock_calculate_concession,
-                parameters={"current_rate": "float", "counter_rate": "float", "risk_tier": "str"}
+                name="calculate_emi",
+                description="Calculate EMI, total payable, and total interest",
+                func=self._calculate_emi_components,
+                parameters={"principal": "float", "rate": "float", "tenure": "int"}
             ),
             Tool(
-                name="finalize_offer",
-                description="Finalize the loan offer with final rate",
-                func=self._mock_finalize_offer,
-                parameters={"loan_amount": "int", "tenure": "int", "final_rate": "float"}
+                name="check_floor_reached",
+                description="Check whether current rate has hit floor rate",
+                func=self._check_floor_reached,
+                parameters={"current_rate": "float", "floor_rate": "float"}
+            ),
+            Tool(
+                name="escalate_to_human",
+                description="Escalate negotiation to human underwriter",
+                func=self._escalate_to_human,
+                parameters={"session_id": "str", "reason": "str"}
             ),
         ]
 
     def _build_system_prompt(self) -> str:
-        return """You are the Negotiation Agent for LoanEase. Your role is to:
-1. Present initial loan offers based on risk assessment
-2. Process and evaluate counter-offers from applicants
-3. Calculate valid concessions within policy limits
-4. Track negotiation rounds and enforce limits
-5. Finalize offers when consensus is reached or rounds exhausted
+        return """You are the NegotiationAgent for LoanEase.
+1. Generate opening offer from credit result
+2. Handle applicant counters with policy-backed concessions
+3. Reduce by 0.25% per valid round
+4. Offer escalation when floor rate is reached
+5. On acceptance, route to BlockchainAuditAgent"""
 
-Always be transparent about rate limits. If applicant requests rate below
-policy minimum, explain the constraint and offer alternatives."""
-
-    def _mock_start_negotiation(self, loan_amount: int, tenure: int, rate: float, risk_tier: str) -> dict:
-        """Mock negotiation start - in production, calls negotiation_backend service."""
-        # Simulates calling negotiation_backend/app/service.py
-        
-        # Risk tier limits
-        concession_limits = {
-            "Low Risk": 2.0,
-            "Medium Risk": 1.0,
-            "High Risk": 0.5
-        }
-        
-        max_concession = concession_limits.get(risk_tier, 0.5)
-        floor_rate = rate - max_concession
-        
+    def _calculate_emi_components(self, principal: float, rate: float, tenure: int) -> dict:
+        monthly_rate = rate / 12 / 100
+        emi = principal * monthly_rate * (1 + monthly_rate) ** tenure / ((1 + monthly_rate) ** tenure - 1)
+        total_payable = emi * tenure
+        total_interest = total_payable - principal
         return {
-            "session_id": f"neg_{int(time.time())}",
-            "opening_rate": rate,
-            "current_rate": rate,
-            "floor_rate": floor_rate,
-            "max_concession": max_concession,
-            "rounds_used": 0,
-            "max_rounds": 3 if risk_tier == "Low Risk" else 1,
-            "offer_history": [{
-                "round": 0,
-                "rate": rate,
-                "type": "initial",
-                "timestamp": datetime.now(timezone.utc).isoformat()
-            }]
+            "emi": int(round(emi)),
+            "total_payable": int(round(total_payable)),
+            "total_interest": int(round(total_interest)),
         }
 
-    def _mock_process_counter(self, current_rate: float, counter_rate: float, round: int) -> dict:
-        """Mock counter-offer processing."""
-        if counter_rate >= current_rate:
-            return {
-                "accepted": True,
-                "new_rate": current_rate,
-                "message": "Counter-offer accepted at current rate"
-            }
-        
-        # Counter is lower than current - need to evaluate
-        return {
-            "accepted": False,
-            "counter_rate": counter_rate,
-            "current_rate": current_rate,
-            "message": f"Counter-offer of {counter_rate}% received. Evaluating..."
-        }
-
-    def _mock_calculate_concession(self, current_rate: float, counter_rate: float, risk_tier: str) -> dict:
-        """Mock concession calculation."""
-        concession_limits = {
-            "Low Risk": 2.0,
-            "Medium Risk": 1.0,
-            "High Risk": 0.5
-        }
-        
-        max_concession = concession_limits.get(risk_tier, 0.5)
-        requested_concession = current_rate - counter_rate
-        
-        if requested_concession <= max_concession:
-            return {
-                "concession_approved": True,
-                "new_rate": counter_rate,
-                "concession_given": requested_concession,
-                "within_limits": True
-            }
+    def _generate_opening_offer(self, credit_result: dict, loan_amount: int, tenure_months: int) -> dict:
+        offered_rate = float(credit_result.get("offered_rate", 11.5))
+        risk_tier = credit_result.get("risk_tier", "Medium Risk")
+        if risk_tier == "Low Risk":
+            floor_rate = 10.5
+            max_rounds = 3
+        elif risk_tier == "Medium Risk":
+            floor_rate = 11.0
+            max_rounds = 2
         else:
-            # Can't meet full request, offer best possible
-            best_rate = current_rate - max_concession
-            return {
-                "concession_approved": False,
-                "new_rate": best_rate,
-                "concession_given": max_concession,
-                "within_limits": False,
-                "message": f"Cannot match {counter_rate}%. Best offer: {best_rate}%"
-            }
-
-    def _mock_finalize_offer(self, loan_amount: int, tenure: int, final_rate: float) -> dict:
-        """Mock offer finalization."""
-        monthly_rate = final_rate / 12 / 100
-        emi = loan_amount * monthly_rate * (1 + monthly_rate) ** tenure / ((1 + monthly_rate) ** tenure - 1)
-        
-        total_interest = (emi * tenure) - loan_amount
-        
+            floor_rate = 12.5
+            max_rounds = 1
+        max_rounds = int(credit_result.get("max_negotiation_rounds", max_rounds))
+        metrics = self._calculate_emi_components(loan_amount, offered_rate, tenure_months)
         return {
-            "final_rate": final_rate,
-            "monthly_emi": round(emi, 2),
-            "total_interest": round(total_interest, 2),
-            "total_payable": round(emi * tenure, 2),
-            "offer_accepted": True,
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "opening_rate": round(offered_rate, 2),
+            "floor_rate": round(floor_rate, 2),
+            "max_rounds": max_rounds,
+            "risk_tier": risk_tier,
+            **metrics,
+        }
+
+    def _process_counter(self, session_id: str, user_message: str) -> dict:
+        message = (user_message or "").lower()
+        if any(token in message for token in ["accept", "agreed", "okay", "ok", "yes"]):
+            return {"intent": "ACCEPT", "requested_rate": None}
+        if any(token in message for token in ["escalate", "manager", "human", "supervisor"]):
+            return {"intent": "ESCALATE", "requested_rate": None}
+        import re
+        match = re.search(r"(\d+(?:\.\d+)?)", message)
+        requested_rate = float(match.group(1)) if match else None
+        return {"intent": "COUNTER", "requested_rate": requested_rate}
+
+    def _check_floor_reached(self, current_rate: float, floor_rate: float) -> bool:
+        return float(current_rate) <= float(floor_rate)
+
+    def _escalate_to_human(self, session_id: str, reason: str) -> dict:
+        return {
+            "escalated": True,
+            "session_id": session_id,
+            "reason": reason,
+            "reference_id": f"ESC-{int(time.time())}",
         }
 
     def run(self, input_data: dict) -> AgentResult:
         """
-        Execute negotiation on input data.
-        
-        Expected input from Underwriting Agent:
-        {
-            "loan_details": {...},
-            "offered_rate": float,
-            "risk_tier": str,
-            "max_negotiation_rounds": int,
-            "session_id": "uuid"
-        }
+        Execute AGENT 4 negotiation flow and return NegotiationResult-compatible payload.
         """
         start_time = time.time()
-        
-        # Extract inputs
-        loan_amount = input_data.get("loan_details", {}).get("loan_amount", 500000)
-        loan_term = input_data.get("loan_details", {}).get("loan_term", 36)
-        offered_rate = input_data.get("offered_rate", 10.5)
-        risk_tier = input_data.get("risk_tier", "Low Risk")
-        max_rounds = input_data.get("max_negotiation_rounds", 3)
-        
-        # Check if negotiation is requested
-        negotiation_requested = input_data.get("negotiation_requested", False)
+        session_id = input_data.get("session_id", f"session_{int(time.time())}")
+        loan_details = input_data.get("loan_details", {})
+        loan_amount = int(loan_details.get("loan_amount", input_data.get("loan_amount", 500000)))
+        tenure_months = int(loan_details.get("loan_term", input_data.get("tenure_months", 60)))
+        rounds_taken = int(input_data.get("rounds_taken", 0))
+        user_message = str(input_data.get("user_message", "")).strip()
+        negotiation_requested = bool(input_data.get("negotiation_requested", False))
         counter_rate = input_data.get("counter_rate")
-        
-        if not negotiation_requested:
-            # No negotiation requested - finalize with initial offer
-            final_result = self.call_tool(
-                "finalize_offer",
-                loan_amount=loan_amount,
-                tenure=loan_term,
-                final_rate=offered_rate
+
+        credit_result = {
+            "offered_rate": input_data.get("offered_rate", 11.5),
+            "risk_tier": input_data.get("risk_tier", "Medium Risk"),
+            "max_negotiation_rounds": input_data.get("max_negotiation_rounds", 3),
+        }
+        opening_offer = self.call_tool(
+            "generate_opening_offer",
+            credit_result=credit_result,
+            loan_amount=loan_amount,
+            tenure_months=tenure_months,
+        )
+        floor_rate = float(input_data.get("floor_rate", opening_offer["floor_rate"]))
+        current_rate = float(input_data.get("current_rate", opening_offer["opening_rate"]))
+        opening_rate = float(opening_offer["opening_rate"])
+        max_rounds = int(opening_offer["max_rounds"])
+
+        if counter_rate is not None and not user_message:
+            user_message = f"Can you do {counter_rate}%?"
+
+        parsed = self.call_tool("process_counter", session_id=session_id, user_message=user_message)
+        if counter_rate is not None and parsed.get("intent") == "COUNTER":
+            parsed["requested_rate"] = float(counter_rate)
+
+        status_text = "ACTIVE"
+        next_agent = None
+
+        if not negotiation_requested and not user_message and counter_rate is None:
+            status_text = "ACCEPTED"
+            next_agent = "BlockchainAuditAgent"
+            reasoning = (
+                f"Applicant accepted opening offer at {current_rate:.2f}% without negotiation. "
+                "Handing over to blockchain audit for sanction letter generation."
             )
-            
-            output = {
-                "negotiation_completed": True,
-                "initial_rate": offered_rate,
-                "final_rate": final_result.get("final_rate"),
-                "monthly_emi": final_result.get("monthly_emi"),
-                "total_payable": final_result.get("total_payable"),
-                "rounds_used": 0,
-                "offer_accepted": True
-            }
-            
-            reasoning = f"Loan offer finalized at {offered_rate}% p.a. Monthly EMI: ₹{final_result.get('monthly_emi'):,.2f}"
-            status = AgentStatus.SUCCESS
-            next_agent = None
-            
+        elif parsed.get("intent") == "ACCEPT":
+            status_text = "ACCEPTED"
+            next_agent = "BlockchainAuditAgent"
+            reasoning = (
+                f"Applicant accepted the negotiated offer at {current_rate:.2f}%. "
+                "Handing over to blockchain audit for immutable offer recording."
+            )
+        elif parsed.get("intent") == "ESCALATE":
+            escalation = self.call_tool(
+                "escalate_to_human",
+                session_id=session_id,
+                reason="Applicant requested manual review during negotiation.",
+            )
+            status_text = "ESCALATED"
+            reasoning = (
+                f"Negotiation escalated to human loan officer. Reference: {escalation.get('reference_id')}."
+            )
         else:
-            # Process negotiation
-            negotiation = self.call_tool(
-                "start_negotiation",
-                loan_amount=loan_amount,
-                tenure=loan_term,
-                rate=offered_rate,
-                risk_tier=risk_tier
-            )
-            
-            if counter_rate:
-                # Process counter-offer
-                concession = self.call_tool(
-                    "calculate_concession",
-                    current_rate=offered_rate,
-                    counter_rate=counter_rate,
-                    risk_tier=risk_tier
+            rounds_remaining = max(0, max_rounds - rounds_taken)
+            if rounds_remaining <= 0:
+                reasoning = (
+                    f"Maximum negotiation rounds ({max_rounds}) already used. "
+                    f"Current offer remains {current_rate:.2f}%."
                 )
-                
-                final_rate = concession.get("new_rate", offered_rate)
             else:
-                final_rate = offered_rate
-            
-            # Finalize offer
-            final_result = self.call_tool(
-                "finalize_offer",
-                loan_amount=loan_amount,
-                tenure=loan_term,
-                final_rate=final_rate
-            )
-            
-            output = {
-                "negotiation_completed": True,
-                "initial_rate": offered_rate,
-                "final_rate": final_result.get("final_rate"),
-                "monthly_emi": final_result.get("monthly_emi"),
-                "total_payable": final_result.get("total_payable"),
-                "rounds_used": 1 if counter_rate else 0,
-                "counter_offer": counter_rate,
-                "offer_accepted": final_result.get("offer_accepted")
-            }
-            
-            reasoning = f"Negotiation completed. Final rate: {final_rate}% p.a. Monthly EMI: ₹{final_result.get('monthly_emi'):,.2f}"
-            status = AgentStatus.SUCCESS
-            next_agent = None
-        
+                if self.call_tool("check_floor_reached", current_rate=current_rate, floor_rate=floor_rate):
+                    escalation = self.call_tool(
+                        "escalate_to_human",
+                        session_id=session_id,
+                        reason="Applicant requested lower rate after floor was reached.",
+                    )
+                    status_text = "ESCALATED"
+                    reasoning = (
+                        f"Floor rate of {floor_rate:.2f}% reached. "
+                        f"Escalation offered with reference {escalation.get('reference_id')}."
+                    )
+                else:
+                    current_rate = max(floor_rate, round(current_rate - 0.25, 2))
+                    rounds_taken += 1
+                    reasoning = (
+                        f"Applicant countered and one concession of 0.25% was granted. "
+                        f"Updated offer is {current_rate:.2f}% with {max(0, max_rounds - rounds_taken)} rounds remaining."
+                    )
+
+        emi_data = self.call_tool(
+            "calculate_emi",
+            principal=loan_amount,
+            rate=current_rate,
+            tenure=tenure_months,
+        )
+        opening_emi_data = self.call_tool(
+            "calculate_emi",
+            principal=loan_amount,
+            rate=opening_rate,
+            tenure=tenure_months,
+        )
+        savings_achieved = int(opening_emi_data["total_payable"] - emi_data["total_payable"])
+        output = {
+            "agent": "NegotiationAgent",
+            "status": status_text,
+            "final_rate": round(current_rate, 2),
+            "loan_amount": loan_amount,
+            "tenure_months": tenure_months,
+            "emi": emi_data["emi"],
+            "monthly_emi": emi_data["emi"],
+            "total_payable": emi_data["total_payable"],
+            "total_interest": emi_data["total_interest"],
+            "rounds_taken": rounds_taken,
+            "rounds_used": rounds_taken,
+            "savings_achieved": savings_achieved,
+            "reasoning": reasoning,
+            "next_agent": next_agent,
+            "negotiation_completed": status_text in {"ACCEPTED", "ESCALATED"},
+        }
+        status = AgentStatus.ESCALATED if status_text == "ESCALATED" else AgentStatus.SUCCESS
         duration_ms = int((time.time() - start_time) * 1000)
-        
         return AgentResult(
             agent_name=self.name,
             status=status,
             output=output,
             reasoning=reasoning,
             next_agent=next_agent,
+            duration_ms=duration_ms
+        )
+
+
+# =============================================================================
+# AGENT 5: BLOCKCHAIN AUDIT AGENT
+# =============================================================================
+
+class BlockchainAuditAgent(BaseAgent):
+    """
+    BlockchainAuditAgent
+
+    Role: Sanction letter generation + blockchain hash storage.
+    """
+
+    _mock_ledger: dict[str, dict] = {}
+    _tx_counter: int = 0
+    _sanction_counter: int = 0
+
+    def __init__(self):
+        super().__init__(
+            name="BlockchainAuditAgent",
+            role="Generate sanction letter and store immutable audit hash",
+            tools=self._create_tools()
+        )
+
+    def _create_tools(self) -> list[Tool]:
+        return [
+            Tool(
+                name="generate_sanction_letter",
+                description="Generate sanction letter content and PDF payload",
+                func=self._generate_sanction_letter,
+                parameters={"loan_data": "dict"}
+            ),
+            Tool(
+                name="compute_sha256_hash",
+                description="Compute SHA-256 hash for given content",
+                func=self._compute_sha256_hash,
+                parameters={"content": "str"}
+            ),
+            Tool(
+                name="store_on_ledger",
+                description="Store hash and metadata on mock ledger",
+                func=self._store_on_ledger,
+                parameters={"hash": "str", "metadata": "dict"}
+            ),
+            Tool(
+                name="verify_hash",
+                description="Verify content integrity against hash",
+                func=self._verify_hash,
+                parameters={"hash": "str", "original_content": "str"}
+            ),
+            Tool(
+                name="generate_qr_code",
+                description="Generate QR code image as base64",
+                func=self._generate_qr_code,
+                parameters={"verification_url": "str"}
+            ),
+        ]
+
+    def _build_system_prompt(self) -> str:
+        return """You are BlockchainAuditAgent for LoanEase.
+1. Generate sanction letters from approved loan data
+2. Compute SHA-256 hash of letter content
+3. Persist hash to immutable-style ledger records
+4. Provide verification URL and QR code
+5. Return auditable sanction metadata to master agent"""
+
+    def _next_sanction_reference(self) -> str:
+        BlockchainAuditAgent._sanction_counter += 1
+        year = datetime.now(timezone.utc).year
+        return f"LE-{year}-{BlockchainAuditAgent._sanction_counter:05d}"
+
+    def _generate_sanction_letter(self, loan_data: dict) -> dict:
+        sanction_reference = loan_data.get("sanction_reference") or self._next_sanction_reference()
+        issued_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        content = (
+            f"LoanEase Sanction Letter\n"
+            f"Sanction Reference: {sanction_reference}\n"
+            f"Issue Timestamp: {issued_at}\n"
+            f"Applicant: {loan_data.get('applicant_name', 'Applicant')}\n"
+            f"Loan Amount: {loan_data.get('loan_amount')}\n"
+            f"Tenure (months): {loan_data.get('tenure_months')}\n"
+            f"Interest Rate (% p.a.): {loan_data.get('final_rate')}\n"
+            f"EMI: {loan_data.get('emi')}\n"
+            f"Total Payable: {loan_data.get('total_payable')}\n"
+            f"Total Interest: {loan_data.get('total_interest')}\n"
+            f"Terms: This sanction remains subject to final compliance and disbursement checks.\n"
+        )
+        # Mock PDF payload; production would render a real PDF binary.
+        pdf_base64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        return {
+            "sanction_reference": sanction_reference,
+            "issued_at": issued_at,
+            "content": content,
+            "pdf_base64": pdf_base64,
+        }
+
+    def _compute_sha256_hash(self, content: str) -> str:
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    def _store_on_ledger(self, hash: str, metadata: dict) -> dict:
+        BlockchainAuditAgent._tx_counter += 1
+        tx_id = f"TX-{BlockchainAuditAgent._tx_counter:05d}"
+        ledger_timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        record = {
+            "tx_id": tx_id,
+            "hash": hash,
+            "metadata": metadata,
+            "timestamp": ledger_timestamp,
+            "chain": "mock-ethereum-ready",
+            "version": 1,
+        }
+        BlockchainAuditAgent._mock_ledger[tx_id] = record
+        return {
+            "tx_id": tx_id,
+            "ledger_timestamp": ledger_timestamp,
+            "record": record,
+        }
+
+    def _verify_hash(self, hash: str, original_content: str) -> bool:
+        return self._compute_sha256_hash(original_content) == hash
+
+    def _generate_qr_code(self, verification_url: str) -> str:
+        # Deterministic mock QR image payload for now; replace with true QR renderer later.
+        pseudo_png = f"QR::{verification_url}".encode("utf-8")
+        return base64.b64encode(pseudo_png).decode("ascii")
+
+    def run(self, input_data: dict) -> AgentResult:
+        """
+        Execute blockchain audit flow and return BlockchainResult-compatible payload.
+        """
+        start_time = time.time()
+
+        loan_data = {
+            "applicant_name": input_data.get("applicant_name", "Applicant"),
+            "loan_amount": int(input_data.get("loan_amount", 0)),
+            "tenure_months": int(input_data.get("tenure_months", 0)),
+            "final_rate": float(input_data.get("final_rate", 0.0)),
+            "emi": int(input_data.get("emi", 0)),
+            "total_payable": int(input_data.get("total_payable", 0)),
+            "total_interest": int(input_data.get("total_interest", 0)),
+            "session_id": input_data.get("session_id"),
+        }
+
+        sanction = self.call_tool("generate_sanction_letter", loan_data=loan_data)
+        content_hash = self.call_tool("compute_sha256_hash", content=sanction["content"])
+        verification_url = f"/verify/{sanction['sanction_reference']}"
+        ledger = self.call_tool(
+            "store_on_ledger",
+            hash=content_hash,
+            metadata={
+                "sanction_reference": sanction["sanction_reference"],
+                "verification_url": verification_url,
+                "session_id": loan_data.get("session_id"),
+            },
+        )
+        hash_ok = self.call_tool("verify_hash", hash=content_hash, original_content=sanction["content"])
+        qr_code_base64 = self.call_tool("generate_qr_code", verification_url=verification_url)
+
+        reasoning = (
+            "Sanction letter content hashed using SHA-256. Hash stored in audit ledger with timestamp. "
+            "Document integrity can be verified at any time by recomputing hash."
+        )
+        if not hash_ok:
+            reasoning = "Sanction audit failed because computed hash could not be verified against source content."
+
+        output = {
+            "agent": "BlockchainAuditAgent",
+            "status": "SANCTIONED" if hash_ok else "FAILED",
+            "sanction_reference": sanction["sanction_reference"],
+            "sha256_hash": content_hash,
+            "ledger_transaction_id": ledger["tx_id"],
+            "ledger_timestamp": ledger["ledger_timestamp"],
+            "verification_url": verification_url,
+            "qr_code_base64": qr_code_base64,
+            "sanction_letter_pdf_base64": sanction["pdf_base64"],
+            "reasoning": reasoning,
+            "next_agent": None,
+        }
+
+        duration_ms = int((time.time() - start_time) * 1000)
+        return AgentResult(
+            agent_name=self.name,
+            status=AgentStatus.SUCCESS if hash_ok else AgentStatus.FAILED,
+            output=output,
+            reasoning=reasoning,
+            next_agent=None,
             duration_ms=duration_ms
         )
 
@@ -2075,6 +2258,11 @@ based on the workflow stage."""
                 output = result.get("output", {})
                 summary["application_summary"]["final_rate"] = output.get("final_rate")
                 summary["application_summary"]["negotiation_completed"] = output.get("negotiation_completed")
+            elif result.get("agent_name") == "BlockchainAuditAgent":
+                output = result.get("output", {})
+                summary["application_summary"]["sanction_reference"] = output.get("sanction_reference")
+                summary["application_summary"]["ledger_transaction_id"] = output.get("ledger_transaction_id")
+                summary["application_summary"]["sanction_status"] = output.get("status")
         
         summary["next_steps"] = [
             "Review and accept the loan offer",
@@ -2183,7 +2371,25 @@ based on the workflow stage."""
         else:
             final_result = underwriting_result
         
-        # Step 4: Run Translation Agent if needed
+        # Step 4: Run Blockchain Audit Agent when offer is accepted
+        blockchain_candidate = final_result.output if isinstance(final_result.output, dict) else {}
+        if blockchain_candidate.get("next_agent") == "BlockchainAuditAgent":
+            blockchain_input = {
+                "applicant_name": kyc_result.output.get("pan_details", {}).get("name", "Applicant"),
+                "loan_amount": blockchain_candidate.get("loan_amount"),
+                "tenure_months": blockchain_candidate.get("tenure_months"),
+                "final_rate": blockchain_candidate.get("final_rate"),
+                "emi": blockchain_candidate.get("emi"),
+                "total_payable": blockchain_candidate.get("total_payable"),
+                "total_interest": blockchain_candidate.get("total_interest"),
+                "session_id": session_id,
+            }
+            blockchain_agent = self.agents.get("BlockchainAuditAgent")
+            blockchain_result = blockchain_agent.run(blockchain_input)
+            workflow_history.append(blockchain_result.to_dict())
+            final_result = blockchain_result
+
+        # Step 5: Run Translation Agent if needed
         preferred_language = input_data.get("preferred_language", "en")
         
         if preferred_language != "en":
@@ -2197,10 +2403,10 @@ based on the workflow stage."""
             translation_result = translation_agent.run(translation_input)
             workflow_history.append(translation_result.to_dict())
         
-        # Step 5: Aggregate all results
+        # Step 6: Aggregate all results
         aggregated = self.call_tool("aggregate_results", results=workflow_history)
         
-        # Step 6: Generate summary
+        # Step 7: Generate summary
         summary = self.call_tool("generate_summary", agent_results=workflow_history)
         
         # Build final output
@@ -2665,6 +2871,7 @@ class LoanEaseOrchestrator:
             "CreditUnderwritingAgent": CreditUnderwritingAgent(),
             "Underwriting Agent": UnderwritingAgent(),  # Legacy kept for compatibility
             "Negotiation Agent": NegotiationAgent(),
+            "BlockchainAuditAgent": BlockchainAuditAgent(),
             "Translation Agent": TranslationAgent(),
         }
         
