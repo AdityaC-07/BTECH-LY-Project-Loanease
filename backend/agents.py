@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import os
 import time
+import base64
+import hashlib
+import io
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1232,6 +1235,7 @@ class NegotiationAgent(BaseAgent):
         tenure_months = int(loan_details.get("loan_term", input_data.get("tenure_months", 60)))
         rounds_taken = int(input_data.get("rounds_taken", 0))
         user_message = str(input_data.get("user_message", "")).strip()
+        negotiation_requested = bool(input_data.get("negotiation_requested", False))
         counter_rate = input_data.get("counter_rate")
 
         credit_result = {
@@ -1260,7 +1264,14 @@ class NegotiationAgent(BaseAgent):
         status_text = "ACTIVE"
         next_agent = None
 
-        if parsed.get("intent") == "ACCEPT":
+        if not negotiation_requested and not user_message and counter_rate is None:
+            status_text = "ACCEPTED"
+            next_agent = "BlockchainAuditAgent"
+            reasoning = (
+                f"Applicant accepted opening offer at {current_rate:.2f}% without negotiation. "
+                "Handing over to blockchain audit for sanction letter generation."
+            )
+        elif parsed.get("intent") == "ACCEPT":
             status_text = "ACCEPTED"
             next_agent = "BlockchainAuditAgent"
             reasoning = (
@@ -1342,6 +1353,194 @@ class NegotiationAgent(BaseAgent):
             output=output,
             reasoning=reasoning,
             next_agent=next_agent,
+            duration_ms=duration_ms
+        )
+
+
+# =============================================================================
+# AGENT 5: BLOCKCHAIN AUDIT AGENT
+# =============================================================================
+
+class BlockchainAuditAgent(BaseAgent):
+    """
+    BlockchainAuditAgent
+
+    Role: Sanction letter generation + blockchain hash storage.
+    """
+
+    _mock_ledger: dict[str, dict] = {}
+    _tx_counter: int = 0
+    _sanction_counter: int = 0
+
+    def __init__(self):
+        super().__init__(
+            name="BlockchainAuditAgent",
+            role="Generate sanction letter and store immutable audit hash",
+            tools=self._create_tools()
+        )
+
+    def _create_tools(self) -> list[Tool]:
+        return [
+            Tool(
+                name="generate_sanction_letter",
+                description="Generate sanction letter content and PDF payload",
+                func=self._generate_sanction_letter,
+                parameters={"loan_data": "dict"}
+            ),
+            Tool(
+                name="compute_sha256_hash",
+                description="Compute SHA-256 hash for given content",
+                func=self._compute_sha256_hash,
+                parameters={"content": "str"}
+            ),
+            Tool(
+                name="store_on_ledger",
+                description="Store hash and metadata on mock ledger",
+                func=self._store_on_ledger,
+                parameters={"hash": "str", "metadata": "dict"}
+            ),
+            Tool(
+                name="verify_hash",
+                description="Verify content integrity against hash",
+                func=self._verify_hash,
+                parameters={"hash": "str", "original_content": "str"}
+            ),
+            Tool(
+                name="generate_qr_code",
+                description="Generate QR code image as base64",
+                func=self._generate_qr_code,
+                parameters={"verification_url": "str"}
+            ),
+        ]
+
+    def _build_system_prompt(self) -> str:
+        return """You are BlockchainAuditAgent for LoanEase.
+1. Generate sanction letters from approved loan data
+2. Compute SHA-256 hash of letter content
+3. Persist hash to immutable-style ledger records
+4. Provide verification URL and QR code
+5. Return auditable sanction metadata to master agent"""
+
+    def _next_sanction_reference(self) -> str:
+        BlockchainAuditAgent._sanction_counter += 1
+        year = datetime.now(timezone.utc).year
+        return f"LE-{year}-{BlockchainAuditAgent._sanction_counter:05d}"
+
+    def _generate_sanction_letter(self, loan_data: dict) -> dict:
+        sanction_reference = loan_data.get("sanction_reference") or self._next_sanction_reference()
+        issued_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        content = (
+            f"LoanEase Sanction Letter\n"
+            f"Sanction Reference: {sanction_reference}\n"
+            f"Issue Timestamp: {issued_at}\n"
+            f"Applicant: {loan_data.get('applicant_name', 'Applicant')}\n"
+            f"Loan Amount: {loan_data.get('loan_amount')}\n"
+            f"Tenure (months): {loan_data.get('tenure_months')}\n"
+            f"Interest Rate (% p.a.): {loan_data.get('final_rate')}\n"
+            f"EMI: {loan_data.get('emi')}\n"
+            f"Total Payable: {loan_data.get('total_payable')}\n"
+            f"Total Interest: {loan_data.get('total_interest')}\n"
+            f"Terms: This sanction remains subject to final compliance and disbursement checks.\n"
+        )
+        # Mock PDF payload; production would render a real PDF binary.
+        pdf_base64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        return {
+            "sanction_reference": sanction_reference,
+            "issued_at": issued_at,
+            "content": content,
+            "pdf_base64": pdf_base64,
+        }
+
+    def _compute_sha256_hash(self, content: str) -> str:
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    def _store_on_ledger(self, hash: str, metadata: dict) -> dict:
+        BlockchainAuditAgent._tx_counter += 1
+        tx_id = f"TX-{BlockchainAuditAgent._tx_counter:05d}"
+        ledger_timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        record = {
+            "tx_id": tx_id,
+            "hash": hash,
+            "metadata": metadata,
+            "timestamp": ledger_timestamp,
+            "chain": "mock-ethereum-ready",
+            "version": 1,
+        }
+        BlockchainAuditAgent._mock_ledger[tx_id] = record
+        return {
+            "tx_id": tx_id,
+            "ledger_timestamp": ledger_timestamp,
+            "record": record,
+        }
+
+    def _verify_hash(self, hash: str, original_content: str) -> bool:
+        return self._compute_sha256_hash(original_content) == hash
+
+    def _generate_qr_code(self, verification_url: str) -> str:
+        # Deterministic mock QR image payload for now; replace with true QR renderer later.
+        pseudo_png = f"QR::{verification_url}".encode("utf-8")
+        return base64.b64encode(pseudo_png).decode("ascii")
+
+    def run(self, input_data: dict) -> AgentResult:
+        """
+        Execute blockchain audit flow and return BlockchainResult-compatible payload.
+        """
+        start_time = time.time()
+
+        loan_data = {
+            "applicant_name": input_data.get("applicant_name", "Applicant"),
+            "loan_amount": int(input_data.get("loan_amount", 0)),
+            "tenure_months": int(input_data.get("tenure_months", 0)),
+            "final_rate": float(input_data.get("final_rate", 0.0)),
+            "emi": int(input_data.get("emi", 0)),
+            "total_payable": int(input_data.get("total_payable", 0)),
+            "total_interest": int(input_data.get("total_interest", 0)),
+            "session_id": input_data.get("session_id"),
+        }
+
+        sanction = self.call_tool("generate_sanction_letter", loan_data=loan_data)
+        content_hash = self.call_tool("compute_sha256_hash", content=sanction["content"])
+        verification_url = f"/verify/{sanction['sanction_reference']}"
+        ledger = self.call_tool(
+            "store_on_ledger",
+            hash=content_hash,
+            metadata={
+                "sanction_reference": sanction["sanction_reference"],
+                "verification_url": verification_url,
+                "session_id": loan_data.get("session_id"),
+            },
+        )
+        hash_ok = self.call_tool("verify_hash", hash=content_hash, original_content=sanction["content"])
+        qr_code_base64 = self.call_tool("generate_qr_code", verification_url=verification_url)
+
+        reasoning = (
+            "Sanction letter content hashed using SHA-256. Hash stored in audit ledger with timestamp. "
+            "Document integrity can be verified at any time by recomputing hash."
+        )
+        if not hash_ok:
+            reasoning = "Sanction audit failed because computed hash could not be verified against source content."
+
+        output = {
+            "agent": "BlockchainAuditAgent",
+            "status": "SANCTIONED" if hash_ok else "FAILED",
+            "sanction_reference": sanction["sanction_reference"],
+            "sha256_hash": content_hash,
+            "ledger_transaction_id": ledger["tx_id"],
+            "ledger_timestamp": ledger["ledger_timestamp"],
+            "verification_url": verification_url,
+            "qr_code_base64": qr_code_base64,
+            "sanction_letter_pdf_base64": sanction["pdf_base64"],
+            "reasoning": reasoning,
+            "next_agent": None,
+        }
+
+        duration_ms = int((time.time() - start_time) * 1000)
+        return AgentResult(
+            agent_name=self.name,
+            status=AgentStatus.SUCCESS if hash_ok else AgentStatus.FAILED,
+            output=output,
+            reasoning=reasoning,
+            next_agent=None,
             duration_ms=duration_ms
         )
 
@@ -2059,6 +2258,11 @@ based on the workflow stage."""
                 output = result.get("output", {})
                 summary["application_summary"]["final_rate"] = output.get("final_rate")
                 summary["application_summary"]["negotiation_completed"] = output.get("negotiation_completed")
+            elif result.get("agent_name") == "BlockchainAuditAgent":
+                output = result.get("output", {})
+                summary["application_summary"]["sanction_reference"] = output.get("sanction_reference")
+                summary["application_summary"]["ledger_transaction_id"] = output.get("ledger_transaction_id")
+                summary["application_summary"]["sanction_status"] = output.get("status")
         
         summary["next_steps"] = [
             "Review and accept the loan offer",
@@ -2167,7 +2371,25 @@ based on the workflow stage."""
         else:
             final_result = underwriting_result
         
-        # Step 4: Run Translation Agent if needed
+        # Step 4: Run Blockchain Audit Agent when offer is accepted
+        blockchain_candidate = final_result.output if isinstance(final_result.output, dict) else {}
+        if blockchain_candidate.get("next_agent") == "BlockchainAuditAgent":
+            blockchain_input = {
+                "applicant_name": kyc_result.output.get("pan_details", {}).get("name", "Applicant"),
+                "loan_amount": blockchain_candidate.get("loan_amount"),
+                "tenure_months": blockchain_candidate.get("tenure_months"),
+                "final_rate": blockchain_candidate.get("final_rate"),
+                "emi": blockchain_candidate.get("emi"),
+                "total_payable": blockchain_candidate.get("total_payable"),
+                "total_interest": blockchain_candidate.get("total_interest"),
+                "session_id": session_id,
+            }
+            blockchain_agent = self.agents.get("BlockchainAuditAgent")
+            blockchain_result = blockchain_agent.run(blockchain_input)
+            workflow_history.append(blockchain_result.to_dict())
+            final_result = blockchain_result
+
+        # Step 5: Run Translation Agent if needed
         preferred_language = input_data.get("preferred_language", "en")
         
         if preferred_language != "en":
@@ -2181,10 +2403,10 @@ based on the workflow stage."""
             translation_result = translation_agent.run(translation_input)
             workflow_history.append(translation_result.to_dict())
         
-        # Step 5: Aggregate all results
+        # Step 6: Aggregate all results
         aggregated = self.call_tool("aggregate_results", results=workflow_history)
         
-        # Step 6: Generate summary
+        # Step 7: Generate summary
         summary = self.call_tool("generate_summary", agent_results=workflow_history)
         
         # Build final output
@@ -2649,6 +2871,7 @@ class LoanEaseOrchestrator:
             "CreditUnderwritingAgent": CreditUnderwritingAgent(),
             "Underwriting Agent": UnderwritingAgent(),  # Legacy kept for compatibility
             "Negotiation Agent": NegotiationAgent(),
+            "BlockchainAuditAgent": BlockchainAuditAgent(),
             "Translation Agent": TranslationAgent(),
         }
         
