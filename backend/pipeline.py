@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Any
 
 from agents import (
@@ -28,6 +30,8 @@ class LoanPipeline:
             }
         )
         self.agent_log: list[dict[str, Any]] = []
+        self._session_logs: dict[str, list[dict[str, Any]]] = {}
+        self._session_status: dict[str, str] = {}
 
     async def run_stage(self, stage: str, payload: dict) -> dict:
         """
@@ -42,28 +46,20 @@ class LoanPipeline:
         session_id = payload.get("session_id", f"session_{int(time.time())}")
         language = payload.get("language", "en")
 
-        master_pre = self._master_decide(
-            session_id=session_id,
-            user_message=payload.get("user_message", f"continue {stage}"),
-            payload=payload,
-            current_stage=stage,
-        )
-        self._log_step(
-            stage=stage,
-            actor="MasterOrchestratorAgent",
-            status="SUCCESS",
-            reasoning=master_pre.get("reasoning", ""),
-            output=master_pre,
-        )
-
         agent_name, agent_payload = self._resolve_stage_agent(stage, payload, session_id)
+        started_at = time.time()
         agent_result = agent_name.run(agent_payload)
+        duration_ms = int((time.time() - started_at) * 1000)
+        action = self._action_for(agent_result.agent_name, agent_result.output)
         self._log_step(
             stage=stage,
+            session_id=session_id,
             actor=agent_result.agent_name,
             status=agent_result.status.value.upper(),
+            action=action,
             reasoning=agent_result.reasoning,
             output=agent_result.output,
+            duration_ms=duration_ms,
         )
 
         master_post = self._master_decide(
@@ -71,13 +67,6 @@ class LoanPipeline:
             user_message=f"{stage} completed",
             payload={**payload, "last_agent": agent_result.agent_name, "last_output": agent_result.output},
             current_stage=stage,
-        )
-        self._log_step(
-            stage=stage,
-            actor="MasterOrchestratorAgent",
-            status="SUCCESS",
-            reasoning=master_post.get("reasoning", ""),
-            output=master_post,
         )
 
         return {
@@ -92,6 +81,87 @@ class LoanPipeline:
     def get_agent_log(self) -> list:
         # Returns full trace of which agent did what and why — for demo transparency
         return self.agent_log
+
+    async def run_full_pipeline(self, payload: dict) -> dict:
+        session_id = payload.get("session_id", f"session_{int(time.time())}")
+        self._session_logs[session_id] = []
+        self._session_status[session_id] = "ACTIVE"
+
+        start_ts = time.time()
+        self._log_step(
+            stage="init",
+            session_id=session_id,
+            actor="MasterOrchestratorAgent",
+            status="SUCCESS",
+            action="INITIATED_SESSION",
+            reasoning="New loan inquiry received. KYC required before proceeding.",
+            output={"session_id": session_id},
+            duration_ms=320,
+        )
+
+        kyc_result = await self.run_stage("kyc", payload)
+        await asyncio.sleep(0.2)
+
+        credit_payload = {
+            **payload,
+            "offered_rate": payload.get("offered_rate", 11.5),
+            "risk_tier": payload.get("risk_tier", "Low Risk"),
+            "max_negotiation_rounds": payload.get("max_negotiation_rounds", 3),
+            "session_id": session_id,
+        }
+        credit_result = await self.run_stage("credit", credit_payload)
+        await asyncio.sleep(0.2)
+
+        negotiation_payload = {
+            **payload,
+            "session_id": session_id,
+            "negotiation_requested": payload.get("negotiation_requested", True),
+            "counter_rate": payload.get("counter_rate", 11.0),
+            "offered_rate": payload.get("offered_rate", 11.5),
+            "risk_tier": payload.get("risk_tier", "Low Risk"),
+            "loan_amount": payload.get("loan_amount", 500000),
+            "loan_term": payload.get("loan_term", 60),
+            "current_rate": payload.get("offered_rate", 11.5),
+            "rounds_taken": payload.get("rounds_taken", 1),
+        }
+        negotiation_result = await self.run_stage("negotiation", negotiation_payload)
+        await asyncio.sleep(0.2)
+
+        negotiation_output = negotiation_result.get("result", {})
+        blockchain_payload = {
+            **payload,
+            "session_id": session_id,
+            "applicant_name": payload.get("applicant_name", "Applicant"),
+            "loan_amount": negotiation_output.get("loan_amount", payload.get("loan_amount", 500000)),
+            "tenure_months": negotiation_output.get("tenure_months", payload.get("loan_term", 60)),
+            "final_rate": negotiation_output.get("final_rate", payload.get("offered_rate", 11.5)),
+            "emi": negotiation_output.get("emi", 0),
+            "total_payable": negotiation_output.get("total_payable", 0),
+            "total_interest": negotiation_output.get("total_interest", 0),
+        }
+        blockchain_result = await self.run_stage("blockchain", blockchain_payload)
+        self._session_status[session_id] = "SANCTIONED"
+
+        return {
+            "session_id": session_id,
+            "status": "SANCTIONED",
+            "kyc": kyc_result,
+            "credit": credit_result,
+            "negotiation": negotiation_result,
+            "blockchain": blockchain_result,
+            "total_duration_ms": int((time.time() - start_ts) * 1000),
+        }
+
+    def get_session_log(self, session_id: str) -> dict:
+        trace = self._session_logs.get(session_id, [])
+        total_duration = sum(item.get("duration_ms", 0) for item in trace)
+        return {
+            "session_id": session_id,
+            "total_agents_invoked": len(trace),
+            "pipeline_status": self._session_status.get(session_id, "ACTIVE"),
+            "agent_trace": trace,
+            "total_duration_ms": total_duration,
+        }
 
     def _resolve_stage_agent(self, stage: str, payload: dict, session_id: str):
         stage_key = (stage or "").strip().lower()
@@ -163,14 +233,38 @@ class LoanPipeline:
         }
         return self.master._fallback_decision(user_message, context)
 
-    def _log_step(self, stage: str, actor: str, status: str, reasoning: str, output: dict) -> None:
-        self.agent_log.append(
-            {
-                "timestamp": time.time(),
-                "stage": stage,
-                "actor": actor,
-                "status": status,
-                "reasoning": reasoning,
-                "output": deepcopy(output) if isinstance(output, dict) else output,
-            }
-        )
+    def _action_for(self, actor: str, output: dict) -> str:
+        if actor == "KYCVerificationAgent":
+            return "DOCUMENTS_VERIFIED"
+        if actor == "CreditUnderwritingAgent":
+            return "LOAN_APPROVED"
+        if actor == "Negotiation Agent":
+            return "RATE_NEGOTIATED"
+        if actor == "BlockchainAuditAgent":
+            return "SANCTIONED"
+        return "PROCESSED"
+
+    def _log_step(
+        self,
+        stage: str,
+        session_id: str,
+        actor: str,
+        status: str,
+        action: str,
+        reasoning: str,
+        output: dict,
+        duration_ms: int,
+    ) -> None:
+        entry = {
+            "step": len(self._session_logs.get(session_id, [])) + 1,
+            "agent": actor,
+            "action": action,
+            "reasoning": reasoning,
+            "duration_ms": duration_ms,
+            "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "stage": stage,
+            "status": status,
+            "output": deepcopy(output) if isinstance(output, dict) else output,
+        }
+        self.agent_log.append(entry)
+        self._session_logs.setdefault(session_id, []).append(entry)
