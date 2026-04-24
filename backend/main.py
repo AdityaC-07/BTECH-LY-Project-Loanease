@@ -1,0 +1,134 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+import logging
+import time
+from datetime import datetime
+
+# Import all routers
+from agents.kyc_agent.main import router as kyc_router
+from agents.underwriting_agent.main import router as underwriting_router
+from agents.negotiation_agent.main import router as negotiation_router
+from agents.blockchain_agent.main import router as blockchain_router
+from agents.master_agent.main import router as master_router
+from core.groq_client import router as groq_router
+
+logger = logging.getLogger("loanease")
+
+# Global uptime tracking
+_start_time = time.time()
+
+def get_uptime() -> int:
+    return int(time.time() - _start_time)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # STARTUP — runs once when server starts
+    logger.info("🚀 LoanEase backend starting...")
+    
+    # Load XGBoost model into memory once
+    from agents.underwriting_agent.main import load_model
+    load_model()
+    logger.info("✅ XGBoost model loaded")
+    
+    # Initialize blockchain ledger
+    from agents.blockchain_agent.main import init_ledger
+    init_ledger()
+    logger.info("✅ Blockchain ledger initialized")
+    
+    # Generate/load RSA keys
+    from agents.blockchain_agent.main import load_keys
+    load_keys()
+    logger.info("✅ Cryptographic keys ready")
+    
+    # Initialize RapidOCR engine
+    from services.ocr import init_ocr
+    init_ocr()
+    logger.info("✅ OCR engine ready")
+    
+    # Verify Groq API connectivity
+    from core.groq_client import verify_connection
+    groq_ok = await verify_connection()
+    if groq_ok:
+        logger.info("✅ Groq API connected — LLaMA 3.3 70B active")
+    else:
+        logger.warning("⚠️  Groq API unreachable — fallback mode active")
+    
+    logger.info("🎯 All 5 agents ready")
+    logger.info("📡 LoanEase API running on http://localhost:8000")
+    
+    yield  # Server runs here
+    
+    # SHUTDOWN
+    logger.info("🛑 LoanEase backend shutting down")
+
+app = FastAPI(
+    title="LoanEase API",
+    description="Agentic AI Personal Loan System",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://localhost:8080",
+        "http://localhost:8081",
+        "http://localhost:8082"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
+
+# Mount all routers with clean prefixes
+app.include_router(kyc_router, prefix="/kyc", tags=["KYC Agent"])
+app.include_router(underwriting_router, prefix="/credit", tags=["Credit Agent"])
+app.include_router(negotiation_router, prefix="/negotiate", tags=["Negotiation Agent"])
+app.include_router(blockchain_router, prefix="/blockchain", tags=["Blockchain Agent"])
+app.include_router(master_router, prefix="/pipeline", tags=["Master Orchestrator"])
+app.include_router(groq_router, prefix="/ai", tags=["AI/Translation"])
+
+# Root health check
+@app.get("/")
+async def root():
+    return {
+        "service": "LoanEase Agentic AI Backend",
+        "version": "1.0.0",
+        "status": "running",
+        "agents": [
+            "KYCVerificationAgent",
+            "CreditUnderwritingAgent", 
+            "NegotiationAgent",
+            "BlockchainAuditAgent",
+            "MasterOrchestratorAgent"
+        ],
+        "docs": "http://localhost:8000/docs",
+        "started_at": datetime.fromtimestamp(_start_time).isoformat()
+    }
+
+# Master health check across all agents
+@app.get("/health")
+async def health():
+    from agents.underwriting_agent.main import model_loaded
+    from agents.blockchain_agent.main import ledger_ready
+    from core.groq_client import groq_status
+    from services.ocr import ocr_ready
+    
+    return {
+        "status": "healthy",
+        "uptime_seconds": get_uptime(),
+        "agents": {
+            "kyc_agent": "ready" if ocr_ready() else "degraded",
+            "underwriting_agent": "ready" if model_loaded() else "error",
+            "negotiation_agent": "ready",
+            "blockchain_agent": "ready" if ledger_ready() else "error",
+            "master_agent": "ready"
+        },
+        "groq": groq_status(),
+        "timestamp": datetime.utcnow().isoformat()
+    }

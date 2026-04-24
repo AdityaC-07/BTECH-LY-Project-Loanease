@@ -292,7 +292,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     form.append("document", file);
     form.append("language", language);
 
-    const response = await fetch("http://localhost:8003/kyc/extract/pan", {
+    const response = await fetch("http://localhost:8004/kyc/extract/pan", {
       method: "POST",
       body: form,
     });
@@ -309,7 +309,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     const form = new FormData();
     form.append("document", file);
 
-    const response = await fetch("http://localhost:8003/kyc/extract/aadhaar", {
+    const response = await fetch("http://localhost:8004/kyc/extract/aadhaar", {
       method: "POST",
       body: form,
     });
@@ -327,7 +327,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     form.append("pan", panDoc);
     form.append("aadhaar", aadhaarDoc);
 
-    const response = await fetch("http://localhost:8003/kyc/verify", {
+    const response = await fetch("http://localhost:8004/kyc/verify", {
       method: "POST",
       body: form,
     });

@@ -43,7 +43,8 @@ def test_aadhaar_extraction():
     test_image = create_test_aadhaar_image()
     
     # Test the endpoint
-    url = "http://localhost:8003/kyc/extract/aadhaar"
+    KYC_BASE_URL = "http://localhost:8004"
+    url = KYC_BASE_URL + "/kyc/extract/aadhaar"
     
     files = {
         'document': ('test_aadhaar.png', test_image, 'image/png'),
@@ -76,7 +77,7 @@ def test_health():
     print("🔍 Testing KYC Service Health...")
     
     try:
-        response = requests.get("http://localhost:8003/health", timeout=10)
+        response = requests.get("http://localhost:8004/health", timeout=10)
         
         if response.status_code == 200:
             health = response.json()

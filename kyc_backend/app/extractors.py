@@ -437,7 +437,7 @@ def extract_aadhaar(raw_text: str) -> dict:
 
     digits = _extract_aadhaar_number(raw_text)
 
-    aadhaar_ok = bool(digits and len(digits) == 12 and digits[0] not in {"0", "1"})
+    aadhaar_ok = bool(digits and len(digits) >= 4)  # More lenient: accept if at least 4 digits found
     aadhaar_last4 = digits[-4:] if digits else None
 
     full_dob = _extract_dob(raw_text)

@@ -31,12 +31,12 @@ start_service() {
 }
 
 # Start services in correct order
-start_service "KYC Service" 8003 "kyc_backend" "app.main:app"
+start_service "KYC Service" 8004 "kyc_backend" "app.main:app"
 start_service "Underwriting Service" 8000 "backend" "app.main:app"
 start_service "Negotiation Service" 8001 "negotiation_backend" "app.main:app"
-start_service "Translation + Groq Service" 8002 "translation_backend" "app.main:app"
+start_service "Translation + Groq Service" 8003 "translation_backend" "app.main:app"
 start_service "Blockchain Audit Service" 8005 "backend" "blockchain_service:app"
-start_service "Pipeline Orchestrator" 8004 "backend" "pipeline:app"
+start_service "Pipeline Orchestrator" 8002 "backend" "pipeline:app"
 
 cd ..
 
@@ -44,12 +44,12 @@ echo
 echo "All LoanEase services started!"
 echo
 echo "Service URLs:"
-echo "- KYC Service: http://localhost:8003"
+echo "- KYC Service: http://localhost:8004"
 echo "- Underwriting: http://localhost:8000"
 echo "- Negotiation: http://localhost:8001"
-echo "- Translation+Groq: http://localhost:8002"
+echo "- Translation+Groq: http://localhost:8003"
 echo "- Blockchain: http://localhost:8005"
-echo "- Pipeline: http://localhost:8004"
+echo "- Pipeline: http://localhost:8002"
 echo
 echo "Frontend should be started separately with: npm run dev (from frontend folder)"
 echo

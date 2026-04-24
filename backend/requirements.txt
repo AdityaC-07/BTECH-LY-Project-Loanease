@@ -1,18 +1,31 @@
-fastapi==0.116.1
-uvicorn[standard]==0.35.0
-pandas==2.3.2
-numpy==2.2.6
-scikit-learn==1.7.1
-xgboost==3.0.4
-shap==0.48.0
-joblib==1.5.1
-# Agent orchestration dependencies
-groq==0.11.0
-python-dotenv==1.0.1
-asyncio
-pydantic>=2.0.0
+# Core FastAPI dependencies
+fastapi
+uvicorn[standard]
+pydantic-settings
+python-dotenv
 
-# Blockchain and cryptographic dependencies
-reportlab==4.0.7
-qrcode[pil]==7.4.2
-cryptography>=3.4.8
+# AI/ML dependencies
+groq
+xgboost
+scikit-learn
+shap
+joblib
+pandas
+numpy
+
+# OCR and image processing
+rapidocr-onnxruntime
+opencv-python
+Pillow
+pdf2image
+rapidfuzz
+python-multipart
+
+# Blockchain and document generation
+reportlab
+qrcode[pil]
+cryptography
+
+# Additional utilities
+pydantic>=2.0.0
+httpx

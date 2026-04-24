@@ -455,24 +455,24 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 ```
 
-**Terminal 4 - Translation + Groq Service (Port 8002):**
+**Terminal 4 - Translation + Groq Service (Port 8003):**
 
 ```powershell
 cd translation_backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8002
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8003
 ```
 
-**Terminal 5 - KYC OCR Service (Port 8003):**
+**Terminal 5 - KYC OCR Service (Port 8004):**
 
 ```powershell
 cd kyc_backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8003
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8004
 ```
 
 **Terminal 6 - Blockchain Audit Service (Port 8005):**
@@ -485,14 +485,14 @@ pip install -r requirements.txt
 uvicorn blockchain_service:app --reload --host 0.0.0.0 --port 8005
 ```
 
-**Terminal 7 - Pipeline Orchestrator (Port 8004):**
+**Terminal 7 - Pipeline Orchestrator (Port 8002):**
 
 ```powershell
 cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-uvicorn pipeline:app --reload --host 0.0.0.0 --port 8004
+uvicorn pipeline:app --reload --host 0.0.0.0 --port 8002
 ```
 
 ### 📋 Service URLs
@@ -501,10 +501,10 @@ All services are now running:
 - **Frontend**: http://localhost:5173
 - **Underwriting**: http://localhost:8000/docs
 - **Negotiation**: http://localhost:8001/docs
-- **Translation + Groq**: http://localhost:8002/docs
-- **KYC OCR**: http://localhost:8003/docs
+- **Translation + Groq**: http://localhost:8003/docs
+- **KYC OCR**: http://localhost:8004/docs
 - **Blockchain Audit**: http://localhost:8005/docs
-- **Pipeline Orchestrator**: http://localhost:8004/docs
+- **Pipeline Orchestrator**: http://localhost:8002/docs
 
 ### 🔧 Prerequisites
 
@@ -526,23 +526,23 @@ pip install -r requirements.txt
 ### 🎯 Service Startup Order
 
 The startup script automatically handles the correct order:
-1. **KYC Service** (Port 8003) - Must start first for PAN upload
+1. **KYC Service** (Port 8004) - Must start first for PAN upload
 2. **Underwriting** (Port 8000) - Credit assessment
 3. **Negotiation** (Port 8001) - Rate negotiation
-4. **Translation + Groq** (Port 8002) - AI-powered responses
+4. **Translation + Groq** (Port 8003) - AI-powered responses
 5. **Blockchain Audit** (Port 8005) - Document signing and verification
-6. **Pipeline Orchestrator** (Port 8004) - Coordinates all agents
+6. **Pipeline Orchestrator** (Port 8002) - Coordinates all agents
 
 ### 🔍 Health Checks
 
 Verify all services are running:
 ```bash
-curl http://localhost:8003/health  # KYC
+curl http://localhost:8004/health  # KYC
 curl http://localhost:8000/health  # Underwriting
 curl http://localhost:8001/health  # Negotiation
-curl http://localhost:8002/health  # Translation+Groq
+curl http://localhost:8003/health  # Translation+Groq
 curl http://localhost:8005/health  # Blockchain Audit
-curl http://localhost:8004/health  # Pipeline Orchestrator
+curl http://localhost:8002/health  # Pipeline Orchestrator
 ```
 
 ---
