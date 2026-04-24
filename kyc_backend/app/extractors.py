@@ -126,12 +126,20 @@ def _extract_pan_number(raw_text: str) -> str | None:
     if direct_match:
         return direct_match.group(0)
 
-    # OCR fallback: inspect 10-char alpha-numeric tokens and normalize common misreads.
-    candidates = re.findall(r"\b[A-Z0-9]{10}\b", re.sub(r"[^A-Z0-9\s]", " ", upper))
-    for cand in candidates:
-        normalized = _normalize_pan_candidate(cand)
-        if _validate_pan_format(normalized):
-            return normalized
+    # OCR fallback: PANs often arrive with spaces, punctuation, or broken tokens.
+    compact_sources = [upper]
+    compact_sources.extend(line.upper() for line in raw_text.splitlines() if line.strip())
+
+    for source in compact_sources:
+        compact = re.sub(r"[^A-Z0-9]", "", source)
+        if len(compact) < 10:
+            continue
+
+        for start in range(0, len(compact) - 9):
+            window = compact[start : start + 10]
+            normalized = _normalize_pan_candidate(window)
+            if _validate_pan_format(normalized):
+                return normalized
 
     return None
 

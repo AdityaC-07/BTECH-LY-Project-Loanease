@@ -383,10 +383,15 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       const result = await callKycPanExtractAPI(file);
       stopKycProgress(timer);
 
-      setPanKycData(result.extracted_fields);
+      const extractedPanCandidate = normalizePan(result.extracted_fields?.pan_number || "");
+      const panCandidateValid = isValidPan(extractedPanCandidate);
+      setPanKycData({
+        ...result.extracted_fields,
+        pan_number: panCandidateValid ? extractedPanCandidate : result.extracted_fields?.pan_number,
+      });
       const issues: string[] = result.validation?.issues || [];
       const confidence = Number(result.confidence_score || 0);
-      const panFound = Boolean(result.validation?.pan_format_valid);
+      const panFound = Boolean(result.validation?.pan_format_valid || panCandidateValid);
       const nameFound = Boolean(result.validation?.name_found);
       const dobFound = Boolean(result.validation?.dob_found);
 
