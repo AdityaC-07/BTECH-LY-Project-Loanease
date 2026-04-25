@@ -1,10 +1,9 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
-import time
-from datetime import datetime
 from typing import Any, Dict
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from pydantic import BaseModel
 
@@ -12,9 +11,11 @@ from pydantic import BaseModel
 from agents.kyc_agent.main import router as kyc_router
 from agents.underwriting_agent.main import router as underwriting_router
 from agents.negotiation_agent.main import router as negotiation_router
-from agents.blockchain_agent.enhanced_main import router as blockchain_router
+from agents.blockchain_agent.main import router as blockchain_router
 from agents.master_agent.main import router as master_router
-from core.groq_client import router as groq_router
+from routers.ai_router import router as ai_router
+from services.groq_service import GroqService
+from services.memory import ConversationMemory
 from core.config import settings
 from core.session import session_store
 
@@ -40,46 +41,44 @@ class EscalationPreferenceRequest(BaseModel):
     preferred_time: str
     whatsapp_opt_in: bool
 
-# Global uptime tracking
-_start_time = time.time()
-
-def get_uptime() -> int:
-    return int(time.time() - _start_time)
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # STARTUP — runs once when server starts
-    logger.info("🚀 LoanEase backend starting...")
-    
-    # Load XGBoost model into memory once
-    from agents.underwriting_agent.main import load_model
-    load_model()
-    logger.info("✅ XGBoost model loaded")
-    
-    # Initialize enhanced blockchain ledger
-    from agents.blockchain_agent.enhanced_main import init_ledger
-    init_ledger()
-    logger.info("✅ Enhanced blockchain ledger initialized")
-    
-    # Generate/load RSA keys (included in init_ledger)
-    logger.info("✅ Cryptographic keys ready")
-    
-    # Initialize RapidOCR engine
-    from services.ocr import init_ocr
-    init_ocr()
-    logger.info("✅ OCR engine ready")
-    
-    # Skip Groq API verification during startup to avoid initialization issues
-    # Groq service will be initialized lazily when needed
-    logger.info("ℹ️  Groq API service will be initialized on first use")
-    
-    logger.info("🎯 All 5 agents ready")
-    logger.info("📡 LoanEase API running on http://localhost:8000")
-    
-    yield  # Server runs here
-    
-    # SHUTDOWN
-    logger.info("🛑 LoanEase backend shutting down")
+    logger.info("LoanEase backend starting")
+
+    # 1) Groq service.
+    app.state.groq_service = GroqService(
+        api_key=settings.GROQ_API_KEY,
+        primary_model=settings.GROQ_MODEL_PRIMARY,
+        fallback_model=settings.GROQ_MODEL_FALLBACK,
+        timeout=settings.GROQ_TIMEOUT,
+    )
+    await app.state.groq_service.verify_connection()
+
+    # 2) Redis (optional) with graceful fallback.
+    redis_client: Any = None
+    if settings.REDIS_URL:
+        try:
+            import redis.asyncio as redis
+
+            redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+            await redis_client.ping()
+        except Exception:
+            logger.warning("Redis unavailable — using in-process memory")
+            redis_client = None
+    else:
+        logger.info("Redis URL not configured; running in dev mode")
+
+    # 3) Conversation memory wired to Redis or local fallback.
+    app.state.memory = ConversationMemory(redis_client)
+    app.state.saved_sessions: Dict[str, Dict[str, Any]] = {}
+    app.state.escalation_preferences: Dict[str, Dict[str, Any]] = {}
+
+    yield
+
+    # 4) Shutdown clean-up.
+    if redis_client is not None:
+        await redis_client.aclose()
+    logger.info("LoanEase backend shutting down")
 
 app = FastAPI(
     title="LoanEase API",
@@ -91,14 +90,7 @@ app = FastAPI(
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
-        "http://localhost:8080",
-        "http://localhost:8081",
-        "http://localhost:8082"
-    ],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
@@ -110,7 +102,7 @@ app.include_router(underwriting_router, prefix="/credit", tags=["Credit Agent"])
 app.include_router(negotiation_router, prefix="/negotiate", tags=["Negotiation Agent"])
 app.include_router(blockchain_router, prefix="/blockchain", tags=["Blockchain Agent"])
 app.include_router(master_router, prefix="/pipeline", tags=["Master Orchestrator"])
-app.include_router(groq_router, prefix="/ai", tags=["AI Agent"])
+app.include_router(ai_router)
 
 # Root health check
 @app.get("/")
@@ -127,28 +119,15 @@ async def root():
             "MasterOrchestratorAgent"
         ],
         "docs": "http://localhost:8000/docs",
-        "started_at": datetime.fromtimestamp(_start_time).isoformat()
     }
 
 # Master health check across all agents
 @app.get("/health")
 async def health():
-    from agents.underwriting_agent.main import model_loaded
-    from agents.blockchain_agent.enhanced_main import ledger_ready
-    from services.ocr import ocr_ready
-    
     return {
-        "status": "healthy",
-        "uptime_seconds": get_uptime(),
-        "agents": {
-            "kyc_agent": "ready" if ocr_ready() else "degraded",
-            "underwriting_agent": "ready" if model_loaded() else "error",
-            "negotiation_agent": "ready",
-            "blockchain_agent": "ready" if ledger_ready() else "error",
-            "master_agent": "ready"
-        },
-        "groq": app.state.groq_service.status(),
-        "timestamp": datetime.utcnow().isoformat()
+        "status": "ok",
+        "version": app.version,
+        "groq": "connected",
     }
 
 
