@@ -1,4 +1,5 @@
-from pydantic_settings import BaseSettings
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # Groq
@@ -23,6 +24,10 @@ class Settings(BaseSettings):
     
     # Session
     SESSION_TTL_HOURS: int = 24
+
+    # Infra
+    REDIS_URL: str | None = None
+    CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     
     # OCR
     MAX_UPLOAD_BYTES: int = 5 * 1024 * 1024  # 5MB
@@ -33,7 +38,13 @@ class Settings(BaseSettings):
     # Frontend domains
     FRONTEND_DOMAIN: str = "https://loanease.example.com"
     
-    class Config:
-        env_file = ".env"
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    model_config = SettingsConfigDict(env_file=".env")
 
 settings = Settings()
