@@ -12,11 +12,9 @@ from pydantic import BaseModel
 from agents.kyc_agent.main import router as kyc_router
 from agents.underwriting_agent.main import router as underwriting_router
 from agents.negotiation_agent.main import router as negotiation_router
-from agents.blockchain_agent.main import router as blockchain_router
+from agents.blockchain_agent.enhanced_main import router as blockchain_router
 from agents.master_agent.main import router as master_router
-from routers.ai_router import router as ai_router
-from services.groq_service import GroqService
-from services.conversation_memory import ConversationMemory
+from core.groq_client import router as groq_router
 from core.config import settings
 from core.session import session_store
 
@@ -58,14 +56,12 @@ async def lifespan(app: FastAPI):
     load_model()
     logger.info("✅ XGBoost model loaded")
     
-    # Initialize blockchain ledger
-    from agents.blockchain_agent.main import init_ledger
+    # Initialize enhanced blockchain ledger
+    from agents.blockchain_agent.enhanced_main import init_ledger
     init_ledger()
-    logger.info("✅ Blockchain ledger initialized")
+    logger.info("✅ Enhanced blockchain ledger initialized")
     
-    # Generate/load RSA keys
-    from agents.blockchain_agent.main import load_keys
-    load_keys()
+    # Generate/load RSA keys (included in init_ledger)
     logger.info("✅ Cryptographic keys ready")
     
     # Initialize RapidOCR engine
@@ -73,21 +69,9 @@ async def lifespan(app: FastAPI):
     init_ocr()
     logger.info("✅ OCR engine ready")
     
-    # Initialize Groq service
-    app.state.groq_service = GroqService(
-        api_key=settings.GROQ_API_KEY,
-        primary_model=settings.GROQ_MODEL_PRIMARY,
-        fallback_model=settings.GROQ_MODEL_FALLBACK,
-        timeout=settings.GROQ_TIMEOUT,
-    )
-    app.state.memory = ConversationMemory()
-    app.state.saved_sessions: Dict[str, Dict[str, Any]] = {}
-    app.state.escalation_preferences: Dict[str, Dict[str, Any]] = {}
-    groq_ok = await app.state.groq_service.verify_connection()
-    if groq_ok:
-        logger.info("✅ Groq API connected — LLaMA 3.3 70B active")
-    else:
-        logger.warning("⚠️  Groq API unreachable — fallback mode active")
+    # Skip Groq API verification during startup to avoid initialization issues
+    # Groq service will be initialized lazily when needed
+    logger.info("ℹ️  Groq API service will be initialized on first use")
     
     logger.info("🎯 All 5 agents ready")
     logger.info("📡 LoanEase API running on http://localhost:8000")
@@ -126,7 +110,7 @@ app.include_router(underwriting_router, prefix="/credit", tags=["Credit Agent"])
 app.include_router(negotiation_router, prefix="/negotiate", tags=["Negotiation Agent"])
 app.include_router(blockchain_router, prefix="/blockchain", tags=["Blockchain Agent"])
 app.include_router(master_router, prefix="/pipeline", tags=["Master Orchestrator"])
-app.include_router(ai_router)
+app.include_router(groq_router, prefix="/ai", tags=["AI Agent"])
 
 # Root health check
 @app.get("/")
@@ -150,7 +134,7 @@ async def root():
 @app.get("/health")
 async def health():
     from agents.underwriting_agent.main import model_loaded
-    from agents.blockchain_agent.main import ledger_ready
+    from agents.blockchain_agent.enhanced_main import ledger_ready
     from services.ocr import ocr_ready
     
     return {

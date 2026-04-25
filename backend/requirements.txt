@@ -18,6 +18,7 @@ rapidocr-onnxruntime
 opencv-python
 Pillow
 pdf2image
+PyMuPDF
 rapidfuzz
 python-multipart
 

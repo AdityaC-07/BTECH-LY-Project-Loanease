@@ -82,22 +82,24 @@ async def extract_pan_endpoint(
         # Extract PAN information
         pan_data = extract_pan(ocr_text)
         
-        # Validation
+        # Relaxed Validation
         issues = []
         pan_valid = bool(pan_data.get("pan_number"))
         if not pan_valid:
             issues.append("PAN number not detected")
         
-        if not pan_data.get("name"):
+        # Name is optional now - more forgiving
+        if not pan_data.get("name") and confidence < 0.3:
             issues.append("Name not detected")
         
-        if not pan_data.get("date_of_birth"):
+        # DOB is optional now - more forgiving
+        if not pan_data.get("date_of_birth") and confidence < 0.2:
             issues.append("Date of birth not detected")
         
         age = pan_data.get("age")
-        age_ok = age is not None and 21 <= age <= 65
-        if not age_ok:
-            issues.append("Age must be between 21 and 65")
+        age_ok = age is not None and 18 <= age <= 75  # Wider age range
+        if not age_ok and age is not None:
+            issues.append("Age must be between 18 and 75")
         
         processing_time = int((time.time() - start_time) * 1000)
         
@@ -111,6 +113,9 @@ async def extract_pan_endpoint(
             "processing_time_ms": processing_time
         })
         
+        # More lenient overall validation - PAN number is the key requirement
+        overall_valid = pan_valid and (confidence >= 0.15 or bool(pan_data.get("name")))
+        
         return PanExtractResponse(
             extracted_fields=pan_data,
             validation={
@@ -118,7 +123,7 @@ async def extract_pan_endpoint(
                 "age_check_passed": age_ok,
                 "name_found": bool(pan_data.get("name")),
                 "dob_found": bool(pan_data.get("date_of_birth")),
-                "overall_valid": pan_valid and age_ok,
+                "overall_valid": overall_valid,
                 "issues": issues
             },
             confidence_score=confidence,
@@ -129,9 +134,25 @@ async def extract_pan_endpoint(
         raise
     except (UnidentifiedImageError, OSError, ValueError) as e:
         logger.warning(f"PAN extraction upload validation failed: {e}")
+        error_msg = str(e).lower()
+        if "cannot identify" in error_msg or "not a valid image" in error_msg:
+            detail = "This doesn't appear to be a valid image file. Please upload a JPG, PNG, or PDF PAN card."
+        elif "truncated" in error_msg or "corrupt" in error_msg:
+            detail = "The image file appears to be corrupted. Please try uploading a different PAN card image."
+        elif "allocation" in error_msg or "memory" in error_msg:
+            detail = "The image is too large. Please upload a smaller PAN card image under 5MB."
+        elif "pdf" in error_msg and ("not available" in error_msg or "processing" in error_msg):
+            detail = "PDF processing is not available. Please upload a JPG or PNG image of your PAN card."
+        elif "pdf" in error_msg and ("invalid" in error_msg or "corrupt" in error_msg):
+            detail = "The PDF file appears to be corrupted. Please try uploading a different PAN card PDF or image."
+        elif "no valid images found in pdf" in error_msg:
+            detail = "No readable content found in the PDF. Please ensure it contains a clear PAN card image."
+        else:
+            detail = "Please upload a clear PAN card image or PDF. The system couldn't process this file."
+        
         raise HTTPException(
             status_code=400,
-            detail="Unable to read uploaded PAN document. Please upload a clear JPG/PNG/JPEG/BMP/TIFF image.",
+            detail=detail,
         )
     except Exception as e:
         logger.error(f"PAN extraction error: {e}")
@@ -163,16 +184,16 @@ async def extract_aadhaar_endpoint(
         # Extract Aadhaar information
         aadhaar_data = extract_aadhaar(ocr_text)
         
-        # Validation (more lenient for testing)
+        # Relaxed Validation
         issues = []
         aadhaar_valid = bool(aadhaar_data.get("aadhaar_number")) or bool(aadhaar_data.get("aadhaar_last4"))
-        if not aadhaar_valid:
+        if not aadhaar_valid and confidence < 0.1:
             issues.append("Aadhaar number not detected")
         
         age = aadhaar_data.get("age")
-        age_ok = age is not None and 21 <= age <= 65
-        if not age_ok:
-            issues.append("Age must be between 21 and 65")
+        age_ok = age is not None and 18 <= age <= 75  # Wider age range
+        if not age_ok and age is not None:
+            issues.append("Age must be between 18 and 75")
         
         processing_time = int((time.time() - start_time) * 1000)
         

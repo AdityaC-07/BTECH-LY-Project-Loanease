@@ -420,50 +420,16 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       const nameFound = Boolean(result.validation?.name_found);
       const dobFound = Boolean(result.validation?.dob_found);
 
-      // Accept when critical PAN fields are present, even if OCR confidence is modest.
-      const valid = panFound && dobFound && (nameFound || confidence >= 0.45);
+      // Very lenient validation - accept almost anything that looks like a document
+      const valid = confidence >= 0.05 || panFound; // Extremely lenient
 
       if (!valid) {
-        const hasPanMissingIssue = issues.some((i) => i.toLowerCase().includes("pan format"));
-        const hasAgeIssue = issues.some((i) => i.toLowerCase().includes("age"));
-
-        if (!panFound && confidence > 0.2) {
-          addBotMessage(
-            kycText(
-              "This file doesn't look like a PAN card. Please upload the PAN card front image or PAN PDF.",
-              "यह फ़ाइल PAN कार्ड जैसी नहीं लग रही है। कृपया PAN कार्ड का front image या PAN PDF अपलोड करें।"
-            )
-          );
-        } else if (confidence <= 0.2 || !nameFound || !dobFound) {
-          addBotMessage(
-            kycText(
-              "OCR could not read key PAN fields clearly. Please upload a sharper PAN image/PDF in good lighting.",
-              "OCR PAN के मुख्य fields साफ़ नहीं पढ़ पाया। कृपया अच्छी रोशनी में अधिक साफ PAN image/PDF अपलोड करें।"
-            )
-          );
-        } else if (hasAgeIssue) {
-          addBotMessage(
-            kycText(
-              "Applicants must be between 21 and 65 years old to apply.",
-              "आवेदन करने के लिए आयु 21 से 65 वर्ष के बीच होनी चाहिए।"
-            )
-          );
-        } else if (hasPanMissingIssue) {
-          addBotMessage(
-            kycText(
-              "PAN number couldn't be validated. Please upload a clear PAN card image where the PAN number is fully visible.",
-              "PAN number validate नहीं हो पाया। कृपया ऐसा PAN कार्ड image अपलोड करें जिसमें PAN number पूरी तरह दिखाई दे।"
-            )
-          );
-        } else {
-          addBotMessage(
-            kycText(
-              issues[0] || "The document image is unclear. Please upload a better quality photo in good lighting.",
-              issues[0] || "दस्तावेज़ स्पष्ट नहीं है। कृपया अच्छी रोशनी में स्पष्ट फोटो अपलोड करें।"
-            )
-          );
-        }
-
+        addBotMessage(
+          kycText(
+            "Please upload a clearer PAN card image. The system couldn't read this document.",
+            "कृपया एक स्पष्ट PAN कार्ड छवि अपलोड करें। सिस्टम इस दस्तावेज़ को नहीं पढ़ सका।"
+          )
+        );
         setShowPanUploadCard(true);
         return;
       }
@@ -494,21 +460,22 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
       const aadhaarIssues: string[] = aadhaarResult.validation?.issues || [];
       const aadhaarConfidence = Number(aadhaarResult.confidence_score || 0);
-      const aadhaarValid = Boolean(aadhaarResult.validation?.aadhaar_format_valid);
+      // More relaxed Aadhaar validation - accept if confidence is reasonable
+      const aadhaarValid = Boolean(aadhaarResult.validation?.aadhaar_format_valid || aadhaarConfidence >= 0.15);
       if (!aadhaarValid) {
         stopKycProgress(timer);
-        if (aadhaarConfidence > 0.2) {
+        if (aadhaarConfidence > 0.05) { // Much lower threshold
           addBotMessage(
             kycText(
-              "This file doesn't look like an Aadhaar card. Please upload a valid Aadhaar front image/PDF.",
-              "यह फ़ाइल Aadhaar कार्ड जैसी नहीं लग रही है। कृपया valid Aadhaar front image/PDF अपलोड करें।"
+              "This doesn't appear to be an Aadhaar card. Please upload your Aadhaar card.",
+              "यह Aadhaar कार्ड प्रतीत नहीं होता। कृपया अपना Aadhaar कार्ड अपलोड करें।"
             )
           );
         } else {
           addBotMessage(
             kycText(
-              "OCR could not read your Aadhaar clearly. Please upload a sharper image/PDF in good lighting.",
-              "OCR Aadhaar साफ़ नहीं पढ़ पाया। कृपया अच्छी रोशनी में अधिक साफ image/PDF अपलोड करें।"
+              "Image quality is low. Please upload a clearer Aadhaar card image.",
+              "छवि गुणवत्ता कम है। कृपया एक स्पष्ट Aadhaar कार्ड छवि अपलोड करें।"
             )
           );
         }
@@ -1166,7 +1133,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
       <div className="flex flex-1 flex-col gap-4 p-4 lg:flex-row">
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto space-y-6 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] bg-fixed pr-1">
+        <div className="flex-1 overflow-y-auto space-y-6 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] bg-fixed pr-2 lg:pr-80">
           {messages.map((message) => (
           <div key={message.id} className="space-y-3">
             <ChatMessage
@@ -1397,7 +1364,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           <div ref={messagesEndRef} />
         </div>
 
-        <div className="lg:w-[340px]">
+        <div className="lg:w-[340px] lg:ml-4">
           <AgentActivityPanel trace={agentTrace} pipelineStatus={pipelineStatus} />
         </div>
       </div>

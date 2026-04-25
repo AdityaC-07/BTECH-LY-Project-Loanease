@@ -36,15 +36,22 @@ class GroqService:
         fallback_model: str = "llama-3.1-8b-instant",
         timeout: int = 8,
     ) -> None:
-        self._client = AsyncGroq(api_key=api_key, timeout=timeout)
+        try:
+            self._client = AsyncGroq(api_key=api_key)
+            self._connected = False
+        except Exception as e:
+            logger.warning(f"Failed to initialize Groq client: {e}")
+            self._client = None
+            self._connected = False
         self._primary_model = primary_model
         self._fallback_model = fallback_model
-        self._connected = False
         self._last_model: Optional[str] = None
         self._fallback_used = False
 
     async def verify_connection(self) -> bool:
         """Verify Groq connectivity using a minimal test prompt."""
+        if self._client is None:
+            return False
         try:
             result = await self._chat_completion(
                 model=self._primary_model,
@@ -77,6 +84,11 @@ class GroqService:
         max_tokens: int = 1024,
     ) -> Tuple[str, Dict[str, Any]]:
         """Generate a full response and return clean text plus XAI trace."""
+        if self._client is None:
+            # Fallback response when Groq is not available
+            fallback_response = "I'm sorry, I'm currently unable to process your request. Please try again later."
+            return fallback_response, {"error": "Groq client not initialized", "fallback_used": True}
+        
         result = await self._chat_completion(
             model=self._primary_model,
             system_prompt=system_prompt,

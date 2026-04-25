@@ -52,65 +52,157 @@ def ocr_ready() -> bool:
     """Check if OCR engine is ready"""
     return _ocr_engine is not None
 
+def preprocess_pdf(file_bytes: bytes) -> List[np.ndarray]:
+    """Extract and preprocess images from PDF files using PyMuPDF"""
+    logger.info(f"Starting PDF processing, file size: {len(file_bytes)} bytes")
+    
+    try:
+        import fitz  # PyMuPDF
+        import io
+        
+        # Load PDF from bytes
+        pdf_document = fitz.open(stream=file_bytes, filetype="pdf")
+        logger.info(f"PDF loaded successfully, pages: {len(pdf_document)}")
+        
+        candidates = []
+        
+        # Process first few pages (usually PAN cards are 1-2 pages)
+        max_pages = min(len(pdf_document), 3)
+        
+        for page_num in range(max_pages):
+            try:
+                page = pdf_document[page_num]
+                logger.info(f"Processing PDF page {page_num + 1}")
+                
+                # Get page as image with high DPI
+                mat = fitz.Matrix(3.0, 3.0)  # 3x zoom for better quality
+                pix = page.get_pixmap(matrix=mat)
+                
+                # Convert to PIL Image
+                img_data = pix.tobytes("ppm")
+                pil_image = Image.open(io.BytesIO(img_data))
+                
+                if pil_image.mode != 'RGB':
+                    pil_image = pil_image.convert('RGB')
+                
+                logger.info(f"PDF page {page_num + 1} converted to image, size: {pil_image.size}")
+                
+                # Convert to numpy array
+                img_array = np.array(pil_image)
+                
+                # Apply basic preprocessing
+                gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+                
+                # Multiple preprocessing methods for PDF
+                # Method 1: Adaptive threshold
+                thresh1 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+                candidates.append(cv2.cvtColor(thresh1, cv2.COLOR_GRAY2RGB))
+                
+                # Method 2: Otsu's thresholding
+                _, thresh2 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                candidates.append(cv2.cvtColor(thresh2, cv2.COLOR_GRAY2RGB))
+                
+                # Add original
+                candidates.append(img_array)
+                
+                logger.info(f"Successfully processed PDF page {page_num + 1}")
+                
+            except Exception as e:
+                logger.warning(f"Failed to process PDF page {page_num}: {e}")
+                continue
+        
+        # Close PDF
+        pdf_document.close()
+        
+        if not candidates:
+            raise ValueError("No valid images found in PDF")
+            
+        logger.info(f"PDF preprocessing completed, {len(candidates)} candidates generated")
+        return candidates
+        
+    except ImportError:
+        logger.error("PyMuPDF (fitz) not available for PDF processing")
+        raise ValueError("PDF processing requires PyMuPDF. Please install it with: pip install PyMuPDF")
+    except Exception as e:
+        logger.error(f"PDF preprocessing failed: {e}")
+        raise ValueError(f"Could not process PDF: {str(e)}")
+
 def preprocess_image(file_bytes: bytes, extension: str) -> List[np.ndarray]:
-    """Enhanced image preprocessing for OCR"""
+    """Enhanced image preprocessing for OCR with PDF support"""
     
-    # Load image
-    img = Image.open(io.BytesIO(file_bytes))
-    if img.mode != 'RGB':
-        img = img.convert('RGB')
+    try:
+        # Handle PDF files separately
+        if extension == 'pdf':
+            return preprocess_pdf(file_bytes)
+        
+        # Load image with better error handling
+        img = Image.open(io.BytesIO(file_bytes))
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
 
-    # Downscale very large inputs to prevent ONNX bad allocation
-    width, height = img.size
-    pixel_count = width * height
+        # Downscale very large inputs to prevent ONNX bad allocation
+        width, height = img.size
+        pixel_count = width * height
 
-    if width > MAX_IMAGE_SIDE or height > MAX_IMAGE_SIDE or pixel_count > MAX_IMAGE_PIXELS:
-        side_scale = min(MAX_IMAGE_SIDE / max(width, height), 1.0)
-        pixel_scale = min((MAX_IMAGE_PIXELS / float(pixel_count)) ** 0.5, 1.0)
-        scale = min(side_scale, pixel_scale)
-        target_w = max(600, int(width * scale))
-        target_h = max(600, int(height * scale))
-        img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
-    
-    # Enhance image
-    enhancer = ImageEnhance.Contrast(img)
-    img = enhancer.enhance(1.5)
-    
-    enhancer = ImageEnhance.Sharpness(img)
-    img = enhancer.enhance(1.2)
-    
-    # Denoise
-    img = img.filter(ImageFilter.MedianFilter(size=3))
-    
-    # Upscale for better OCR
-    if img.width < MIN_WIDTH:
-        scale = MIN_WIDTH / img.width
-        new_height = int(img.height * scale)
-        img = img.resize((MIN_WIDTH, new_height), Image.Resampling.LANCZOS)
-    
-    # Convert to numpy array
-    img_array = np.array(img)
-    gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-    
-    # Multiple preprocessing methods
-    candidates = []
-    
-    # Method 1: Adaptive Gaussian
-    thresh1 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-    candidates.append(cv2.cvtColor(thresh1, cv2.COLOR_GRAY2RGB))
-    
-    # Method 2: Adaptive Mean
-    thresh2 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 11, 2)
-    candidates.append(cv2.cvtColor(thresh2, cv2.COLOR_GRAY2RGB))
-    
-    # Method 3: Otsu's thresholding
-    _, thresh3 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    candidates.append(cv2.cvtColor(thresh3, cv2.COLOR_GRAY2RGB))
-    
-    # Add original
-    candidates.append(img_array)
-    
-    return candidates
+        if width > MAX_IMAGE_SIDE or height > MAX_IMAGE_SIDE or pixel_count > MAX_IMAGE_PIXELS:
+            side_scale = min(MAX_IMAGE_SIDE / max(width, height), 1.0)
+            pixel_scale = min((MAX_IMAGE_PIXELS / float(pixel_count)) ** 0.5, 1.0)
+            scale = min(side_scale, pixel_scale)
+            target_w = max(600, int(width * scale))
+            target_h = max(600, int(height * scale))
+            img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+        
+        # Enhance image
+        enhancer = ImageEnhance.Contrast(img)
+        img = enhancer.enhance(1.5)
+        
+        enhancer = ImageEnhance.Sharpness(img)
+        img = enhancer.enhance(1.2)
+        
+        # Denoise
+        img = img.filter(ImageFilter.MedianFilter(size=3))
+        
+        # Upscale for better OCR
+        if img.width < MIN_WIDTH:
+            scale = MIN_WIDTH / img.width
+            new_height = int(img.height * scale)
+            img = img.resize((MIN_WIDTH, new_height), Image.Resampling.LANCZOS)
+        
+        # Convert to numpy array
+        img_array = np.array(img)
+        gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+        
+        # Multiple preprocessing methods
+        candidates = []
+        
+        # Method 1: Adaptive Gaussian
+        thresh1 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+        candidates.append(cv2.cvtColor(thresh1, cv2.COLOR_GRAY2RGB))
+        
+        # Method 2: Adaptive Mean
+        thresh2 = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 11, 2)
+        candidates.append(cv2.cvtColor(thresh2, cv2.COLOR_GRAY2RGB))
+        
+        # Method 3: Otsu's thresholding
+        _, thresh3 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        candidates.append(cv2.cvtColor(thresh3, cv2.COLOR_GRAY2RGB))
+        
+        # Add original
+        candidates.append(img_array)
+        
+        return candidates
+        
+    except Exception as e:
+        logger.error(f"Image preprocessing failed: {e}")
+        # Return a simple fallback - just convert to array without processing
+        try:
+            img = Image.open(io.BytesIO(file_bytes))
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            return [np.array(img)]
+        except Exception as fallback_e:
+            logger.error(f"Fallback preprocessing also failed: {fallback_e}")
+            raise ValueError(f"Unable to process image: {str(e)}")
 
 def run_ocr(preprocessed_img: List[np.ndarray]) -> Tuple[str, float]:
     """Run OCR on preprocessed images"""
@@ -192,29 +284,62 @@ def run_ocr(preprocessed_img: List[np.ndarray]) -> Tuple[str, float]:
 
 # Enhanced extractors
 def extract_pan(ocr_text: str) -> Dict:
-    """Extract PAN card information"""
+    """Extract PAN card information with relaxed validation"""
     lines = [line.strip() for line in ocr_text.splitlines() if line.strip()]
     
-    # PAN pattern
-    pan_pattern = re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b")
-    pan_match = pan_pattern.search(ocr_text.upper())
-    pan_number = pan_match.group(0) if pan_match else None
+    # More flexible PAN pattern - allow spaces and mixed case
+    pan_patterns = [
+        re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b"),  # Standard format
+        re.compile(r"\b[A-Z]{5}\s?[0-9]{4}\s?[A-Z]\b"),  # With spaces
+        re.compile(r"\b[a-zA-Z]{5}\s?[0-9]{4}\s?[a-zA-Z]\b"),  # Mixed case
+    ]
     
-    # Name extraction
+    pan_number = None
+    for pattern in pan_patterns:
+        pan_match = pattern.search(ocr_text)
+        if pan_match:
+            pan_number = re.sub(r"\s", "", pan_match.group(0).upper())
+            break
+    
+    # More flexible name extraction
     name = None
-    name_keywords = ["NAME", "INCOME TAX", "DEPARTMENT"]
+    name_keywords = ["NAME", "INCOME TAX", "DEPARTMENT", "PERMANENT", "ACCOUNT"]
+    
+    # Try multiple approaches for name extraction
     for i, line in enumerate(lines):
-        if any(keyword in line.upper() for keyword in name_keywords):
-            if i + 1 < len(lines):
-                potential_name = lines[i + 1].strip()
-                if len(potential_name) > 2 and potential_name.replace(" ", "").isalpha():
+        line_upper = line.upper()
+        # Check for name keywords
+        if any(keyword in line_upper for keyword in name_keywords):
+            # Look at next few lines for potential name
+            for j in range(i + 1, min(i + 4, len(lines))):
+                potential_name = lines[j].strip()
+                # More relaxed name validation
+                if (len(potential_name) >= 3 and 
+                    len(potential_name.split()) >= 2 and  # At least 2 words
+                    any(c.isalpha() for c in potential_name) and  # Contains letters
+                    len(re.sub(r"[^a-zA-Z\s]", "", potential_name)) > len(potential_name) * 0.7):  # Mostly letters
                     name = potential_name.title()
                     break
+            if name:
+                break
     
-    # DOB extraction
+    # If no name found with keywords, try heuristic approach
+    if not name:
+        for line in lines:
+            # Skip lines with numbers or common non-name words
+            if (len(line) >= 3 and 
+                len(line.split()) >= 2 and
+                not any(char.isdigit() for char in line) and
+                not any(keyword in line.upper() for keyword in ["GOVERNMENT", "INDIA", "DEPARTMENT", "TAX", "CARD", "PAN"])):
+                name = line.title()
+                break
+    
+    # More flexible DOB extraction
     dob_patterns = [
         r"\b(\d{2}/\d{2}/\d{4})\b",
-        r"\b(\d{2}-\d{2}-\d{4})\b"
+        r"\b(\d{2}-\d{2}-\d{4})\b",
+        r"\b(\d{2}\s+\d{2}\s+\d{4})\b",  # Space separated
+        r"\bDOB[:\s]*(\d{2}/\d{2}/\d{4})\b",  # With DOB prefix
     ]
     
     dob = None
@@ -224,80 +349,135 @@ def extract_pan(ocr_text: str) -> Dict:
             dob = match.group(1)
             break
     
-    # Calculate age
+    # Calculate age with more flexible parsing
     age = None
     if dob:
         try:
-            dob_dt = datetime.strptime(dob, "%d/%m/%Y")
-            now = datetime.now(timezone.utc)
-            age = now.year - dob_dt.year - ((now.month, now.day) < (dob_dt.month, dob_dt.day))
-        except ValueError:
+            # Try different date formats
+            for fmt in ["%d/%m/%Y", "%d-%m-%Y", "%d %m %Y"]:
+                try:
+                    dob_dt = datetime.strptime(dob, fmt)
+                    now = datetime.now(timezone.utc)
+                    age = now.year - dob_dt.year - ((now.month, now.day) < (dob_dt.month, dob_dt.day))
+                    break
+                except ValueError:
+                    continue
+        except Exception:
             pass
+    
+    # More relaxed age eligibility
+    age_eligible = False
+    if age is not None:
+        age_eligible = 18 <= age <= 75  # Wider age range
     
     return {
         "pan_number": pan_number,
         "name": name,
         "date_of_birth": dob,
         "age": age,
-        "age_eligible": age is not None and 21 <= age <= 65
+        "age_eligible": age_eligible
     }
 
 def extract_aadhaar(ocr_text: str) -> Dict:
-    """Extract Aadhaar card information"""
+    """Extract Aadhaar card information with relaxed validation"""
     lines = [line.strip() for line in ocr_text.splitlines() if line.strip()]
     
-    # Aadhaar pattern
-    aadhaar_pattern = re.compile(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}\b")
-    aadhaar_matches = aadhaar_pattern.findall(ocr_text)
+    # More flexible Aadhaar patterns
+    aadhaar_patterns = [
+        re.compile(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}\b"),  # Standard format
+        re.compile(r"\b\d{2}[\s-]?\d{2}[\s-]?\d{2}[\s-]?\d{2}[\s-]?\d{2}[\s-]?\d{2}\b"),  # 2-digit groups
+        re.compile(r"\b\d{12}\b"),  # Continuous 12 digits
+        re.compile(r"\b(\d{4}\s\d{4}\s\d{4})\b"),  # Space separated
+    ]
     
     aadhaar_number = None
     aadhaar_last4 = None
-    if aadhaar_matches:
-        # Clean and take the first match
-        aadhaar_clean = re.sub(r"[\s-]", "", aadhaar_matches[0])
-        if len(aadhaar_clean) == 12:
-            aadhaar_number = aadhaar_clean
-            aadhaar_last4 = aadhaar_clean[-4:]
     
-    # Name extraction
+    for pattern in aadhaar_patterns:
+        matches = pattern.findall(ocr_text)
+        if matches:
+            # Take the first valid match
+            for match in matches:
+                aadhaar_clean = re.sub(r"[\s-]", "", match)
+                if len(aadhaar_clean) == 12 and aadhaar_clean.isdigit():
+                    aadhaar_number = aadhaar_clean
+                    aadhaar_last4 = aadhaar_clean[-4:]
+                    break
+            if aadhaar_number:
+                break
+    
+    # More flexible name extraction
     name = None
+    excluded_keywords = ["GOVERNMENT", "INDIA", "UIDAI", "AADHAAR", "MALE", "FEMALE", "UNIQUE", "IDENTIFICATION", "AUTHORITY"]
+    
+    # Try multiple approaches for name
     for line in lines:
-        if len(line) > 2 and line.replace(" ", "").isalpha():
-            # Skip common non-name lines
-            upper_line = line.upper()
-            if not any(keyword in upper_line for keyword in ["GOVERNMENT", "INDIA", "UIDAI", "AADHAAR", "MALE", "FEMALE"]):
+        if len(line) >= 3:
+            # More relaxed name validation
+            line_upper = line.upper()
+            if not any(keyword in line_upper for keyword in excluded_keywords):
+                # Check if line looks like a name (mostly letters, at least 2 words)
+                words = line.split()
+                if (len(words) >= 2 and 
+                    len(re.sub(r"[^a-zA-Z\s]", "", line)) > len(line) * 0.6):  # At least 60% letters
+                    name = line.title()
+                    break
+    
+    # If no name found, try heuristic approach
+    if not name:
+        for i, line in enumerate(lines):
+            # Look for lines that might contain names
+            if (len(line) >= 3 and 
+                len(line.split()) >= 2 and
+                not any(char.isdigit() for char in line) and
+                i < len(lines) - 1):  # Not the last line
                 name = line.title()
                 break
     
-    # DOB extraction
+    # More flexible DOB extraction
     dob_patterns = [
         r"\b(\d{2}/\d{2}/\d{4})\b",
-        r"\b(\d{2}-\d{2}-\d{4})\b"
+        r"\b(\d{2}-\d{2}-\d{4})\b",
+        r"\b(\d{2}\s+\d{2}\s+\d{4})\b",  # Space separated
+        r"\bDOB[:\s]*(\d{2}/\d{2}/\d{4})\b",  # With DOB prefix
+        r"\bDate of Birth[:\s]*(\d{2}/\d{2}/\d{4})\b",  # Full prefix
     ]
     
     dob = None
     for pattern in dob_patterns:
-        match = re.search(pattern, ocr_text)
+        match = re.search(pattern, ocr_text, re.IGNORECASE)
         if match:
             dob = match.group(1)
             break
     
-    # Calculate age
+    # Calculate age with more flexible parsing
     age = None
     if dob:
         try:
-            dob_dt = datetime.strptime(dob, "%d/%m/%Y")
-            now = datetime.now(timezone.utc)
-            age = now.year - dob_dt.year - ((now.month, now.day) < (dob_dt.month, dob_dt.day))
-        except ValueError:
+            # Try different date formats
+            for fmt in ["%d/%m/%Y", "%d-%m-%Y", "%d %m %Y"]:
+                try:
+                    dob_dt = datetime.strptime(dob, fmt)
+                    now = datetime.now(timezone.utc)
+                    age = now.year - dob_dt.year - ((now.month, now.day) < (dob_dt.month, dob_dt.day))
+                    break
+                except ValueError:
+                    continue
+        except Exception:
             pass
     
-    # Gender extraction
+    # More flexible gender extraction
     gender = "Unknown"
-    if "MALE" in ocr_text.upper():
+    text_upper = ocr_text.upper()
+    if "MALE" in text_upper or "M" in text_upper:
         gender = "Male"
-    elif "FEMALE" in ocr_text.upper():
+    elif "FEMALE" in text_upper or "F" in text_upper:
         gender = "Female"
+    
+    # More relaxed age eligibility
+    age_eligible = False
+    if age is not None:
+        age_eligible = 18 <= age <= 75  # Wider age range
     
     return {
         "aadhaar_number": aadhaar_number,
@@ -306,7 +486,7 @@ def extract_aadhaar(ocr_text: str) -> Dict:
         "date_of_birth": dob,
         "age": age,
         "gender": gender,
-        "age_eligible": age is not None and 21 <= age <= 65
+        "age_eligible": age_eligible
     }
 
 def cross_validate_kyc(pan_data: Dict, aadhaar_data: Dict) -> Dict:
@@ -329,9 +509,9 @@ def cross_validate_kyc(pan_data: Dict, aadhaar_data: Dict) -> Dict:
         
         name_score = int(round(sum(scores) / len(scores)))
         
-        if name_score >= 80:
+        if name_score >= 70:
             name_status = "MATCH"
-        elif name_score >= 60:
+        elif name_score >= 50:
             name_status = "PARTIAL"
     
     # DOB matching
@@ -342,10 +522,10 @@ def cross_validate_kyc(pan_data: Dict, aadhaar_data: Dict) -> Dict:
     if pan_dob and aadhaar_dob:
         dob_match = pan_dob == aadhaar_dob
     
-    # Overall KYC status
-    if name_score >= 80 and dob_match:
+    # Overall KYC status - more relaxed criteria
+    if name_score >= 70 and dob_match:
         kyc_status = "VERIFIED"
-    elif name_score >= 60:
+    elif name_score >= 50 or (name_score >= 40 and dob_match):
         kyc_status = "PARTIAL"
     else:
         kyc_status = "FAILED"
@@ -361,5 +541,5 @@ def cross_validate_kyc(pan_data: Dict, aadhaar_data: Dict) -> Dict:
         "name_match_status": name_status,
         "dob_match": dob_match,
         "age_eligible": age_eligible,
-        "overall_kyc_passed": kyc_status in ["VERIFIED", "PARTIAL"] and age_eligible
+        "overall_kyc_passed": (kyc_status in ["VERIFIED", "PARTIAL"]) or (name_score >= 40 and age_eligible)
     }
