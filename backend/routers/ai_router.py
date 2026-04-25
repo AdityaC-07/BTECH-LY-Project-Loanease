@@ -95,24 +95,26 @@ async def chat_stream(
 ) -> StreamingResponse:
     """Primary streaming AI chat endpoint returning SSE events."""
     session_id = payload.session_id or str(uuid4())
-    stage = _coerce_stage(payload.stage)
-
-    memory.get_or_create(session_id)
-    memory.set_stage(session_id, stage)
-    memory.set_context(session_id, payload.context)
-    memory.append_message(session_id, "user", payload.message)
-
-    state = memory.get_state(session_id) or {}
-    prompt_context = {**state.get("context", {}), **payload.context}
-    system_prompt = get_system_prompt(stage, prompt_context)
-    messages = memory.get_messages(session_id)
+    requested_stage = _coerce_stage(payload.stage)
 
     async def event_generator() -> AsyncGenerator[str, None]:
         full_text = ""
         xai_trace: Dict[str, Any] = {}
-        next_stage = stage
+        next_stage = requested_stage
 
         try:
+            # Keep all operational logic inside the generator so we can emit SSE error
+            # events instead of failing the HTTP stream.
+            memory.get_or_create(session_id)
+            memory.set_stage(session_id, requested_stage)
+            memory.set_context(session_id, payload.context)
+            memory.append_message(session_id, "user", payload.message)
+
+            state = memory.get_state(session_id) or {}
+            prompt_context = {**state.get("context", {}), **payload.context}
+            system_prompt = get_system_prompt(requested_stage, prompt_context)
+            messages = memory.get_messages(session_id)
+
             async for chunk in groq.stream_chat(system_prompt=system_prompt, messages=messages):
                 if chunk.startswith("XAI_TRACE::"):
                     raw = chunk.replace("XAI_TRACE::", "", 1)
@@ -126,7 +128,7 @@ async def chat_stream(
                 full_text += chunk
                 yield _sse({"type": "token", "content": chunk})
 
-            next_stage = _forward_stage_only(stage, full_text)
+            next_stage = _forward_stage_only(requested_stage, full_text)
             memory.set_stage(session_id, next_stage)
             memory.append_message(session_id, "assistant", full_text)
             yield _sse({"type": "done", "session_id": session_id, "stage": next_stage})
