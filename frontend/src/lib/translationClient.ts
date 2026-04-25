@@ -55,7 +55,7 @@ export const fetchTranslation = async (
   text: string,
   targetLanguage: "en" | "hi" = "hi",
   sourceLanguage: "en" | "hi" = "en",
-  translationServiceUrl: string = "http://localhost:8002"
+  translationServiceUrl: string = "http://localhost:8000/ai"
 ): Promise<string> => {
   if (!text || text.trim().length === 0) {
     return text;
@@ -114,7 +114,7 @@ export const fetchBatchTranslation = async (
   texts: string[],
   targetLanguage: "en" | "hi" = "hi",
   sourceLanguage: "en" | "hi" = "en",
-  translationServiceUrl: string = "http://localhost:8002"
+  translationServiceUrl: string = "http://localhost:8000/ai"
 ): Promise<string[]> => {
   const promises = texts.map((text) =>
     fetchTranslation(text, targetLanguage, sourceLanguage, translationServiceUrl)

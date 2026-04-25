@@ -258,7 +258,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     if (!pipelineSessionId || pipelineStatus === "SANCTIONED" || pipelineStatus === "FAILED") return;
     const interval = setInterval(async () => {
       try {
-        const response = await fetch(`http://localhost:8004/pipeline/log/${pipelineSessionId}`);
+        const response = await fetch("http://localhost:8000/pipeline/log/${pipelineSessionId}");
         if (!response.ok) return;
         const data = await response.json();
         setAgentTrace(data.agent_trace || []);
@@ -314,7 +314,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     form.append("document", file);
     form.append("language", language);
 
-    const response = await fetch("http://localhost:8004/kyc/extract/pan", {
+    const response = await fetch("http://localhost:8000/kyc/extract/pan", {
       method: "POST",
       body: form,
     });
@@ -331,7 +331,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     const form = new FormData();
     form.append("document", file);
 
-    const response = await fetch("http://localhost:8004/kyc/extract/aadhaar", {
+    const response = await fetch("http://localhost:8000/kyc/extract/aadhaar", {
       method: "POST",
       body: form,
     });
@@ -349,7 +349,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     form.append("pan", panDoc);
     form.append("aadhaar", aadhaarDoc);
 
-    const response = await fetch("http://localhost:8004/kyc/verify", {
+    const response = await fetch("http://localhost:8000/kyc/verify", {
       method: "POST",
       body: form,
     });
@@ -591,7 +591,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     preferred_language: "en" | "hi";
   }) => {
     try {
-      const response = await fetch("http://localhost:8000/assess", {
+      const response = await fetch("http://localhost:8000/credit/assess", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(userData),
@@ -626,7 +626,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     maxNegotiationRounds: number
   ) => {
     try {
-      const response = await fetch("http://localhost:8001/negotiate/start", {
+      const response = await fetch("http://localhost:8000/negotiate/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -659,7 +659,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
   const callCreditScoreAPI = async (pan: string) => {
     try {
-      const response = await fetch(`http://localhost:8000/credit-score/${encodeURIComponent(pan)}`, {
+      const response = await fetch(`http://localhost:8000/credit/credit-score`, {
         method: "GET",
         headers: { "Content-Type": "application/json" },
       });
@@ -817,7 +817,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
       // First call /assess with pan_number and full details
       try {
-        const pipelineStart = await fetch("http://localhost:8004/pipeline/start", {
+        const pipelineStart = await fetch("http://localhost:8000/pipeline/start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -873,7 +873,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
         // Pass max_negotiation_rounds to negotiation API
         if (negotiationResult) {
-          await fetch("http://localhost:8001/negotiate/accept", {
+          await fetch("http://localhost:8000/negotiate/accept", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
