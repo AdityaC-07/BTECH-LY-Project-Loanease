@@ -1,11 +1,15 @@
+import json
 import logging
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, HTTPException
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timezone
 
 from core.session import session_store
+from services.groq_service import GroqService, get_groq_service
 from core.config import settings
+from agents.prompts import get_system_prompt
 
 logger = logging.getLogger("loanease.master")
 
@@ -44,6 +48,83 @@ class PipelineProcessResponse(BaseModel):
     action_result: Dict[str, Any]
     next_stage: Optional[str]
     message: str
+
+
+def _map_stage_to_prompt_stage(stage: str) -> str:
+    stage_upper = (stage or "").upper()
+    if stage_upper in {"INITIATED", "PAN_UPLOADED", "AADHAAR_UPLOADED", "KYC_VERIFIED"}:
+        return "kyc"
+    if stage_upper == "UNDERWRITING_COMPLETE":
+        return "credit"
+    if stage_upper in {"NEGOTIATION_STARTED", "NEGOTIATION_COMPLETE"}:
+        return "negotiation"
+    if stage_upper in {"BLOCKCHAIN_VERIFIED", "COMPLETED"}:
+        return "sanction"
+    return "kyc"
+
+
+def _build_prompt_context(
+    session: Dict[str, Any],
+    action: str,
+    current_stage: str,
+    next_stage: Optional[str],
+    action_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    session_data = session.get("data", {})
+    pan_data = session_data.get("pan_data", {})
+    aadhaar_data = session_data.get("aadhaar_data", {})
+    underwriting_result = session_data.get("underwriting_result", {})
+    negotiation_data = session_data.get("negotiation_data", {})
+    blockchain_data = session_data.get("blockchain_data", {})
+
+    received_docs = []
+    if pan_data:
+        received_docs.append("PAN")
+    if aadhaar_data:
+        received_docs.append("Aadhaar")
+    if session_data.get("income_proof"):
+        received_docs.append("income proof")
+
+    return {
+        "applicant_name": session_data.get("customer_name", "Applicant"),
+        "doc_list": "PAN, Aadhaar, income proof",
+        "received_docs": ", ".join(received_docs) if received_docs else "none",
+        "verification_status": next_stage or current_stage or "pending",
+        "credit_score": underwriting_result.get("credit_score", "N/A"),
+        "decision": underwriting_result.get("decision", "manual_review"),
+        "sanctioned_amount": underwriting_result.get("max_loan", "N/A"),
+        "shap_summary": underwriting_result.get("factors", []),
+        "interest_rate": underwriting_result.get("interest_rate", negotiation_data.get("rate", "N/A")),
+        "tenure": negotiation_data.get("tenure_months", "N/A"),
+        "base_rate": underwriting_result.get("interest_rate", "N/A"),
+        "floor_rate": "N/A",
+        "approved_amount": underwriting_result.get("max_loan", "N/A"),
+        "max_tenure": negotiation_data.get("max_tenure", "N/A"),
+        "base_emi": negotiation_data.get("emi", "N/A"),
+        "applicant_signals": session_data.get("applicant_signals", []),
+        "turn_number": len(session.get("agent_log", [])) + 1,
+        "loan_id": blockchain_data.get("reference_id", session.get("id", "N/A")),
+        "emi": negotiation_data.get("emi", "N/A"),
+        "tx_hash": blockchain_data.get("block_hash", "N/A"),
+        "letter_url": blockchain_data.get("letter_url", "N/A"),
+        "action": action,
+        "action_result": action_result,
+    }
+
+
+async def generate_chat_message(
+    groq: GroqService,
+    stage: str,
+    context: Dict[str, Any],
+) -> str:
+    """Generate a user-facing message using stage-specific prompts."""
+    system_prompt = get_system_prompt(stage, context)
+    content = json.dumps(context, ensure_ascii=False)
+    message, _trace = await groq.chat(
+        system_prompt=system_prompt,
+        messages=[{"role": "user", "content": content}],
+    )
+    return message
 
 def create_session(customer_name: str, initial_data: Dict[str, Any]) -> str:
     """Create new session"""
@@ -95,7 +176,10 @@ def get_stage_progress(stage: str) -> Dict[str, Any]:
     }
 
 @router.post("/start", response_model=PipelineStartResponse)
-async def start_pipeline(request: PipelineStartRequest):
+async def start_pipeline(
+    request: PipelineStartRequest,
+    groq: GroqService = Depends(get_groq_service),
+):
     """Start loan application pipeline"""
     try:
         # Create session
@@ -116,11 +200,22 @@ async def start_pipeline(request: PipelineStartRequest):
             "language": request.language
         })
         
+        message = await generate_chat_message(
+            groq,
+            stage="kyc",
+            context={
+                "applicant_name": request.customer_name,
+                "doc_list": "PAN, Aadhaar, income proof",
+                "received_docs": "none",
+                "verification_status": "INITIATED",
+            },
+        )
+
         return PipelineStartResponse(
             session_id=session_id,
             stage="INITIATED",
-            message=f"Welcome {request.customer_name}! Your loan application has been initiated.",
-            next_steps=next_actions
+            message=message,
+            next_steps=next_actions,
         )
         
     except Exception as e:
@@ -157,7 +252,10 @@ async def get_pipeline_status(request: PipelineStatusRequest):
         raise HTTPException(status_code=500, detail=f"Pipeline status failed: {str(e)}")
 
 @router.post("/process", response_model=PipelineProcessResponse)
-async def process_pipeline_action(request: PipelineProcessRequest):
+async def process_pipeline_action(
+    request: PipelineProcessRequest,
+    groq: GroqService = Depends(get_groq_service),
+):
     """Process pipeline action"""
     try:
         # Get session
@@ -176,10 +274,8 @@ async def process_pipeline_action(request: PipelineProcessRequest):
                 session_store.update_data(request.session_id, "pan_data", request.data["pan_data"])
                 session_store.update_stage(request.session_id, "PAN_UPLOADED")
                 next_stage = "PAN_UPLOADED"
-                message = "PAN card uploaded successfully"
                 action_result = {"status": "success", "data": request.data["pan_data"]}
             else:
-                message = "PAN data required"
                 action_result = {"status": "error", "message": "PAN data required"}
         
         elif request.action == "upload_aadhaar":
@@ -187,10 +283,8 @@ async def process_pipeline_action(request: PipelineProcessRequest):
                 session_store.update_data(request.session_id, "aadhaar_data", request.data["aadhaar_data"])
                 session_store.update_stage(request.session_id, "AADHAAR_UPLOADED")
                 next_stage = "AADHAAR_UPLOADED"
-                message = "Aadhaar card uploaded successfully"
                 action_result = {"status": "success", "data": request.data["aadhaar_data"]}
             else:
-                message = "Aadhaar data required"
                 action_result = {"status": "error", "message": "Aadhaar data required"}
         
         elif request.action == "verify_kyc":
@@ -200,68 +294,71 @@ async def process_pipeline_action(request: PipelineProcessRequest):
                 if kyc_result.get("overall_kyc_passed"):
                     session_store.update_stage(request.session_id, "KYC_VERIFIED")
                     next_stage = "KYC_VERIFIED"
-                    message = "KYC verification completed successfully"
-                else:
-                    message = "KYC verification failed"
                 action_result = {"status": "success", "data": kyc_result}
             else:
-                message = "KYC verification result required"
                 action_result = {"status": "error", "message": "KYC result required"}
         
         elif request.action == "assess_credit":
             # Credit assessment would be handled by underwriting agent
             if request.data and "underwriting_result" in request.data:
                 underwriting_result = request.data["underwriting_result"]
+                session_store.update_data(request.session_id, "underwriting_result", underwriting_result)
                 if underwriting_result.get("decision") == "APPROVED":
                     session_store.update_stage(request.session_id, "UNDERWRITING_COMPLETE")
                     next_stage = "UNDERWRITING_COMPLETE"
-                    message = "Credit assessment completed - Loan approved"
-                else:
-                    message = "Credit assessment completed - Loan rejected"
                 action_result = {"status": "success", "data": underwriting_result}
             else:
-                message = "Underwriting result required"
                 action_result = {"status": "error", "message": "Underwriting result required"}
         
         elif request.action == "start_negotiation":
             if request.data and "negotiation_data" in request.data:
+                session_store.update_data(request.session_id, "negotiation_data", request.data["negotiation_data"])
                 session_store.update_stage(request.session_id, "NEGOTIATION_STARTED")
                 next_stage = "NEGOTIATION_STARTED"
-                message = "Rate negotiation started"
                 action_result = {"status": "success", "data": request.data["negotiation_data"]}
             else:
-                message = "Negotiation data required"
                 action_result = {"status": "error", "message": "Negotiation data required"}
         
         elif request.action == "complete_negotiation":
             if request.data and "final_rate" in request.data:
+                session_store.update_data(request.session_id, "negotiation_data", request.data)
                 session_store.update_stage(request.session_id, "NEGOTIATION_COMPLETE")
                 next_stage = "NEGOTIATION_COMPLETE"
-                message = f"Negotiation completed at {request.data['final_rate']}% interest rate"
                 action_result = {"status": "success", "data": request.data}
             else:
-                message = "Final rate required"
                 action_result = {"status": "error", "message": "Final rate required"}
         
         elif request.action == "generate_sanction":
             if request.data and "blockchain_data" in request.data:
+                session_store.update_data(request.session_id, "blockchain_data", request.data["blockchain_data"])
                 session_store.update_stage(request.session_id, "BLOCKCHAIN_VERIFIED")
                 next_stage = "BLOCKCHAIN_VERIFIED"
-                message = "Sanction letter generated and verified on blockchain"
                 action_result = {"status": "success", "data": request.data["blockchain_data"]}
             else:
-                message = "Blockchain data required"
                 action_result = {"status": "error", "message": "Blockchain data required"}
         
         elif request.action == "complete":
             session_store.update_stage(request.session_id, "COMPLETED")
             next_stage = "COMPLETED"
-            message = "Loan application process completed successfully!"
             action_result = {"status": "success"}
-        
         else:
-            message = f"Unknown action: {request.action}"
-            action_result = {"status": "error", "message": message}
+            action_result = {"status": "error", "message": "unknown_action"}
+
+        refreshed_session = session_store.get(request.session_id) or session
+        prompt_stage = _map_stage_to_prompt_stage(next_stage or current_stage)
+        prompt_context = _build_prompt_context(
+            refreshed_session,
+            request.action,
+            current_stage,
+            next_stage,
+            action_result,
+        )
+
+        message = await generate_chat_message(
+            groq,
+            stage=prompt_stage,
+            context=prompt_context,
+        )
         
         # Log action
         session_store.log_agent(request.session_id, {

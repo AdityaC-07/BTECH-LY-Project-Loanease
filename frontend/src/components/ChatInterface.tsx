@@ -312,6 +312,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const callKycPanExtractAPI = async (file: File) => {
     const form = new FormData();
     form.append("document", file);
+    form.append("session_id", userData.sessionId);
     form.append("language", language);
 
     const response = await fetch("http://localhost:8000/kyc/extract/pan", {
@@ -330,6 +331,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const callKycAadhaarExtractAPI = async (file: File) => {
     const form = new FormData();
     form.append("document", file);
+    form.append("session_id", userData.sessionId);
+    form.append("language", language);
 
     const response = await fetch("http://localhost:8000/kyc/extract/aadhaar", {
       method: "POST",
@@ -344,14 +347,14 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     return response.json();
   };
 
-  const callKycVerifyAPI = async (panDoc: File, aadhaarDoc: File) => {
-    const form = new FormData();
-    form.append("pan", panDoc);
-    form.append("aadhaar", aadhaarDoc);
+  const callKycVerifyAPI = async (_panDoc: File, _aadhaarDoc: File) => {
 
     const response = await fetch("http://localhost:8000/kyc/verify", {
       method: "POST",
-      body: form,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: userData.sessionId,
+      }),
     });
 
     if (!response.ok) {

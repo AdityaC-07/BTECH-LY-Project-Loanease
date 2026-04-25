@@ -20,6 +20,24 @@ class SessionStore:
                 "data": initial_data
             }
         return session_id
+
+    def get_or_create(self, session_id: str, initial_data: Optional[dict] = None) -> dict:
+        """Get an existing session or create one with a provided session_id."""
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session:
+                return session
+
+            payload = initial_data or {}
+            self._sessions[session_id] = {
+                "id": session_id,
+                "created_at": datetime.utcnow().isoformat(),
+                "expires_at": (datetime.utcnow() + timedelta(hours=24)).isoformat(),
+                "stage": payload.get("stage", "INITIATED"),
+                "agent_log": payload.get("agent_log", []),
+                "data": payload.get("data", {}),
+            }
+            return self._sessions[session_id]
     
     def get(self, session_id: str) -> Optional[dict]:
         with self._lock:

@@ -13,6 +13,28 @@ from core.config import settings
 
 logger = logging.getLogger("loanease.ocr")
 
+# Memory guardrails for OCR preprocessing
+MAX_IMAGE_SIDE = 2200
+MAX_IMAGE_PIXELS = 4_500_000
+MIN_WIDTH = 1200
+
+
+def _is_bad_allocation_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "bad allocation" in message or "onnxruntimeerror" in message
+
+
+def _downscale_for_onnx(candidate: np.ndarray, max_side: int = 1280) -> np.ndarray:
+    height, width = candidate.shape[:2]
+    longest_side = max(height, width)
+    if longest_side <= max_side:
+        return candidate
+
+    scale = max_side / float(longest_side)
+    new_width = max(320, int(width * scale))
+    new_height = max(320, int(height * scale))
+    return cv2.resize(candidate, (new_width, new_height), interpolation=cv2.INTER_AREA)
+
 # Global OCR engine
 _ocr_engine: Optional[RapidOCR] = None
 
@@ -37,6 +59,18 @@ def preprocess_image(file_bytes: bytes, extension: str) -> List[np.ndarray]:
     img = Image.open(io.BytesIO(file_bytes))
     if img.mode != 'RGB':
         img = img.convert('RGB')
+
+    # Downscale very large inputs to prevent ONNX bad allocation
+    width, height = img.size
+    pixel_count = width * height
+
+    if width > MAX_IMAGE_SIDE or height > MAX_IMAGE_SIDE or pixel_count > MAX_IMAGE_PIXELS:
+        side_scale = min(MAX_IMAGE_SIDE / max(width, height), 1.0)
+        pixel_scale = min((MAX_IMAGE_PIXELS / float(pixel_count)) ** 0.5, 1.0)
+        scale = min(side_scale, pixel_scale)
+        target_w = max(600, int(width * scale))
+        target_h = max(600, int(height * scale))
+        img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
     
     # Enhance image
     enhancer = ImageEnhance.Contrast(img)
@@ -49,11 +83,10 @@ def preprocess_image(file_bytes: bytes, extension: str) -> List[np.ndarray]:
     img = img.filter(ImageFilter.MedianFilter(size=3))
     
     # Upscale for better OCR
-    min_width = 1200
-    if img.width < min_width:
-        scale = min_width / img.width
+    if img.width < MIN_WIDTH:
+        scale = MIN_WIDTH / img.width
         new_height = int(img.height * scale)
-        img = img.resize((min_width, new_height), Image.Resampling.LANCZOS)
+        img = img.resize((MIN_WIDTH, new_height), Image.Resampling.LANCZOS)
     
     # Convert to numpy array
     img_array = np.array(img)
@@ -89,8 +122,17 @@ def run_ocr(preprocessed_img: List[np.ndarray]) -> Tuple[str, float]:
     best_text = ""
     best_conf = 0.0
     
-    for candidate in preprocessed_img:
+    for idx, candidate in enumerate(preprocessed_img):
         try:
+            # Secondary safety check before ONNX inference
+            if candidate.shape[0] * candidate.shape[1] > MAX_IMAGE_PIXELS:
+                scale = (MAX_IMAGE_PIXELS / float(candidate.shape[0] * candidate.shape[1])) ** 0.5
+                new_w = max(600, int(candidate.shape[1] * scale))
+                new_h = max(600, int(candidate.shape[0] * scale))
+                candidate = cv2.resize(candidate, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+            candidate = np.ascontiguousarray(candidate.astype(np.uint8, copy=False))
+
             result, _ = _ocr_engine(candidate)
             if result:
                 text_lines = [item[1] for item in result]
@@ -112,7 +154,38 @@ def run_ocr(preprocessed_img: List[np.ndarray]) -> Tuple[str, float]:
                     best_conf = avg_conf
                     
         except Exception as e:
-            logger.warning(f"OCR attempt failed: {e}")
+            if _is_bad_allocation_error(e):
+                try:
+                    emergency_candidate = _downscale_for_onnx(candidate, max_side=960)
+                    emergency_candidate = np.ascontiguousarray(emergency_candidate.astype(np.uint8, copy=False))
+                    result, _ = _ocr_engine(emergency_candidate)
+                    if result:
+                        text_lines = [item[1] for item in result]
+                        text = "\n".join(text_lines).strip()
+
+                        conf_values = []
+                        for item in result:
+                            if len(item) >= 3:
+                                try:
+                                    conf_values.append(float(item[2]))
+                                except (ValueError, TypeError):
+                                    pass
+
+                        avg_conf = sum(conf_values) / len(conf_values) if conf_values else 0.0
+                        if avg_conf > best_conf:
+                            best_text = text
+                            best_conf = avg_conf
+                        logger.info("OCR recovered after emergency downscale (candidate=%s, conf=%.2f)", idx, avg_conf)
+                        continue
+                except Exception as emergency_exc:
+                    logger.warning(
+                        "OCR memory error on candidate %s; emergency retry failed (%s)",
+                        idx,
+                        str(emergency_exc).splitlines()[0],
+                    )
+                    continue
+
+            logger.warning("OCR attempt failed (candidate=%s): %s", idx, str(e).splitlines()[0])
             continue
     
     return best_text, round(max(0.0, min(1.0, best_conf)), 2)

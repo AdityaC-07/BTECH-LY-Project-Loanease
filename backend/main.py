@@ -1,9 +1,12 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 import time
 from datetime import datetime
+from typing import Any, Dict
+
+from pydantic import BaseModel
 
 # Import all routers
 from agents.kyc_agent.main import router as kyc_router
@@ -11,9 +14,33 @@ from agents.underwriting_agent.main import router as underwriting_router
 from agents.negotiation_agent.main import router as negotiation_router
 from agents.blockchain_agent.main import router as blockchain_router
 from agents.master_agent.main import router as master_router
-from core.groq_client import router as groq_router
+from routers.ai_router import router as ai_router
+from services.groq_service import GroqService
+from services.conversation_memory import ConversationMemory
+from core.config import settings
+from core.session import session_store
 
 logger = logging.getLogger("loanease")
+
+
+class SessionSaveRequest(BaseModel):
+    session_id: str
+    messages: list[dict]
+    stage: str
+    applicant_data: dict
+
+
+class SessionResponse(BaseModel):
+    session_id: str
+    messages: list[dict]
+    stage: str
+    applicant_data: dict
+
+
+class EscalationPreferenceRequest(BaseModel):
+    session_id: str
+    preferred_time: str
+    whatsapp_opt_in: bool
 
 # Global uptime tracking
 _start_time = time.time()
@@ -46,9 +73,17 @@ async def lifespan(app: FastAPI):
     init_ocr()
     logger.info("✅ OCR engine ready")
     
-    # Verify Groq API connectivity
-    from core.groq_client import verify_connection
-    groq_ok = await verify_connection()
+    # Initialize Groq service
+    app.state.groq_service = GroqService(
+        api_key=settings.GROQ_API_KEY,
+        primary_model=settings.GROQ_MODEL_PRIMARY,
+        fallback_model=settings.GROQ_MODEL_FALLBACK,
+        timeout=settings.GROQ_TIMEOUT,
+    )
+    app.state.memory = ConversationMemory()
+    app.state.saved_sessions: Dict[str, Dict[str, Any]] = {}
+    app.state.escalation_preferences: Dict[str, Dict[str, Any]] = {}
+    groq_ok = await app.state.groq_service.verify_connection()
     if groq_ok:
         logger.info("✅ Groq API connected — LLaMA 3.3 70B active")
     else:
@@ -91,7 +126,7 @@ app.include_router(underwriting_router, prefix="/credit", tags=["Credit Agent"])
 app.include_router(negotiation_router, prefix="/negotiate", tags=["Negotiation Agent"])
 app.include_router(blockchain_router, prefix="/blockchain", tags=["Blockchain Agent"])
 app.include_router(master_router, prefix="/pipeline", tags=["Master Orchestrator"])
-app.include_router(groq_router, prefix="/ai", tags=["AI/Translation"])
+app.include_router(ai_router)
 
 # Root health check
 @app.get("/")
@@ -116,7 +151,6 @@ async def root():
 async def health():
     from agents.underwriting_agent.main import model_loaded
     from agents.blockchain_agent.main import ledger_ready
-    from core.groq_client import groq_status
     from services.ocr import ocr_ready
     
     return {
@@ -129,6 +163,32 @@ async def health():
             "blockchain_agent": "ready" if ledger_ready() else "error",
             "master_agent": "ready"
         },
-        "groq": groq_status(),
+        "groq": app.state.groq_service.status(),
         "timestamp": datetime.utcnow().isoformat()
     }
+
+
+@app.post("/session/save", response_model=SessionResponse)
+async def save_session(payload: SessionSaveRequest):
+    app.state.saved_sessions[payload.session_id] = payload.model_dump()
+    session_store.get_or_create(
+        payload.session_id,
+        {
+            "stage": payload.stage,
+            "data": payload.applicant_data,
+        },
+    )
+    return SessionResponse(**app.state.saved_sessions[payload.session_id])
+
+
+@app.get("/session/{session_id}", response_model=SessionResponse)
+async def get_session(session_id: str):
+    if session_id not in app.state.saved_sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return SessionResponse(**app.state.saved_sessions[session_id])
+
+
+@app.post("/escalation/preferences")
+async def save_escalation_preferences(payload: EscalationPreferenceRequest):
+    app.state.escalation_preferences[payload.session_id] = payload.model_dump()
+    return {"status": "saved", "session_id": payload.session_id}

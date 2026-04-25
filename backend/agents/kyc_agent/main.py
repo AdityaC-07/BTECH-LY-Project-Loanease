@@ -4,7 +4,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 import io
-from PIL import Image
+from PIL import UnidentifiedImageError
 
 from core.session import session_store
 from services.ocr import preprocess_image, run_ocr, extract_pan, extract_aadhaar, cross_validate_kyc, ocr_ready
@@ -71,10 +71,8 @@ async def extract_pan_endpoint(
         file_bytes = await document.read()
         _assert_upload_constraints(document, file_bytes)
         
-        # Get session
-        session = session_store.get(session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
+        # Get or initialize session
+        session_store.get_or_create(session_id)
         
         # Process document
         extension = document.filename.split('.')[-1].lower()
@@ -127,6 +125,14 @@ async def extract_pan_endpoint(
             processing_time_ms=processing_time
         )
         
+    except HTTPException:
+        raise
+    except (UnidentifiedImageError, OSError, ValueError) as e:
+        logger.warning(f"PAN extraction upload validation failed: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail="Unable to read uploaded PAN document. Please upload a clear JPG/PNG/JPEG/BMP/TIFF image.",
+        )
     except Exception as e:
         logger.error(f"PAN extraction error: {e}")
         raise HTTPException(status_code=500, detail=f"PAN extraction failed: {str(e)}")
@@ -146,10 +152,8 @@ async def extract_aadhaar_endpoint(
         file_bytes = await document.read()
         _assert_upload_constraints(document, file_bytes)
         
-        # Get session
-        session = session_store.get(session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
+        # Get or initialize session
+        session_store.get_or_create(session_id)
         
         # Process document
         extension = document.filename.split('.')[-1].lower()
@@ -194,6 +198,14 @@ async def extract_aadhaar_endpoint(
             processing_time_ms=processing_time
         )
         
+    except HTTPException:
+        raise
+    except (UnidentifiedImageError, OSError, ValueError) as e:
+        logger.warning(f"Aadhaar extraction upload validation failed: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail="Unable to read uploaded Aadhaar document. Please upload a clear JPG/PNG/JPEG/BMP/TIFF image.",
+        )
     except Exception as e:
         logger.error(f"Aadhaar extraction error: {e}")
         raise HTTPException(status_code=500, detail=f"Aadhaar extraction failed: {str(e)}")
