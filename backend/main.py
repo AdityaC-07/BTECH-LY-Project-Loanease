@@ -16,6 +16,7 @@ from agents.master_agent.main import router as master_router
 from routers.ai_router import router as ai_router
 from services.groq_service import GroqService
 from services.memory import ConversationMemory
+from services.ocr import init_ocr, ocr_ready
 from core.config import settings
 from core.session import session_store
 
@@ -44,6 +45,16 @@ class EscalationPreferenceRequest(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("LoanEase backend starting")
+
+    # 0) OCR engine (best effort; degraded mode if unavailable)
+    try:
+        init_ocr()
+        if ocr_ready():
+            logger.info("OCR engine initialized")
+        else:
+            logger.warning("OCR engine unavailable; KYC OCR endpoints may return degraded status")
+    except Exception as exc:
+        logger.warning("OCR initialization failed; continuing in degraded mode: %s", str(exc))
 
     # 1) Groq service.
     app.state.groq_service = GroqService(
@@ -91,6 +102,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import logging
 import os
 import sys
@@ -29,9 +30,31 @@ from app.kyc_extractors import extract_pan, extract_aadhaar, cross_validate_kyc
 from app.kyc_preprocess import preprocess_image, run_ocr, MAX_UPLOAD_BYTES, UnsupportedDocumentError
 
 # Import negotiation backend components
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "negotiation_backend"))
-from app.constants import MAX_ROUNDS
-from app.service import (
+from pathlib import Path
+import importlib.util
+
+# Load negotiation backend constants, service, and store
+neg_backend_path = Path(__file__).resolve().parent.parent.parent / "negotiation_backend" / "app"
+
+spec = importlib.util.spec_from_file_location("negotiation_app_constants", neg_backend_path / "constants.py")
+negotiation_constants = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(negotiation_constants)
+MAX_ROUNDS = negotiation_constants.MAX_ROUNDS
+
+spec = importlib.util.spec_from_file_location("negotiation_app_service", neg_backend_path / "service.py")
+negotiation_service = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(negotiation_service)
+
+spec = importlib.util.spec_from_file_location("negotiation_app_store", neg_backend_path / "store.py")
+negotiation_store_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(negotiation_store_module)
+
+spec = importlib.util.spec_from_file_location("negotiation_app_schemas", neg_backend_path / "schemas.py")
+negotiation_schemas = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(negotiation_schemas)
+
+# Import specific functions and classes
+from negotiation_app_service import (
     append_history,
     build_escalation_reference,
     build_offer,
@@ -40,23 +63,47 @@ from app.service import (
     extract_top_positive_factor,
     start_session,
 )
-from app.store import SessionStore
-import app.schemas as negotiation_schemas
+SessionStore = negotiation_store_module.SessionStore
 
 # Import translation backend components  
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "translation_backend"))
 try:
-    from app.translation_service import TranslationService
-    from app.hinglish_intent import detect_hinglish_intent
-    from app.groq_service import groq_service
-    import app.schemas as translation_schemas
-    TRANSLATION_AVAILABLE = True
-except ImportError:
-    TRANSLATION_AVAILABLE = False
+    trans_backend_path = Path(__file__).resolve().parent.parent.parent / "translation_backend" / "app"
     
+    spec = importlib.util.spec_from_file_location("translation_service_module", trans_backend_path / "translation_service.py")
+    trans_service_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(trans_service_module)
+    TranslationService = trans_service_module.TranslationService
+    
+    spec = importlib.util.spec_from_file_location("hinglish_intent_module", trans_backend_path / "hinglish_intent.py")
+    hinglish_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hinglish_module)
+    detect_hinglish_intent = hinglish_module.detect_hinglish_intent
+    
+    spec = importlib.util.spec_from_file_location("groq_service_module", trans_backend_path / "groq_service.py")
+    groq_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(groq_module)
+    groq_service = groq_module.groq_service
+    
+    spec = importlib.util.spec_from_file_location("translation_schemas", trans_backend_path / "schemas.py")
+    translation_schemas = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(translation_schemas)
+    
+    TRANSLATION_AVAILABLE = True
+except ImportError as e:
+    TRANSLATION_AVAILABLE = False
+    logger.warning(f"Translation services not available: {e}")
+
 # Import pipeline components
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from pipeline import LoanPipeline
+try:
+    spec = importlib.util.spec_from_file_location("pipeline_module", Path(__file__).resolve().parent.parent / "pipeline.py")
+    pipeline_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pipeline_module)
+    LoanPipeline = pipeline_module.LoanPipeline
+    PIPELINE_AVAILABLE = True
+except ImportError as e:
+    PIPELINE_AVAILABLE = False
+    logger.warning(f"Pipeline not available: {e}")
+    LoanPipeline = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -86,9 +133,11 @@ translation_service: TranslationService | None = None
 if TRANSLATION_AVAILABLE:
     translation_service = TranslationService()
 
-# Initialize pipeline
-pipeline = LoanPipeline()
+# Initialize pipeline if available
+pipeline = None
 running_tasks: dict[str, asyncio.Task] = {}
+if PIPELINE_AVAILABLE:
+    pipeline = LoanPipeline()
 
 # In-memory storage for sessions and escalations
 sessions: dict[str, dict] = {}
@@ -574,26 +623,27 @@ def negotiate_history(session_id: str) -> negotiation_schemas.HistoryResponse:
 # PIPELINE ENDPOINTS (from pipeline_app)
 # =============================================================================
 
-@app.post("/pipeline/start")
-async def start_pipeline(request: dict) -> dict:
-    """Start a complete loan processing pipeline"""
-    session_id = request.get("session_id") or str(uuid4())
-    request["session_id"] = session_id
+if PIPELINE_AVAILABLE:
+    @app.post("/pipeline/start")
+    async def start_pipeline(request: dict) -> dict:
+        """Start a complete loan processing pipeline"""
+        session_id = request.get("session_id") or str(uuid4())
+        request["session_id"] = session_id
 
-    if session_id in running_tasks and not running_tasks[session_id].done():
-        return {"session_id": session_id, "status": "ACTIVE", "message": "Pipeline already running"}
+        if session_id in running_tasks and not running_tasks[session_id].done():
+            return {"session_id": session_id, "status": "ACTIVE", "message": "Pipeline already running"}
 
-    running_tasks[session_id] = asyncio.create_task(pipeline.run_full_pipeline(request))
-    return {"session_id": session_id, "status": "ACTIVE", "message": "Pipeline started"}
+        running_tasks[session_id] = asyncio.create_task(pipeline.run_full_pipeline(request))
+        return {"session_id": session_id, "status": "ACTIVE", "message": "Pipeline started"}
 
 
-@app.get("/pipeline/log/{session_id}")
-def get_pipeline_log(session_id: str) -> dict:
-    """Get pipeline execution logs for a session"""
-    log = pipeline.get_session_log(session_id)
-    if not log.get("agent_trace"):
-        raise HTTPException(status_code=404, detail="Session not found")
-    return log
+    @app.get("/pipeline/log/{session_id}")
+    def get_pipeline_log(session_id: str) -> dict:
+        """Get pipeline execution logs for a session"""
+        log = pipeline.get_session_log(session_id)
+        if not log.get("agent_trace"):
+            raise HTTPException(status_code=404, detail="Session not found")
+        return log
 
 
 # =============================================================================

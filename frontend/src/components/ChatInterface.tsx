@@ -66,6 +66,36 @@ interface AadhaarKycFields {
   age_eligible?: boolean;
 }
 
+interface CreditScoreData {
+  credit_score: number;
+  [key: string]: unknown;
+}
+
+interface UserData {
+  name: string;
+  pan: string;
+  creditScore: number;
+  selectedLoan: {
+    amount: number;
+    interest: number;
+    tenure: number;
+    emi: number;
+  };
+  assessmentId: string;
+  sessionId: string;
+  riskScore: number;
+  riskTier: string;
+  maxNegotiationRounds: number;
+  stage: string;
+}
+
+interface SessionData {
+  messages: Message[];
+  stage: string;
+  applicant_data: UserData;
+  timestamp: number;
+}
+
 export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [language, setLanguage] = useState<"en" | "hi">(
@@ -86,7 +116,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [activeAgent, setActiveAgent] = useState("Master Agent");
   const [showCreditScoreCard, setShowCreditScoreCard] = useState(false);
-  const [creditScoreData, setCreditScoreData] = useState<any>(null);
+  const [creditScoreData, setCreditScoreData] = useState<CreditScoreData | null>(null);
   const [showPanUploadCard, setShowPanUploadCard] = useState(false);
   const [showAadhaarUploadCard, setShowAadhaarUploadCard] = useState(false);
   const [isKycProcessing, setIsKycProcessing] = useState(false);
@@ -100,7 +130,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [kycReferenceId, setKycReferenceId] = useState<string>("");
   const [panFile, setPanFile] = useState<File | null>(null);
   const [aadhaarFile, setAadhaarFile] = useState<File | null>(null);
-  const [userData, setUserData] = useState({
+  const [userData, setUserData] = useState<UserData>({
     name: "",
     pan: "",
     creditScore: 0,
@@ -114,7 +144,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   });
 
   const [showSessionBanner, setShowSessionBanner] = useState(false);
-  const [sessionToResume, setSessionToResume] = useState<any>(null);
+  const [sessionToResume, setSessionToResume] = useState<SessionData | null>(null);
   const [pulseBadge, setPulseBadge] = useState(false);
   const [isEscalated, setIsEscalated] = useState(false);
   const [escalationData, setEscalationData] = useState({ preferredTime: "", whatsapp: false });
@@ -140,7 +170,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     toast.success(message);
   };
 
-  const saveSession = async (currentMessages: Message[], currentStage: string, currentData: any) => {
+  const saveSession = async (currentMessages: Message[], currentStage: string, currentData: UserData) => {
     const sessionKey = `loanease_session_${new Date().toISOString().split('T')[0]}`;
     const sessionData = {
       messages: currentMessages,
@@ -186,7 +216,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     const sessionKey = `loanease_session_${new Date().toISOString().split('T')[0]}`;
     const saved = localStorage.getItem(sessionKey);
     if (saved) {
-      const parsed = JSON.parse(saved);
+      const parsed = JSON.parse(saved) as SessionData;
       if (Date.now() - parsed.timestamp < 24 * 60 * 60 * 1000) {
         setSessionToResume(parsed);
         setShowSessionBanner(true);
@@ -352,14 +382,15 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     return response.json();
   };
 
-  const callKycVerifyAPI = async (_panDoc: File, _aadhaarDoc: File) => {
+  const callKycVerifyAPI = async (panDoc: File, aadhaarDoc: File) => {
+    const form = new FormData();
+    form.append("pan", panDoc);
+    form.append("aadhaar", aadhaarDoc);
+    form.append("session_id", userData.sessionId);
 
     const response = await fetch("http://localhost:8000/kyc/verify", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        session_id: userData.sessionId,
-      }),
+      body: form,
     });
 
     if (!response.ok) {
@@ -635,8 +666,9 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const callCreditScoreAPI = async (pan: string) => {
     try {
       const response = await fetch(`http://localhost:8000/credit/credit-score`, {
-        method: "GET",
+        method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pan_number: pan }),
       });
 
       if (!response.ok) {
@@ -695,7 +727,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
       if (botResponse) {
         let quickReplies = undefined;
-        let type: "emi-calculator" | "escalation" | "comparison-cards" | undefined = undefined;
+        const type: "emi-calculator" | "escalation" | "comparison-cards" | undefined = undefined;
 
         if (conversationStep.current === 1) {
           quickReplies = [

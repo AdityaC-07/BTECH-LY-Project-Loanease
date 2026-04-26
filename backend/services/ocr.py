@@ -381,6 +381,7 @@ def extract_pan(ocr_text: str) -> Dict:
 def extract_aadhaar(ocr_text: str) -> Dict:
     """Extract Aadhaar card information with relaxed validation"""
     lines = [line.strip() for line in ocr_text.splitlines() if line.strip()]
+    normalized_lines = [re.sub(r"\s+", " ", line).strip() for line in lines]
     
     # More flexible Aadhaar patterns
     aadhaar_patterns = [
@@ -409,30 +410,71 @@ def extract_aadhaar(ocr_text: str) -> Dict:
     # More flexible name extraction
     name = None
     excluded_keywords = ["GOVERNMENT", "INDIA", "UIDAI", "AADHAAR", "MALE", "FEMALE", "UNIQUE", "IDENTIFICATION", "AUTHORITY"]
+    relation_keywords = ["S/O", "D/O", "W/O", "C/O", "HUSBAND", "FATHER", "MOTHER"]
     
     # Try multiple approaches for name
-    for line in lines:
+    for idx, line in enumerate(normalized_lines):
         if len(line) >= 3:
             # More relaxed name validation
             line_upper = line.upper()
             if not any(keyword in line_upper for keyword in excluded_keywords):
-                # Check if line looks like a name (mostly letters, at least 2 words)
+                # Prefer the line immediately after a name label.
+                if idx > 0 and "NAME" in normalized_lines[idx - 1].upper():
+                    candidate = re.sub(r"[^a-zA-Z\s]", " ", line).strip()
+                    if len(candidate) >= 3:
+                        name = re.sub(r"\s+", " ", candidate).title()
+                        break
+
+                # Check if line looks like a name (mostly letters, allow single-word names too)
                 words = line.split()
-                if (len(words) >= 2 and 
-                    len(re.sub(r"[^a-zA-Z\s]", "", line)) > len(line) * 0.6):  # At least 60% letters
-                    name = line.title()
-                    break
+                letter_ratio = len(re.sub(r"[^a-zA-Z\s]", "", line)) / max(1, len(line))
+                if (
+                    len(words) >= 1
+                    and not any(char.isdigit() for char in line)
+                    and letter_ratio >= 0.45
+                    and not any(keyword in line_upper for keyword in relation_keywords)
+                ):
+                    candidate = re.sub(r"[^a-zA-Z\s]", " ", line).strip()
+                    if len(candidate) >= 3:
+                        name = re.sub(r"\s+", " ", candidate).title()
+                        break
     
     # If no name found, try heuristic approach
     if not name:
-        for i, line in enumerate(lines):
+        for i, line in enumerate(normalized_lines):
             # Look for lines that might contain names
             if (len(line) >= 3 and 
-                len(line.split()) >= 2 and
                 not any(char.isdigit() for char in line) and
                 i < len(lines) - 1):  # Not the last line
-                name = line.title()
+                candidate = re.sub(r"[^a-zA-Z\s]", " ", line).strip()
+                if len(candidate) >= 3:
+                    name = re.sub(r"\s+", " ", candidate).title()
                 break
+
+    if not name:
+        # Final fallback: pick the strongest all-alpha line that is not a keyword blob.
+        best_candidate = ""
+        best_score = 0
+        for line in normalized_lines:
+            if any(keyword in line.upper() for keyword in excluded_keywords):
+                continue
+            candidate = re.sub(r"[^a-zA-Z\s]", " ", line).strip()
+            if not candidate:
+                continue
+            alpha_count = len(re.sub(r"[^a-zA-Z]", "", candidate))
+            word_count = len(candidate.split())
+            score = alpha_count + (word_count * 3)
+            if score > best_score and alpha_count >= 3:
+                best_score = score
+                best_candidate = candidate
+        if best_candidate:
+            name = re.sub(r"\s+", " ", best_candidate).title()
+
+    # Cleanup noisy OCR name tokens frequently seen on Aadhaar
+    if name:
+        cleaned = re.sub(r"\b(S/O|D/O|W/O|C/O|DOB|YO|YOB|YEAR OF BIRTH)\b", " ", name, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" -:,")
+        name = cleaned if cleaned else name
     
     # More flexible DOB extraction
     dob_patterns = [
@@ -491,8 +533,16 @@ def extract_aadhaar(ocr_text: str) -> Dict:
 
 def cross_validate_kyc(pan_data: Dict, aadhaar_data: Dict) -> Dict:
     """Cross-validate PAN and Aadhaar data"""
-    pan_name = pan_data.get("name", "").strip().upper()
-    aadhaar_name = aadhaar_data.get("name", "").strip().upper()
+    def _normalize_name(raw: str) -> str:
+        text = (raw or "").upper()
+        # Remove relation/date markers and common honorifics that reduce fuzzy score.
+        text = re.sub(r"\b(S/O|D/O|W/O|C/O|DOB|YOB|YEAR OF BIRTH|MR|MRS|MS|MISS|SHRI|SMT|KUMARI)\b", " ", text)
+        text = re.sub(r"[^A-Z\s]", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    pan_name = _normalize_name(pan_data.get("name", ""))
+    aadhaar_name = _normalize_name(aadhaar_data.get("name", ""))
     
     # Name matching
     name_score = 0
@@ -508,6 +558,21 @@ def cross_validate_kyc(pan_data: Dict, aadhaar_data: Dict) -> Dict:
         ]
         
         name_score = int(round(sum(scores) / len(scores)))
+
+        # Containment boost for OCR cases like "RAHUL KUMAR" vs "RAHUL"
+        if len(pan_name) >= 4 and len(aadhaar_name) >= 4:
+            if pan_name in aadhaar_name or aadhaar_name in pan_name:
+                name_score = max(name_score, 75)
+
+        # Token overlap boost for reordered/partially missed names
+        pan_tokens = {t for t in pan_name.split() if len(t) >= 2}
+        aadhaar_tokens = {t for t in aadhaar_name.split() if len(t) >= 2}
+        if pan_tokens and aadhaar_tokens:
+            overlap = len(pan_tokens & aadhaar_tokens) / max(1, min(len(pan_tokens), len(aadhaar_tokens)))
+            if overlap >= 0.5:
+                name_score = max(name_score, 70)
+            elif overlap >= 0.34:
+                name_score = max(name_score, 58)
         
         if name_score >= 70:
             name_status = "MATCH"
@@ -522,18 +587,18 @@ def cross_validate_kyc(pan_data: Dict, aadhaar_data: Dict) -> Dict:
     if pan_dob and aadhaar_dob:
         dob_match = pan_dob == aadhaar_dob
     
-    # Overall KYC status - more relaxed criteria
-    if name_score >= 70 and dob_match:
-        kyc_status = "VERIFIED"
-    elif name_score >= 50 or (name_score >= 40 and dob_match):
-        kyc_status = "PARTIAL"
-    else:
-        kyc_status = "FAILED"
-    
     age_eligible = (
         pan_data.get("age_eligible", False) and 
         aadhaar_data.get("age_eligible", False)
     )
+
+    # Overall KYC status - relaxed for noisy Aadhaar OCR
+    if name_score >= 60 and (dob_match or age_eligible):
+        kyc_status = "VERIFIED"
+    elif name_score >= 45 or (name_score >= 35 and dob_match):
+        kyc_status = "PARTIAL"
+    else:
+        kyc_status = "FAILED"
     
     return {
         "kyc_status": kyc_status,
@@ -541,5 +606,5 @@ def cross_validate_kyc(pan_data: Dict, aadhaar_data: Dict) -> Dict:
         "name_match_status": name_status,
         "dob_match": dob_match,
         "age_eligible": age_eligible,
-        "overall_kyc_passed": (kyc_status in ["VERIFIED", "PARTIAL"]) or (name_score >= 40 and age_eligible)
+        "overall_kyc_passed": (kyc_status in ["VERIFIED", "PARTIAL"]) or (name_score >= 35 and age_eligible)
     }

@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Body
 from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
@@ -7,7 +7,7 @@ import io
 from PIL import UnidentifiedImageError
 
 from core.session import session_store
-from services.ocr import preprocess_image, run_ocr, extract_pan, extract_aadhaar, cross_validate_kyc, ocr_ready
+from services.ocr import preprocess_image, run_ocr, extract_pan, extract_aadhaar, cross_validate_kyc, ocr_ready, init_ocr
 from core.config import settings
 
 logger = logging.getLogger("loanease.kyc")
@@ -43,7 +43,7 @@ class VerifyResponse(BaseModel):
 
 def _assert_upload_constraints(file: UploadFile, file_bytes: bytes):
     """Validate file upload constraints"""
-    if file.size > settings.MAX_UPLOAD_BYTES:
+    if len(file_bytes) > settings.MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=413, 
             detail=f"File exceeds {settings.MAX_UPLOAD_BYTES // (1024*1024)}MB limit"
@@ -67,6 +67,12 @@ async def extract_pan_endpoint(
     start_time = time.time()
     
     try:
+        # Lazy-init OCR for resilience in reload/startup race conditions.
+        if not ocr_ready():
+            init_ocr()
+        if not ocr_ready():
+            raise HTTPException(status_code=503, detail="OCR service is initializing. Please retry in a few seconds.")
+
         # Read file
         file_bytes = await document.read()
         _assert_upload_constraints(document, file_bytes)
@@ -169,6 +175,12 @@ async def extract_aadhaar_endpoint(
     start_time = time.time()
     
     try:
+        # Lazy-init OCR for resilience in reload/startup race conditions.
+        if not ocr_ready():
+            init_ocr()
+        if not ocr_ready():
+            raise HTTPException(status_code=503, detail="OCR service is initializing. Please retry in a few seconds.")
+
         # Read file
         file_bytes = await document.read()
         _assert_upload_constraints(document, file_bytes)
@@ -232,39 +244,83 @@ async def extract_aadhaar_endpoint(
         raise HTTPException(status_code=500, detail=f"Aadhaar extraction failed: {str(e)}")
 
 @router.post("/verify", response_model=VerifyResponse)
-async def verify_kyc(request: VerifyRequest):
+async def verify_kyc(
+    request: VerifyRequest | None = Body(default=None),
+    session_id: str | None = Form(default=None),
+    pan: UploadFile | None = File(default=None),
+    aadhaar: UploadFile | None = File(default=None),
+):
     """Verify KYC by cross-validating PAN and Aadhaar data"""
     from datetime import datetime, timezone
     
     try:
-        # Get session
-        session = session_store.get(request.session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-        
-        # Get PAN and Aadhaar data
-        pan_data = session["data"].get("pan_data", {})
-        aadhaar_data = session["data"].get("aadhaar_data", {})
-        
-        if not pan_data or not aadhaar_data:
-            raise HTTPException(status_code=400, detail="Both PAN and Aadhaar data required")
+        resolved_session_id = request.session_id if request is not None else session_id
+
+        # Path 1: verify directly from uploaded PAN + Aadhaar documents.
+        if pan is not None and aadhaar is not None:
+            if not ocr_ready():
+                init_ocr()
+            if not ocr_ready():
+                raise HTTPException(status_code=503, detail="OCR service is initializing. Please retry in a few seconds.")
+
+            pan_bytes = await pan.read()
+            aadhaar_bytes = await aadhaar.read()
+            _assert_upload_constraints(pan, pan_bytes)
+            _assert_upload_constraints(aadhaar, aadhaar_bytes)
+
+            pan_ext = pan.filename.split('.')[-1].lower() if pan.filename else ""
+            aadhaar_ext = aadhaar.filename.split('.')[-1].lower() if aadhaar.filename else ""
+
+            pan_preprocessed = preprocess_image(pan_bytes, pan_ext)
+            pan_ocr_text, _ = run_ocr(pan_preprocessed)
+            pan_data = extract_pan(pan_ocr_text)
+
+            aadhaar_preprocessed = preprocess_image(aadhaar_bytes, aadhaar_ext)
+            aadhaar_ocr_text, _ = run_ocr(aadhaar_preprocessed)
+            aadhaar_data = extract_aadhaar(aadhaar_ocr_text)
+
+            if resolved_session_id:
+                session_store.get_or_create(resolved_session_id)
+                session_store.update_data(resolved_session_id, "pan_data", pan_data)
+                session_store.update_data(resolved_session_id, "aadhaar_data", aadhaar_data)
+
+        # Path 2: verify from previously extracted session data.
+        else:
+            if not resolved_session_id:
+                raise HTTPException(status_code=400, detail="session_id is required")
+
+            session = session_store.get(resolved_session_id)
+            if not session:
+                raise HTTPException(status_code=404, detail="Session not found")
+
+            pan_data = session["data"].get("pan_data", {})
+            aadhaar_data = session["data"].get("aadhaar_data", {})
+
+            if not pan_data or not aadhaar_data:
+                raise HTTPException(status_code=400, detail="Both PAN and Aadhaar data required")
         
         # Cross-validate
         cross_validation = cross_validate_kyc(pan_data, aadhaar_data)
         
         # Generate reference ID
         timestamp = datetime.now(timezone.utc)
-        ref = f"KYC-{timestamp.year}-{len(session['agent_log']) + 1:05d}"
+        log_count = 0
+        if resolved_session_id:
+            session_for_ref = session_store.get(resolved_session_id)
+            if session_for_ref:
+                log_count = len(session_for_ref.get("agent_log", []))
+        ref = f"KYC-{timestamp.year}-{log_count + 1:05d}"
         
         # Update session
-        session_store.update_stage(request.session_id, "KYC_VERIFIED")
-        session_store.log_agent(request.session_id, {
-            "agent": "kyc",
-            "action": "verification",
-            "success": cross_validation["overall_kyc_passed"],
-            "kyc_status": cross_validation["kyc_status"],
-            "reference_id": ref
-        })
+        if resolved_session_id:
+            session_store.update_stage(resolved_session_id, "KYC_VERIFIED")
+            session_store.log_agent(resolved_session_id, {
+                "agent": "kyc",
+                "action": "verification",
+                "success": cross_validation["overall_kyc_passed"],
+                "kyc_status": cross_validation["kyc_status"],
+                "reference_id": ref
+            })
         
         return VerifyResponse(
             kyc_status=cross_validation["kyc_status"],
@@ -276,6 +332,8 @@ async def verify_kyc(request: VerifyRequest):
             timestamp=timestamp.isoformat()
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"KYC verification error: {e}")
         raise HTTPException(status_code=500, detail=f"KYC verification failed: {str(e)}")
