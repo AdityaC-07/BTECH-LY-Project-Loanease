@@ -22,6 +22,14 @@ STAGE_TRIGGER_KEYWORDS: Dict[str, list[str]] = {
     "sanction": ["sanction", "final terms", "acceptance", "polygon blockchain", "letter"],
 }
 
+# Map router stage names to pipeline stage prompt keys
+STAGE_TO_PIPELINE_KEY: Dict[str, str] = {
+    "kyc": "KYC_PENDING",
+    "credit": "CREDIT_ASSESSED",
+    "negotiation": "NEGOTIATING",
+    "sanction": "SANCTIONED",
+}
+
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
@@ -87,6 +95,11 @@ def _forward_stage_only(current_stage: str, generated_text: str) -> str:
     return candidate
 
 
+def _get_pipeline_stage_key(router_stage: str) -> str:
+    """Map router stage to pipeline stage prompt key for contextual behavior."""
+    return STAGE_TO_PIPELINE_KEY.get(_coerce_stage(router_stage), "INITIATED")
+
+
 @router.post("/chat")
 async def chat_stream(
     payload: ChatRequest,
@@ -96,6 +109,7 @@ async def chat_stream(
     """Primary streaming AI chat endpoint returning SSE events."""
     session_id = payload.session_id or str(uuid4())
     requested_stage = _coerce_stage(payload.stage)
+    pipeline_stage_key = _get_pipeline_stage_key(requested_stage)
 
     async def event_generator() -> AsyncGenerator[str, None]:
         full_text = ""
@@ -112,7 +126,11 @@ async def chat_stream(
 
             state = memory.get_state(session_id) or {}
             prompt_context = {**state.get("context", {}), **payload.context}
-            system_prompt = get_system_prompt(requested_stage, prompt_context)
+            system_prompt = get_system_prompt(
+                requested_stage,
+                prompt_context,
+                current_stage=pipeline_stage_key
+            )
             messages = memory.get_messages(session_id)
 
             async for chunk in groq.stream_chat(system_prompt=system_prompt, messages=messages):
@@ -156,6 +174,7 @@ async def chat_sync(
     """Non-streaming fallback endpoint for tests and local debugging."""
     session_id = payload.session_id or str(uuid4())
     stage = _coerce_stage(payload.stage)
+    pipeline_stage_key = _get_pipeline_stage_key(stage)
 
     memory.get_or_create(session_id)
     memory.set_stage(session_id, stage)
@@ -164,7 +183,11 @@ async def chat_sync(
 
     state = memory.get_state(session_id) or {}
     prompt_context = {**state.get("context", {}), **payload.context}
-    system_prompt = get_system_prompt(stage, prompt_context)
+    system_prompt = get_system_prompt(
+        stage,
+        prompt_context,
+        current_stage=pipeline_stage_key
+    )
     messages = memory.get_messages(session_id)
 
     response_text, xai_trace = await groq.chat(system_prompt=system_prompt, messages=messages)
@@ -237,3 +260,4 @@ async def inspect_session_context(
         context=state.get("context", {}),
         meta=state.get("meta", {}),
     )
+

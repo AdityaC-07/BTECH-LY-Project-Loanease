@@ -29,6 +29,123 @@ class GroqResponse:
     response_time_ms: Optional[int] = None
 
 
+# =============================================================================
+# HINGLISH SYSTEM PROMPT ADDENDUM
+# =============================================================================
+
+HINGLISH_SYSTEM_PROMPT_ADDENDUM = """
+The user is typing Hindi in English letters (Hinglish). Respond in Hindi Devanagari script. Keep financial terms in English.
+Example of ideal response tone:
+'हाँ बिल्कुल! आपका loan ₹5,00,000 के लिए approve हो गया है। Rate 11.0% रहेगी।'
+"""
+
+
+# =============================================================================
+# AGENT-SPECIFIC PROMPTS
+# =============================================================================
+
+MASTER_AGENT_PROMPT = """
+You are the Master Orchestrator of LoanEase, an AI personal loan system for Indian borrowers.
+You manage a multi-step loan pipeline.
+
+Current application stage: {stage}
+Applicant language: {language}
+Completed steps: {completed_steps}
+
+Your decisions:
+- Understand user intent
+- Decide which specialized agent to invoke
+- Generate user-facing message in {language}
+- Keep responses under 80 words
+- Never make up loan rates or eligibility
+
+Respond ONLY in this JSON format:
+{{
+  "action": "DELEGATE_KYC | DELEGATE_CREDIT | DELEGATE_NEGOTIATION | DELEGATE_BLOCKCHAIN | ASK_USER | ESCALATE_HUMAN",
+  "user_message": "message in {language}",
+  "reasoning": "internal reasoning",
+  "confidence": 0.0-1.0
+}}
+"""
+
+CREDIT_EXPLANATION_PROMPT = """
+You are explaining a credit decision to an Indian loan applicant in {language}.
+
+Applicant details:
+- Credit score: {credit_score}/900
+- Risk score: {risk_score}/100  
+- Decision: {decision}
+- Offered rate: {rate}%
+
+Structured SHAP Analysis:
+{structured_shap}
+
+Write a warm, clear explanation (max 100 words) of why this decision was made.
+Use simple language — not financial jargon.
+If approved: be encouraging.
+If rejected: be empathetic, give hope.
+Mention the top 2 factors from SHAP with their actual values.
+Keep financial terms (EMI, CIBIL, KYC) in English even in Hindi responses.
+Never say "your XGBoost score" — say "your financial profile".
+"""
+
+NEGOTIATION_REASONING_PROMPT = """
+You are a loan negotiation agent explaining a rate decision to an applicant in {language}.
+
+Negotiation context:
+- Starting rate: {starting_rate}%
+- Current offer: {current_rate}%
+- Floor rate: {floor_rate}%
+- Round: {round} of {max_rounds}
+- Risk tier: {risk_tier}
+- Key strength: {top_positive_shap_factor}
+
+Write a 2-3 sentence explanation (max 60 words) of why you're offering this specific rate.
+Sound like a helpful bank relationship manager.
+Be specific — mention their actual risk tier and the factor that helped them.
+"""
+
+REJECTION_EMPATHY_PROMPT = """
+Write an empathetic rejection message in {language} for a loan applicant whose credit score of {score} is below 300.
+
+Include:
+1. Acknowledge their situation (1 sentence)
+2. Explain the minimum requirement (1 sentence)  
+3. Give 3 specific actionable tips to improve their score
+4. End with encouragement to reapply in 6 months
+
+Tone: warm, supportive, not robotic.
+Max 120 words.
+Financial terms stay in English.
+"""
+
+INTENT_CLASSIFICATION_PROMPT = """
+Classify this loan chatbot message into exactly one intent. Message: '{text}'
+
+Intents:
+LOAN_REQUEST, RATE_QUERY, COUNTER_REQUEST,
+ACCEPTANCE, REJECTION, KYC_READY,
+ESCALATION_REQUEST, EMI_QUERY,
+ELIGIBILITY_QUERY, TENURE_CHANGE,
+GENERAL_QUERY
+
+Also extract any numbers mentioned (loan amounts, rates, tenures).
+Detect language: 'en' | 'hi' | 'hinglish_latin' | 'hindi_devanagari'
+
+Respond ONLY with JSON:
+{{
+  'intent': '...',
+  'confidence': 0.0-1.0,
+  'language': 'en'|'hi'|'hinglish_latin'|'hindi_devanagari',
+  'extracted': {{
+    'amount': null or number,
+    'rate': null or number,
+    'tenure': null or number
+  }}
+}}
+"""
+
+
 class GroqClient:
     def __init__(self):
         self.api_key = os.getenv("GROQ_API_KEY")
@@ -55,11 +172,32 @@ class GroqClient:
                      messages: List[Dict[str, str]],
                      max_tokens: int = 400,
                      temperature: float = 0.3,
-                     require_json: bool = False) -> GroqResponse:
+                     require_json: bool = False,
+                     input_style: Optional[str] = None) -> GroqResponse:
         """
-        Complete a chat request with automatic fallback handling
+        Complete a chat request with automatic fallback handling.
+        
+        Args:
+            messages: List of message dicts with 'role' and 'content' keys.
+            max_tokens: Maximum tokens to generate.
+            temperature: Sampling temperature.
+            require_json: Whether to require JSON output format.
+            input_style: Optional input style hint ('hinglish_latin', 'hindi_devanagari', 'english').
+                         When 'hinglish_latin', appends Hinglish instructions to system prompt.
         """
         start_time = datetime.now()
+        
+        # Prepend Hinglish addendum if needed
+        if input_style == "hinglish_latin" and messages:
+            # Find system message and append Hinglish instructions
+            modified_messages = []
+            for msg in messages:
+                if msg.get("role") == "system":
+                    modified_content = msg["content"] + "\n\n" + HINGLISH_SYSTEM_PROMPT_ADDENDUM
+                    modified_messages.append({"role": "system", "content": modified_content})
+                else:
+                    modified_messages.append(msg)
+            messages = modified_messages
         
         # Try primary model first
         try:
@@ -171,9 +309,23 @@ class GroqClient:
         # Extract last user message
         last_msg = messages[-1]["content"].lower() if messages else ""
         
-        # Detect language
+        # Detect language using enhanced detection
         has_devanagari = any('\u0900' <= c <= '\u097F' for c in last_msg)
-        lang = "hi" if has_devanagari else "en"
+        
+        # Check Hinglish markers
+        hinglish_markers = [
+            "mujhe", "chahiye", "kitna", "kya", "hai", "hoga", "nahi", "theek",
+            "bhai", "yaar", "aur", "kam", "zyada", "lena", "dena", "batao",
+            "karo", "thoda", "bahut", "accha", "loan", "rate", "emi"
+        ]
+        hinglish_count = sum(1 for marker in hinglish_markers if marker in last_msg)
+        is_hinglish = hinglish_count >= 2 and not has_devanagari
+        
+        # Determine language for fallback response
+        if has_devanagari or is_hinglish:
+            lang = "hi"
+        else:
+            lang = "en"
         
         # Map to hardcoded responses by keywords
         fallback_responses = {
@@ -275,101 +427,3 @@ class GroqClient:
 # Global instance for easy access
 groq_client = GroqClient()
 
-
-# Agent-specific prompts
-MASTER_AGENT_PROMPT = """
-You are the Master Orchestrator of LoanEase, an AI personal loan system for Indian borrowers.
-You manage a multi-step loan pipeline.
-
-Current application stage: {stage}
-Applicant language: {language}
-Completed steps: {completed_steps}
-
-Your decisions:
-- Understand user intent
-- Decide which specialized agent to invoke
-- Generate user-facing message in {language}
-- Keep responses under 80 words
-- Never make up loan rates or eligibility
-
-Respond ONLY in this JSON format:
-{{
-  "action": "DELEGATE_KYC | DELEGATE_CREDIT | DELEGATE_NEGOTIATION | DELEGATE_BLOCKCHAIN | ASK_USER | ESCALATE_HUMAN",
-  "user_message": "message in {language}",
-  "reasoning": "internal reasoning",
-  "confidence": 0.0-1.0
-}}
-"""
-
-CREDIT_EXPLANATION_PROMPT = """
-You are explaining a credit decision to an Indian loan applicant in {language}.
-
-Applicant details:
-- Credit score: {credit_score}/900
-- Risk score: {risk_score}/100  
-- Decision: {decision}
-- Offered rate: {rate}%
-- Top SHAP factors: {shap_factors}
-
-Write a warm, clear explanation (max 100 words) of why this decision was made.
-Use simple language — not financial jargon.
-If approved: be encouraging.
-If rejected: be empathetic, give hope.
-Mention the top 2 factors from SHAP.
-Keep financial terms (EMI, CIBIL, KYC) in English even in Hindi responses.
-"""
-
-NEGOTIATION_REASONING_PROMPT = """
-You are a loan negotiation agent explaining a rate decision to an applicant in {language}.
-
-Negotiation context:
-- Starting rate: {starting_rate}%
-- Current offer: {current_rate}%
-- Floor rate: {floor_rate}%
-- Round: {round} of {max_rounds}
-- Risk tier: {risk_tier}
-- Key strength: {top_positive_shap_factor}
-
-Write a 2-3 sentence explanation (max 60 words) of why you're offering this specific rate.
-Sound like a helpful bank relationship manager.
-Be specific — mention their actual risk tier and the factor that helped them.
-"""
-
-REJECTION_EMPATHY_PROMPT = """
-Write an empathetic rejection message in {language} for a loan applicant whose credit score of {score} is below 300.
-
-Include:
-1. Acknowledge their situation (1 sentence)
-2. Explain the minimum requirement (1 sentence)  
-3. Give 3 specific actionable tips to improve their score
-4. End with encouragement to reapply in 6 months
-
-Tone: warm, supportive, not robotic.
-Max 120 words.
-Financial terms stay in English.
-"""
-
-INTENT_CLASSIFICATION_PROMPT = """
-Classify this loan chatbot message into exactly one intent. Message: '{text}'
-
-Intents:
-LOAN_REQUEST, RATE_QUERY, COUNTER_REQUEST,
-ACCEPTANCE, REJECTION, KYC_READY,
-ESCALATION_REQUEST, EMI_QUERY,
-ELIGIBILITY_QUERY, TENURE_CHANGE,
-GENERAL_QUERY
-
-Also extract any numbers mentioned (loan amounts, rates, tenures).
-
-Respond ONLY with JSON:
-{{
-  'intent': '...',
-  'confidence': 0.0-1.0,
-  'language': 'en'|'hi'|'hinglish',
-  'extracted': {{
-    'amount': null or number,
-    'rate': null or number,
-    'tenure': null or number
-  }}
-}}
-"""

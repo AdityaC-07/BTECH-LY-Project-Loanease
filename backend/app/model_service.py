@@ -9,6 +9,7 @@ import shap  # type: ignore[import-not-found]
 
 from app.credit_score import get_credit_score, get_credit_band
 from app.risk_combiner import evaluate_applicant
+from services.shap_narrator import generate_shap_narration
 
 
 REQUEST_TO_DATASET_COLUMN = {
@@ -167,6 +168,17 @@ class ModelService:
         else:
             final_decision = "APPROVED_WITH_CONDITIONS"
 
+        # Generate structured SHAP narration with actual feature values
+        shap_values_array = np.array([item["shap_value"] for item in waterfall])
+        feature_values_dict = {item["feature"]: item["value"] for item in waterfall}
+        structured_narration = generate_shap_narration(
+            shap_values=shap_values_array,
+            feature_names=self.feature_columns,
+            feature_values=feature_values_dict,
+            decision=final_decision,
+            language="en",
+        )
+
         rate_range = combined_risk["loan_decision"]["interest_rate_range"]
         rate = combined_risk["loan_decision"]["suggested_interest_rate"]
 
@@ -197,6 +209,7 @@ class ModelService:
             "xgboost_probability": round(xgboost_probability, 2),
             "xgboost_ran": True,
             "shap_explanation": top_explanations,
+            "structured_shap_narration": structured_narration,
             "threshold_used": self.threshold,
             "raw_input": raw_row,
             "shap_waterfall": waterfall,

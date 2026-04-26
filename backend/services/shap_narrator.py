@@ -40,6 +40,54 @@ FEATURE_LABEL_MAP: dict[str, str] = {
     "education_Graduate": "education level (graduate)",
 }
 
+# Bilingual feature labels for structured narration
+FEATURE_LABELS: dict[str, dict[str, str]] = {
+    "Credit_History": {
+        "en": "your credit repayment history",
+        "hi": "आपकी credit repayment history"
+    },
+    "ApplicantIncome": {
+        "en": "your monthly income",
+        "hi": "आपकी monthly income"
+    },
+    "LoanAmount": {
+        "en": "your requested loan amount",
+        "hi": "आपकी loan राशि"
+    },
+    "Loan_Amount_Term": {
+        "en": "your chosen loan tenure",
+        "hi": "आपकी loan अवधि"
+    },
+    "CoapplicantIncome": {
+        "en": "your co-applicant's income",
+        "hi": "आपके co-applicant की income"
+    },
+    "Property_Area": {
+        "en": "your property location",
+        "hi": "आपकी property का location"
+    },
+    "Gender": {
+        "en": "your gender",
+        "hi": "आपका gender"
+    },
+    "Married": {
+        "en": "your marital status",
+        "hi": "आपकी marital status"
+    },
+    "Dependents": {
+        "en": "your number of dependents",
+        "hi": "आपके dependents"
+    },
+    "Education": {
+        "en": "your education level",
+        "hi": "आपकी education"
+    },
+    "Self_Employed": {
+        "en": "your employment type",
+        "hi": "आपका employment type"
+    },
+}
+
 ACTIONABLE_FEATURES: list[str] = [
     "cibil_score",
     "monthly_income",
@@ -78,6 +126,12 @@ def _human_label(feature_name: str) -> str:
     return FEATURE_LABEL_MAP.get(feature_name, feature_name.replace("_", " "))
 
 
+def _bilingual_label(feature_name: str, language: str = "en") -> str:
+    """Get bilingual label for a feature. Falls back to human_label."""
+    labels = FEATURE_LABELS.get(feature_name, {})
+    return labels.get(language, labels.get("en", _human_label(feature_name)))
+
+
 def format_shap_for_prompt(shap_values: dict[str, float], top_n: int = 5) -> str:
     """Format top-N SHAP contributors into a prompt-ready numbered list."""
     if not shap_values:
@@ -96,6 +150,228 @@ def format_shap_for_prompt(shap_values: dict[str, float], top_n: int = 5) -> str
         lines.append(
             f"{idx}. Feature: {_human_label(feature)}, Direction: {direction}, Magnitude: {abs(value):.2f}"
         )
+    return "\n".join(lines)
+
+
+def generate_shap_narration(
+    shap_values: np.ndarray,
+    feature_names: list[str],
+    feature_values: dict[str, Any],
+    decision: str,
+    language: str = "en",
+    threshold: float = 0.05,
+) -> dict[str, Any]:
+    """
+    Generate structured SHAP narration that references actual feature values.
+
+    Args:
+        shap_values: Array of SHAP values for each feature.
+        feature_names: List of feature names corresponding to shap_values.
+        feature_values: Dict mapping feature names to their actual values.
+        decision: The model decision (APPROVED, APPROVED_WITH_CONDITIONS, REJECTED).
+        language: "en" or "hi".
+        threshold: Minimum absolute SHAP value to consider a factor significant.
+
+    Returns:
+        Structured narration dict with summary, factors, primary_reason, and tips.
+    """
+    # Sort features by absolute SHAP value
+    importance = sorted(
+        zip(
+            feature_names,
+            shap_values,
+            [feature_values.get(f, "N/A") for f in feature_names],
+        ),
+        key=lambda x: abs(float(x[1])),
+        reverse=True,
+    )
+
+    # Separate positive and negative factors
+    positive_factors = [
+        (name, float(val), actual)
+        for name, val, actual in importance
+        if float(val) > threshold
+    ]
+    negative_factors = [
+        (name, float(val), actual)
+        for name, val, actual in importance
+        if float(val) < -threshold
+    ]
+
+    # Build structured narration
+    narration: dict[str, Any] = {
+        "summary": "",
+        "positive_factors": [],
+        "negative_factors": [],
+        "primary_reason": "",
+        "improvement_tips": [],
+        "decision": decision,
+        "language": language,
+    }
+
+    # Build factor lists with bilingual labels and actual values
+    for name, val, actual in positive_factors[:3]:
+        label = _bilingual_label(name, language)
+        narration["positive_factors"].append({
+            "feature": name,
+            "label": label,
+            "shap_value": round(val, 3),
+            "actual_value": actual,
+        })
+
+    for name, val, actual in negative_factors[:3]:
+        label = _bilingual_label(name, language)
+        narration["negative_factors"].append({
+            "feature": name,
+            "label": label,
+            "shap_value": round(val, 3),
+            "actual_value": actual,
+        })
+
+    # Top positive factor with actual value as primary reason
+    if positive_factors:
+        top_pos = positive_factors[0]
+        label = _bilingual_label(top_pos[0], language)
+        actual_val = top_pos[2]
+        if language == "hi":
+            narration["primary_reason"] = (
+                f"{label} (₹{actual_val}) ने सबसे ज्यादा "
+                f"आपके approval में मदद की।"
+            )
+        else:
+            narration["primary_reason"] = (
+                f"{label} (value: {actual_val}) was the strongest "
+                f"factor supporting your approval."
+            )
+
+    # Top negative factor as concern
+    if negative_factors:
+        top_neg = negative_factors[0]
+        label = _bilingual_label(top_neg[0], language)
+        actual_val = top_neg[2]
+        if language == "hi":
+            concern = (
+                f"{label} (₹{actual_val}) ने approval chances को "
+                f"थोड़ा कम किया।"
+            )
+        else:
+            concern = (
+                f"{label} (value: {actual_val}) reduced your "
+                f"approval chances."
+            )
+        narration["primary_concern"] = concern
+
+    # Summary based on decision
+    if decision == "APPROVED":
+        if language == "hi":
+            narration["summary"] = (
+                f"आपका loan approve हो गया है। "
+                f"{len(positive_factors)} factors ने आपके favour में काम किया।"
+            )
+        else:
+            narration["summary"] = (
+                f"Your loan is approved. "
+                f"{len(positive_factors)} factors worked in your favour."
+            )
+    elif decision == "APPROVED_WITH_CONDITIONS":
+        if language == "hi":
+            narration["summary"] = (
+                f"आपका loan conditions के साथ approve हुआ है। "
+                f"{len(positive_factors)} positive और {len(negative_factors)} negative factors मिले।"
+            )
+        else:
+            narration["summary"] = (
+                f"Your loan is approved with conditions. "
+                f"We found {len(positive_factors)} positive and {len(negative_factors)} negative factors."
+            )
+    else:
+        if language == "hi":
+            narration["summary"] = (
+                f"अभी के लिए loan eligible नहीं। "
+                f"{len(negative_factors)} factors ने approval में रुकावट डाली।"
+            )
+        else:
+            narration["summary"] = (
+                f"Unfortunately, the loan is not approved at this time. "
+                f"{len(negative_factors)} factors held back the approval."
+            )
+
+    # Improvement tips based on negative factors
+    for name, val, actual in negative_factors[:2]:
+        if name == "Credit_History":
+            tip = (
+                "Timely EMI payments अगले 6 months करें — "
+                if language == "hi" else
+                "Make timely EMI payments for the next 6 months — "
+            )
+            tip += "this will improve your CIBIL score."
+            narration["improvement_tips"].append(tip)
+        elif name in {"ApplicantIncome", "CoapplicantIncome"}:
+            tip = (
+                "Income proof जैसे salary slips या ITR submit करें — "
+                if language == "hi" else
+                "Submit income proof like salary slips or ITR — "
+            )
+            tip += "higher documented income strengthens your profile."
+            narration["improvement_tips"].append(tip)
+        elif name == "LoanAmount":
+            tip = (
+                "Thoda kam loan amount request करें — "
+                if language == "hi" else
+                "Request a slightly lower loan amount — "
+            )
+            tip += "this improves your debt-to-income ratio."
+            narration["improvement_tips"].append(tip)
+        elif name == "Loan_Amount_Term":
+            tip = (
+                "Longer tenure choose करें — "
+                if language == "hi" else
+                "Choose a longer tenure — "
+            )
+            tip += "this reduces your monthly EMI burden."
+            narration["improvement_tips"].append(tip)
+
+    if not narration["improvement_tips"]:
+        if language == "hi":
+            narration["improvement_tips"].append(
+                "CIBIL score improve करें और existing debts कम करें।"
+            )
+        else:
+            narration["improvement_tips"].append(
+                "Work on improving your CIBIL score and reducing existing debts."
+            )
+
+    return narration
+
+
+def format_structured_shap_for_groq(narration: dict[str, Any]) -> str:
+    """Serialize structured SHAP narration into a Groq prompt-ready string."""
+    lines: list[str] = []
+    lines.append(f"Decision: {narration.get('decision', 'N/A')}")
+    lines.append(f"Summary: {narration.get('summary', '')}")
+    lines.append(f"Primary Reason: {narration.get('primary_reason', '')}")
+
+    if narration.get("primary_concern"):
+        lines.append(f"Primary Concern: {narration['primary_concern']}")
+
+    lines.append("\nTop Positive Factors (helped approval):")
+    for factor in narration.get("positive_factors", []):
+        lines.append(
+            f"  - {factor['label']}: SHAP={factor['shap_value']:.3f}, "
+            f"Actual Value={factor['actual_value']}"
+        )
+
+    lines.append("\nTop Negative Factors (hurt chances):")
+    for factor in narration.get("negative_factors", []):
+        lines.append(
+            f"  - {factor['label']}: SHAP={factor['shap_value']:.3f}, "
+            f"Actual Value={factor['actual_value']}"
+        )
+
+    lines.append("\nImprovement Tips:")
+    for tip in narration.get("improvement_tips", []):
+        lines.append(f"  - {tip}")
+
     return "\n".join(lines)
 
 
