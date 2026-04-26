@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Link } from "react-router-dom";
 import { Download, Shield, FileCheck, TrendingUp, CheckCircle2, Lock, QrCode } from "lucide-react";
 
 interface SanctionLetterProps {
@@ -134,17 +135,16 @@ export const SanctionLetter = ({
             Download PDF
           </Button>
 
-          {onViewAnalytics && (
+          <Link to="/blockchain/explorer" className="w-full">
             <Button
               variant="outline"
               className="w-full h-12 text-sm font-bold tracking-wide border-border hover:bg-muted"
               size="lg"
-              onClick={onViewAnalytics}
             >
-              <TrendingUp className="w-4 h-4 mr-2" />
-              Verify Online
+              <Shield className="w-4 h-4 mr-2" />
+              Verify on Ledger
             </Button>
-          )}
+          </Link>
         </div>
       </CardContent>
     </Card>

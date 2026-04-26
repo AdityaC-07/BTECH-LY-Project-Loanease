@@ -87,6 +87,10 @@ interface UserData {
   riskTier: string;
   maxNegotiationRounds: number;
   stage: string;
+  blockchainData?: {
+    transaction_id: string;
+    block_hash: string;
+  };
 }
 
 interface SessionData {
@@ -141,6 +145,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     riskTier: "",
     maxNegotiationRounds: 0,
     stage: "kyc",
+    blockchainData: undefined,
   });
 
   const [showSessionBanner, setShowSessionBanner] = useState(false);
@@ -903,16 +908,42 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
               },
             ]);
 
-            setTimeout(() => {
+            setTimeout(async () => {
+              setActiveAgent("Blockchain Audit Agent");
+              setPulseBadge(true);
+              
+              try {
+                const sanctionRes = await fetch("http://localhost:8000/blockchain/sanction", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    session_id: userData.sessionId,
+                    applicant_name: userData.name || "Rahul Sharma",
+                    pan_number: userData.pan || "ABCDE1234F",
+                    loan_amount: amount,
+                    interest_rate: interest,
+                    tenure_years: Math.round(tenure / 12) || 1
+                  })
+                });
+                
+                if (sanctionRes.ok) {
+                  const bData = await sanctionRes.json();
+                  setUserData(prev => ({ ...prev, blockchainData: bData }));
+                }
+              } catch (e) {
+                console.warn("Blockchain sanction failed", e);
+              }
+
               setMessages((prev) => [
                 ...prev,
                 {
                   id: prev.length + 1,
-                  text: "Sanction details are being securely recorded with tamper-proof hash verification.",
+                  text: "Sanction details are being securely recorded with tamper-proof hash verification on our distributed audit ledger.",
                   isBot: true,
                 },
               ]);
               setShowSanction(true);
+              setPulseBadge(false);
             }, 1000);
           }, 1000);
         }
@@ -1399,8 +1430,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
               tenure={userData.selectedLoan.tenure}
               emi={userData.selectedLoan.emi}
               sanctionDate={new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-              referenceId={`LOAN${Date.now().toString().slice(-8)}`}
-              blockchainHash={`0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`}
+              referenceId={userData.blockchainData?.transaction_id || `LOAN${Date.now().toString().slice(-8)}`}
+              blockchainHash={userData.blockchainData?.block_hash || "0x..."}
               onViewAnalytics={() => setShowAnalytics(true)}
             />
           </div>

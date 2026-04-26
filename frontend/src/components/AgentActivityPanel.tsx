@@ -34,8 +34,15 @@ const LABELS: Record<string, string> = {
 
 export const AgentActivityPanel = ({ trace, pipelineStatus }: AgentActivityPanelProps) => {
   const [collapsed, setCollapsed] = useState(true);
+  const [isDemoMode, setIsDemoMode] = useState(false);
   const doneSet = useMemo(() => new Set(trace.map((item) => item.agent)), [trace]);
   
+  // Detect demo mode from URL param
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setIsDemoMode(params.get("demo") === "true");
+  }, []);
+
   const activeAgent = useMemo(() => {
     const next = AGENT_ORDER.find((agent) => !doneSet.has(agent));
     return pipelineStatus === "SANCTIONED" || pipelineStatus === "FAILED" ? null : next ?? null;
@@ -76,6 +83,11 @@ export const AgentActivityPanel = ({ trace, pipelineStatus }: AgentActivityPanel
           <div className="flex items-center gap-2">
             <span className="text-xl">🤖</span>
             <div className="text-sm font-bold tracking-tight">Agent Activity</div>
+            {isDemoMode && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-yellow-400/20 text-yellow-400 font-semibold border border-yellow-400/30 animate-pulse-soft">
+                ⚡ Demo
+              </span>
+            )}
           </div>
           <button 
             className="p-1 hover:bg-muted rounded-md transition-colors"

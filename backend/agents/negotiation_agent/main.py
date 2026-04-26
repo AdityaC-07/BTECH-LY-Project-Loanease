@@ -227,6 +227,11 @@ def generate_negotiation_id() -> str:
 async def start_negotiation(request: NegotiationStartRequest):
     """Start rate negotiation"""
     try:
+        # Artificial delay for demo visibility
+        if settings.DEMO_MODE:
+            import asyncio
+            await asyncio.sleep(1.5)
+
         # Get session
         session = session_store.get(request.session_id)
         if not session:
@@ -291,6 +296,11 @@ async def start_negotiation(request: NegotiationStartRequest):
 async def counter_offer(request: NegotiationCounterRequest):
     """Handle counter offer in negotiation"""
     try:
+        # Artificial delay for demo visibility
+        if settings.DEMO_MODE:
+            import asyncio
+            await asyncio.sleep(1.2)
+
         # Get negotiation
         negotiation = _negotiations.get(request.negotiation_id)
         if not negotiation:

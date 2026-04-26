@@ -15,6 +15,59 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption, PublicFormat
 
 
+class MerkleTree:
+    """Simple Merkle Tree implementation for transaction integrity"""
+    @staticmethod
+    def compute_root(transactions: List[Dict[str, Any]]) -> str:
+        """Calculate Merkle Root for a list of transactions"""
+        if not transactions:
+            return "0" * 64
+        
+        # Convert transactions to hashes (leaves)
+        hashes = [hashlib.sha256(json.dumps(tx, sort_keys=True).encode()).hexdigest() for tx in transactions]
+        
+        # If odd number of leaves, duplicate the last one
+        if len(hashes) > 1 and len(hashes) % 2 != 0:
+            hashes.append(hashes[-1])
+            
+        while len(hashes) > 1:
+            new_level = []
+            for i in range(0, len(hashes), 2):
+                combined = hashes[i] + hashes[i+1]
+                new_level.append(hashlib.sha256(combined.encode()).hexdigest())
+            hashes = new_level
+            if len(hashes) > 1 and len(hashes) % 2 != 0:
+                hashes.append(hashes[-1])
+        
+        return hashes[0]
+
+    @staticmethod
+    def get_tree_structure(transactions: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Return the full tree structure for visualization"""
+        if not transactions:
+            return {}
+            
+        leaves = [hashlib.sha256(json.dumps(tx, sort_keys=True).encode()).hexdigest() for tx in transactions]
+        levels = [leaves]
+        
+        current = leaves
+        while len(current) > 1:
+            if len(current) % 2 != 0:
+                current.append(current[-1])
+            next_level = []
+            for i in range(0, len(current), 2):
+                combined = current[i] + current[i+1]
+                next_level.append(hashlib.sha256(combined.encode()).hexdigest())
+            levels.append(next_level)
+            current = next_level
+            
+        return {
+            "root": levels[-1][0] if levels else None,
+            "levels": levels,
+            "transactions": transactions
+        }
+
+
 @dataclass
 class Block:
     """Represents a single block in the blockchain"""
@@ -23,6 +76,7 @@ class Block:
     transaction_data: Dict[str, Any]
     previous_hash: str
     hash: str
+    merkle_root: str = ""
     nonce: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
@@ -33,6 +87,7 @@ class Block:
             "transaction_data": self.transaction_data,
             "previous_hash": self.previous_hash,
             "hash": self.hash,
+            "merkle_root": self.merkle_root,
             "nonce": self.nonce
         }
 
@@ -46,16 +101,20 @@ class Blockchain:
     
     def create_genesis_block(self):
         """Create the first block in the chain"""
+        genesis_data = {
+            "message": "LoanEase Genesis Block - Audit Ledger Initialized",
+            "creator": "LoanEase AI System",
+            "version": "1.0.0"
+        }
+        merkle_root = MerkleTree.compute_root([genesis_data])
+        
         genesis_block = Block(
             index=0,
             timestamp=datetime.now(timezone.utc).isoformat(),
-            transaction_data={
-                "message": "LoanEase Genesis Block - Audit Ledger Initialized",
-                "creator": "LoanEase AI System",
-                "version": "1.0.0"
-            },
-            previous_hash="0" * 64,  # 64 zeros for genesis
-            hash=self.compute_hash("genesis", "0" * 64, 0)
+            transaction_data=genesis_data,
+            previous_hash="0" * 64,
+            merkle_root=merkle_root,
+            hash=self.compute_hash(json.dumps(genesis_data), "0" * 64, 0, merkle_root)
         )
         self.chain.append(genesis_block)
     
@@ -67,11 +126,16 @@ class Blockchain:
         """Add a new transaction as a block to the chain"""
         previous_block = self.get_latest_block()
         
+        # In this simple implementation, each block has one main transaction,
+        # but we use Merkle Tree to represent it (and potentially simulated extra ones)
+        merkle_root = MerkleTree.compute_root([data])
+        
         new_block = Block(
             index=len(self.chain),
             timestamp=datetime.now(timezone.utc).isoformat(),
             transaction_data=data,
             previous_hash=previous_block.hash,
+            merkle_root=merkle_root,
             hash=""  # Will be computed
         )
         
@@ -99,16 +163,18 @@ class Blockchain:
             "timestamp": block.timestamp,
             "data": block.transaction_data,
             "previous_hash": block.previous_hash,
+            "merkle_root": block.merkle_root,
             "nonce": block.nonce
         }, sort_keys=True)
         
         return hashlib.sha256(block_string.encode('utf-8')).hexdigest()
     
-    def compute_hash(self, content: str, previous_hash: str, nonce: int) -> str:
+    def compute_hash(self, content: str, previous_hash: str, nonce: int, merkle_root: str = "") -> str:
         """Compute hash for content (used for genesis block)"""
         data_string = json.dumps({
             "content": content,
             "previous_hash": previous_hash,
+            "merkle_root": merkle_root,
             "nonce": nonce
         }, sort_keys=True)
         
@@ -127,6 +193,10 @@ class Blockchain:
             # Verify linkage to previous block
             if current.previous_hash != previous.hash:
                 return False
+                
+            # Verify Merkle Root matches data
+            if current.merkle_root != MerkleTree.compute_root([current.transaction_data]):
+                return False
         
         return True
     
@@ -142,14 +212,18 @@ class Blockchain:
         for block in self.chain:
             if block.transaction_data.get("sanction_reference") == reference:
                 return block
+            # Handle possible alternate field names
+            if block.data.get("transaction_id") == reference:
+                return block
         return None
     
     def get_stats(self) -> Dict[str, Any]:
         """Get blockchain statistics"""
-        sanction_blocks = [b for b in self.chain[1:] if "sanction_reference" in b.transaction_data]
+        sanction_blocks = [b for b in self.chain[1:] if b.transaction_data.get("type") == "SANCTION_LETTER" or "sanction_reference" in b.transaction_data]
         total_amount = sum(b.transaction_data.get("loan_amount", 0) for b in sanction_blocks)
         
         return {
+            "total_blocks": len(self.chain),
             "total_sanctions": len(sanction_blocks),
             "total_amount_sanctioned": total_amount,
             "chain_valid": self.is_chain_valid(),
@@ -157,6 +231,12 @@ class Blockchain:
             "latest_block_timestamp": self.get_latest_block().timestamp,
             "chain_length": len(self.chain)
         }
+
+    def reset_to_genesis(self) -> int:
+        """Reset the blockchain to only the genesis block. Returns blocks cleared."""
+        blocks_cleared = max(0, len(self.chain) - 1)
+        self.chain = [self.chain[0]]  # Keep only genesis
+        return blocks_cleared
 
 
 class CryptoManager:

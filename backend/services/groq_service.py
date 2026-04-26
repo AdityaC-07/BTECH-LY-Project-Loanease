@@ -84,19 +84,33 @@ class GroqService:
         max_tokens: int = 1024,
     ) -> Tuple[str, Dict[str, Any]]:
         """Generate a full response and return clean text plus XAI trace."""
-        if self._client is None:
+        from core.config import settings
+        from core.fallback_map import get_fallback
+
+        if self._client is None or not self._connected:
+            if settings.DEMO_MODE:
+                fallback = get_fallback("groq")
+                return fallback["text"], fallback["trace"]
+            
             # Fallback response when Groq is not available
             fallback_response = "I'm sorry, I'm currently unable to process your request. Please try again later."
             return fallback_response, {"error": "Groq client not initialized", "fallback_used": True}
         
-        result = await self._chat_completion(
-            model=self._primary_model,
-            system_prompt=system_prompt,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return result.text, result.xai_trace
+        try:
+            result = await self._chat_completion(
+                model=self._primary_model,
+                system_prompt=system_prompt,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return result.text, result.xai_trace
+        except Exception as e:
+            if settings.DEMO_MODE:
+                logger.error(f"Groq Chat failed, using demo fallback: {e}")
+                fallback = get_fallback("groq")
+                return fallback["text"], fallback["trace"]
+            raise e
 
     async def stream_chat(
         self,

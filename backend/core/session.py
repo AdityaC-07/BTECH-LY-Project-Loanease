@@ -77,5 +77,12 @@ class SessionStore:
             for k in expired:
                 del self._sessions[k]
 
+    def clear_all(self) -> int:
+        """Clear all sessions. Returns number of sessions cleared."""
+        with self._lock:
+            count = len(self._sessions)
+            self._sessions.clear()
+        return count
+
 # Single global instance
 session_store = SessionStore()

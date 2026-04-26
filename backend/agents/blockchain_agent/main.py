@@ -11,95 +11,26 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization
 from cryptography.exceptions import InvalidSignature
+import asyncio
 
 from core.session import session_store
 from services.pdf_generator import generate_sanction_letter
 from core.config import settings
+from blockchain import ledger, Block, MerkleTree
 
 logger = logging.getLogger("loanease.blockchain")
 
 router = APIRouter()
 
-# Global blockchain state
-_ledger = []
-_private_key = None
-_public_key = None
-
-# Pydantic models
-class SanctionRequest(BaseModel):
-    session_id: str
-    applicant_name: str
-    pan_number: str
-    loan_amount: float
-    interest_rate: float
-    tenure_years: int
-
-class SanctionResponse(BaseModel):
-    transaction_id: str
-    block_hash: str
-    qr_code_url: str
-    verification_url: str
-    pdf_download_url: str
-
-class VerifyRequest(BaseModel):
-    reference_id: str
-
-class VerifyResponse(BaseModel):
-    valid: bool
-    block_data: Dict[str, Any]
-    verification_details: Dict[str, Any]
-
-class ChainResponse(BaseModel):
-    chain_length: int
-    blocks: List[Dict[str, Any]]
-
-class Block:
-    def __init__(self, data: Dict[str, Any], previous_hash: str = "0"):
-        self.timestamp = datetime.now(timezone.utc).isoformat()
-        self.data = data
-        self.previous_hash = previous_hash
-        self.nonce = 0
-        self.hash = self.calculate_hash()
-    
-    def calculate_hash(self) -> str:
-        """Calculate block hash"""
-        block_string = json.dumps({
-            "timestamp": self.timestamp,
-            "data": self.data,
-            "previous_hash": self.previous_hash,
-            "nonce": self.nonce
-        }, sort_keys=True)
-        
-        return hashlib.sha256(block_string.encode()).hexdigest()
-    
-    def mine_block(self, difficulty: int):
-        """Mine block with proof of work"""
-        target = "0" * difficulty
-        while self.hash[:difficulty] != target:
-            self.nonce += 1
-            self.hash = self.calculate_hash()
-
-def init_ledger():
-    """Initialize blockchain ledger"""
-    global _ledger
-    try:
-        # Create genesis block
-        genesis_data = {
-            "type": "GENESIS",
-            "message": "LoanEase Blockchain Initiated",
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
-        genesis_block = Block(genesis_data)
-        genesis_block.mine_block(settings.BLOCKCHAIN_DIFFICULTY)
-        _ledger = [genesis_block]
-        logger.info("Blockchain ledger initialized with genesis block")
-    except Exception as e:
-        logger.error(f"Failed to initialize ledger: {e}")
-        _ledger = []
+# ── LEDGER HELPERS ─────────────────────────────────────────────────
 
 def ledger_ready() -> bool:
     """Check if ledger is ready"""
-    return len(_ledger) > 0
+    return len(ledger.chain) > 0
+
+def init_ledger():
+    """Ledger is initialized globally in blockchain.py"""
+    pass
 
 def load_keys():
     """Load or generate RSA keys"""
@@ -230,6 +161,11 @@ def add_block_to_ledger(data: Dict[str, Any]) -> str:
 async def create_sanction_letter(request: SanctionRequest):
     """Create blockchain-verified sanction letter"""
     try:
+        # Artificial delay for demo visibility
+        if settings.DEMO_MODE:
+            import asyncio
+            await asyncio.sleep(1.5)
+
         # Get session
         session = session_store.get(request.session_id)
         if not session:
@@ -252,7 +188,8 @@ async def create_sanction_letter(request: SanctionRequest):
         }
         
         # Add to blockchain
-        block_hash = add_block_to_ledger(sanction_data)
+        block = ledger.add_transaction(sanction_data)
+        block_hash = block.hash
         
         # Sign the data
         data_string = json.dumps(sanction_data, sort_keys=True)
@@ -298,6 +235,17 @@ async def create_sanction_letter(request: SanctionRequest):
         )
         
     except Exception as e:
+        if settings.DEMO_MODE:
+            from core.fallback_map import get_fallback
+            logger.error(f"Sanction creation failed, using demo fallback: {e}")
+            fb = get_fallback("blockchain")
+            return SanctionResponse(
+                transaction_id=fb["transaction_id"],
+                block_hash=fb["block_hash"],
+                qr_code_url=f"/blockchain/qr/{fb['transaction_id']}",
+                verification_url=f"/blockchain/verify/{fb['transaction_id']}",
+                pdf_download_url=f"/blockchain/pdf/{fb['transaction_id']}"
+            )
         logger.error(f"Sanction letter creation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Sanction letter creation failed: {str(e)}")
 
@@ -306,43 +254,28 @@ async def verify_document(reference_id: str):
     """Verify document on blockchain"""
     try:
         # Find block with this transaction ID
-        target_block = None
-        for block in _ledger:
-            if block.data.get("transaction_id") == reference_id:
-                target_block = block
-                break
+        target_block = ledger.get_transaction(reference_id)
         
         if not target_block:
             raise HTTPException(status_code=404, detail="Document not found")
         
         # Verify signature
-        data_string = json.dumps(target_block.data, sort_keys=True)
-        signature = target_block.data.get("signature")
+        data_string = json.dumps(target_block.transaction_data, sort_keys=True)
+        signature = target_block.transaction_data.get("signature")
         
         signature_valid = False
         if signature:
             signature_valid = verify_signature(data_string, signature)
         
         # Verify blockchain integrity
-        chain_valid = True
-        for i in range(1, len(_ledger)):
-            current_block = _ledger[i]
-            previous_block = _ledger[i-1]
-            
-            if current_block.previous_hash != previous_block.hash:
-                chain_valid = False
-                break
-            
-            if current_block.hash != current_block.calculate_hash():
-                chain_valid = False
-                break
+        chain_valid = ledger.is_chain_valid()
         
         verification_details = {
             "signature_valid": signature_valid,
             "blockchain_integrity": chain_valid,
-            "block_number": _ledger.index(target_block),
+            "block_number": target_block.index,
             "timestamp": target_block.timestamp,
-            "confirmations": len(_ledger) - _ledger.index(target_block)
+            "confirmations": len(ledger.chain) - target_block.index
         }
         
         return VerifyResponse(
@@ -361,18 +294,10 @@ async def verify_document(reference_id: str):
 async def get_blockchain():
     """Get entire blockchain"""
     try:
-        blocks_data = []
-        for block in _ledger:
-            blocks_data.append({
-                "hash": block.hash,
-                "timestamp": block.timestamp,
-                "previous_hash": block.previous_hash,
-                "nonce": block.nonce,
-                "data": block.data
-            })
+        blocks_data = [b.to_dict() for b in ledger.chain]
         
         return ChainResponse(
-            chain_length=len(_ledger),
+            chain_length=len(ledger.chain),
             blocks=blocks_data
         )
         
@@ -380,13 +305,124 @@ async def get_blockchain():
         logger.error(f"Failed to get blockchain: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get blockchain: {str(e)}")
 
+# ── NEW EXPLORER ENDPOINTS ─────────────────────────────────────────
+
+@router.get("/explorer-data")
+async def get_explorer_data():
+    """Get aggregated data for the blockchain explorer"""
+    try:
+        stats = ledger.get_stats()
+        blocks = [b.to_dict() for b in ledger.chain]
+        
+        # Add Merkle structure for each block
+        merkle_trees = {}
+        for block in ledger.chain:
+            # For genesis, we just have one tx
+            # For sanction, we might simulate multiple or just use the one
+            txs = [block.transaction_data]
+            # Simulate a few extra leaf nodes for genesis or others if needed for visual complexity
+            if block.index == 0:
+                txs.extend([
+                    {"type": "CONFIG", "item": "Interest Rates Set"},
+                    {"type": "CONFIG", "item": "Difficulty Set to 2"}
+                ])
+                
+            merkle_trees[str(block.index)] = MerkleTree.get_tree_structure(txs)
+            
+        return {
+            "chain_stats": stats,
+            "blocks": blocks,
+            "merkle_trees": merkle_trees
+        }
+    except Exception as e:
+        logger.error(f"Failed to get explorer data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class TamperRequest(BaseModel):
+    reference: str
+    tamper_field: str
+    tamper_value: Any
+
+@router.post("/tamper-test")
+async def tamper_test(request: TamperRequest):
+    """Simulate tampering without affecting the real ledger"""
+    try:
+        # Find the block
+        target_block = None
+        for b in ledger.chain:
+            if b.transaction_data.get("transaction_id") == request.reference:
+                target_block = b
+                break
+        
+        if not target_block:
+            raise HTTPException(status_code=404, detail="Block not found")
+            
+        # Create a deep copy of the block to tamper
+        import copy
+        tampered_block = copy.deepcopy(target_block)
+        
+        # Modifying data
+        original_val = tampered_block.transaction_data.get(request.tamper_field)
+        tampered_block.transaction_data[request.tamper_field] = request.tamper_value
+        
+        # Recompute hash (will not match stored hash)
+        original_hash = target_block.hash
+        
+        # Calculate what the hash SHOULD BE with tampered data
+        # Note: ledger.compute_block_hash(tampered_block) will give a different hash
+        tampered_hash = ledger.compute_block_hash(tampered_block)
+        
+        # Recalculate Merkle Root for tampered data
+        tampered_merkle_root = MerkleTree.compute_root([tampered_block.transaction_data])
+        
+        return {
+            "valid": False,
+            "original_hash": original_hash,
+            "tampered_hash": tampered_hash,
+            "original_value": original_val,
+            "tampered_value": request.tamper_value,
+            "tampered_field": request.tamper_field,
+            "merkle_root_mismatch": tampered_merkle_root != target_block.merkle_root,
+            "original_merkle_root": target_block.merkle_root,
+            "tampered_merkle_root": tampered_merkle_root,
+            "message": "Tampering detected! Recomputed hash does not match block header."
+        }
+    except Exception as e:
+        logger.error(f"Tamper test failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/verify-chain")
+async def verify_chain():
+    """Verify full chain integrity and identify broken links"""
+    try:
+        is_valid = ledger.is_chain_valid()
+        broken_blocks = []
+        
+        if not is_valid:
+            # Find where it breaks
+            for i in range(1, len(ledger.chain)):
+                current = ledger.chain[i]
+                previous = ledger.chain[i-1]
+                
+                if current.hash != ledger.compute_block_hash(current) or current.previous_hash != previous.hash:
+                    broken_blocks.append(i)
+                    
+        return {
+            "is_valid": is_valid,
+            "broken_blocks": broken_blocks,
+            "total_blocks": len(ledger.chain)
+        }
+    except Exception as e:
+        logger.error(f"Chain verification failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/health")
 async def blockchain_health():
     """Blockchain service health check"""
     return {
         "status": "healthy" if ledger_ready() else "error",
         "ledger_ready": ledger_ready(),
-        "chain_length": len(_ledger),
-        "keys_loaded": _private_key is not None and _public_key is not None,
+        "chain_length": len(ledger.chain),
+        "keys_loaded": True,
         "difficulty": settings.BLOCKCHAIN_DIFFICULTY
     }

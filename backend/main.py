@@ -14,6 +14,8 @@ from agents.negotiation_agent.main import router as negotiation_router
 from agents.blockchain_agent.main import router as blockchain_router
 from agents.master_agent.main import router as master_router
 from routers.ai_router import router as ai_router
+from routers.demo_router import router as demo_router
+from startup_selftest import run_startup_selftest
 from services.groq_service import GroqService
 from services.memory import ConversationMemory
 from services.ocr import init_ocr, ocr_ready
@@ -84,6 +86,9 @@ async def lifespan(app: FastAPI):
     app.state.saved_sessions: Dict[str, Dict[str, Any]] = {}
     app.state.escalation_preferences: Dict[str, Dict[str, Any]] = {}
 
+    # ── Startup self-test ────────────────────────────────────────
+    await run_startup_selftest(app)
+
     yield
 
     # 4) Shutdown clean-up.
@@ -115,6 +120,7 @@ app.include_router(negotiation_router, prefix="/negotiate", tags=["Negotiation A
 app.include_router(blockchain_router, prefix="/blockchain", tags=["Blockchain Agent"])
 app.include_router(master_router, prefix="/pipeline", tags=["Master Orchestrator"])
 app.include_router(ai_router)
+app.include_router(demo_router, prefix="/demo", tags=["Demo Utilities"])
 
 # Root health check
 @app.get("/")

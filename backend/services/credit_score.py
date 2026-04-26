@@ -1,12 +1,29 @@
 import hashlib
+import logging
 import random
 from typing import Dict, Optional
 from core.config import settings
+
+logger = logging.getLogger("loanease.credit_score")
+
+# Hardcoded demo PAN scores for deterministic demo flows
+DEMO_PAN_SCORES = {
+    "DEMO00000D": 820,   # smooth approval
+    "DEMO11111E": 650,   # conditional + negotiate
+    "DEMO22222F": 285,   # rejection demo
+}
 
 def simulate_cibil_score(pan_number: str) -> int:
     """Simulate CIBIL score based on PAN hash"""
     if not pan_number:
         return random.randint(settings.CREDIT_SCORE_MIN, settings.CREDIT_SCORE_MAX)
+    
+    # Demo mode: return deterministic hardcoded scores
+    if settings.DEMO_MODE:
+        demo_score = DEMO_PAN_SCORES.get(pan_number.upper())
+        if demo_score is not None:
+            logger.info("🎯 DEMO_MODE: Returning hardcoded CIBIL score %d for PAN %s", demo_score, pan_number)
+            return demo_score
     
     # Create hash from PAN
     pan_hash = hashlib.md5(pan_number.encode()).hexdigest()

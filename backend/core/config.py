@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # Frontend domains
     FRONTEND_DOMAIN: str = "https://loanease.example.com"
     
+    # Demo mode — bypass OCR, use hardcoded scores, add artificial delays
+    DEMO_MODE: bool = False
+    
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def parse_cors_origins(cls, value: object) -> object:
