@@ -66,20 +66,37 @@ class CreditScoreResponse(BaseModel):
     risk_score: int
 
 def load_model():
-    """Load XGBoost model into memory"""
-    global _model, _model_features
+    """Load model and metadata into memory"""
+    global _model, _model_features, _metadata
     try:
         # Try to load the model file
         model_path = "models/loan_model.pkl"
+        meta_path = "models/model_metadata.json"
+        
         if os.path.exists(model_path):
             _model = joblib.load(model_path)
-            logger.info("XGBoost model loaded successfully")
+            logger.info(f"Model loaded successfully: {type(_model).__name__}")
+            
+            if os.path.exists(meta_path):
+                with open(meta_path, 'r') as f:
+                    _metadata = json.load(f)
+                    _model_features = _metadata.get("feature_names")
+                    logger.info("Model metadata loaded")
+            else:
+                _metadata = None
         else:
             logger.warning("Model file not found, using fallback")
             _model = None
+            _metadata = None
     except Exception as e:
         logger.error(f"Failed to load model: {e}")
         _model = None
+        _metadata = None
+
+# Initial load
+import json
+_metadata = None
+load_model()
 
 def model_loaded() -> bool:
     """Check if model is loaded"""
@@ -314,3 +331,20 @@ async def underwriting_health():
         "score_range": f"{settings.CREDIT_SCORE_MIN}-{settings.CREDIT_SCORE_MAX}",
         "hard_reject_threshold": settings.HARD_REJECT_THRESHOLD
     }
+
+@router.get("/model-info")
+async def get_model_info():
+    """Returns model metadata and training details"""
+    global _metadata
+    if not _metadata:
+        # Try to reload if missing
+        load_model()
+        
+    if not _metadata:
+        return {
+            "error": "Model metadata not found",
+            "status": "degraded",
+            "message": "Model is running in rule-based fallback mode"
+        }
+    
+    return _metadata

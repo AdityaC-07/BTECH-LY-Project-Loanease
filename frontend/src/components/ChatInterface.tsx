@@ -830,147 +830,172 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
     setIsTyping(true);
     setTimeout(async () => {
-      setIsTyping(false);
-      setActiveAgent("Dynamic Negotiation Agent");
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: prev.length + 1,
-          text: "Dynamic Negotiation Agent activated.\nApplying negotiation policy and offer optimization.\n\nYour application is being processed.",
-          isBot: true,
-        },
-      ]);
-
-      // First call /assess with pan_number and full details
       try {
-        const pipelineStart = await fetch(ENDPOINTS.pipeline_start, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            session_id: userData.sessionId,
-            applicant_name: userData.name || "Applicant",
-            pan_number: userData.pan || "ABCDE1234F",
-            aadhaar_number: "123456789012",
-            applicant_income: 75000,
-            loan_amount: amount,
-            loan_term: tenure,
-            offered_rate: interest,
-            risk_tier: userData.riskTier || "Low Risk",
-            max_negotiation_rounds: userData.maxNegotiationRounds || 3,
-            negotiation_requested: true,
-            counter_rate: Math.max(10.5, interest - 0.5),
-          }),
-        });
-        if (pipelineStart.ok) {
-          const startData = await pipelineStart.json();
-          setPipelineSessionId(startData.session_id);
-          setPipelineStatus(startData.status || "ACTIVE");
-        }
-      } catch (error) {
-        console.warn("Pipeline start failed", error);
-      }
-
-      // First call /assess with pan_number and full details
-      const assessmentResult = await callUnderwritingAPI({
-        pan_number: userData.pan,
-        gender: "Male",
-        married: "Yes",
-        dependents: "1",
-        education: "Graduate",
-        self_employed: "No",
-        applicant_income: 5000,
-        coapplicant_income: 1500,
-        loan_amount: amount / 100000, // Convert to lakhs
-        loan_amount_term: tenure,
-        credit_history: 1,
-        property_area: "Urban",
-        preferred_language: language,
-      });
-
-      if (assessmentResult && (assessmentResult.decision === "APPROVED" || assessmentResult.decision === "APPROVED_WITH_CONDITIONS")) {
-        // Then call negotiation API with max_negotiation_rounds from assessment
-        const negotiationResult = await callNegotiationAPI(
-          assessmentResult.risk_score,
-          assessmentResult.risk_tier,
-          amount,
-            tenure,
-            assessmentResult.max_negotiation_rounds || 0
-        );
-
-        // Pass max_negotiation_rounds to negotiation API
-        if (negotiationResult) {
-          await fetch(ENDPOINTS.negotiate_accept, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              session_id: negotiationResult.session_id,
-            }),
-          });
-
-          setTimeout(() => {
-            const approvalMsg =
-              language === "en"
-                ? TRANSLATIONS.approved[language]
-                : TRANSLATIONS.approved[language];
-
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: prev.length + 1,
-                text: `KYC Verified\nCredit Check Passed\nIncome Assessment Complete\nRisk Analysis Completed\n\n${approvalMsg}`,
-                isBot: true,
-              },
-            ]);
-
-            setTimeout(async () => {
-              setActiveAgent("Blockchain Audit Agent");
-              setPulseBadge(true);
-              
-              try {
-                const sanctionRes = await fetch(ENDPOINTS.blockchain_sanction, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    session_id: userData.sessionId,
-                    applicant_name: userData.name || "Rahul Sharma",
-                    pan_number: userData.pan || "ABCDE1234F",
-                    loan_amount: amount,
-                    interest_rate: interest,
-                    tenure_years: Math.round(tenure / 12) || 1
-                  })
-                });
-                
-                if (sanctionRes.ok) {
-                  const bData = await sanctionRes.json();
-                  setUserData(prev => ({ ...prev, blockchainData: bData }));
-                }
-              } catch (e) {
-                console.warn("Blockchain sanction failed", e);
-              }
-
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: prev.length + 1,
-                  text: "Sanction details are being securely recorded with tamper-proof hash verification on our distributed audit ledger.",
-                  isBot: true,
-                },
-              ]);
-              setShowSanction(true);
-              setPulseBadge(false);
-            }, 1000);
-          }, 1000);
-        }
-      } else if (assessmentResult) {
-        // Show rejection
+        setIsTyping(false);
+        setActiveAgent("Dynamic Negotiation Agent");
         setMessages((prev) => [
           ...prev,
           {
             id: prev.length + 1,
-            text: assessmentResult.message || TRANSLATIONS.rejected[language],
+            text: "Dynamic Negotiation Agent activated.\nApplying negotiation policy and offer optimization.\n\nYour application is being processed.",
             isBot: true,
           },
         ]);
+
+        // Fire pipeline start (non-blocking, best-effort)
+        try {
+          const pipelineStart = await fetch(ENDPOINTS.pipeline_start, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              session_id: userData.sessionId,
+              applicant_name: userData.name || "Applicant",
+              pan_number: userData.pan || "ABCDE1234F",
+              loan_amount: amount,
+              loan_term: tenure,
+              offered_rate: interest,
+            }),
+          });
+          if (pipelineStart.ok) {
+            const startData = await pipelineStart.json();
+            setPipelineSessionId(startData.session_id);
+            setPipelineStatus(startData.status || "ACTIVE");
+          }
+        } catch {
+          // non-fatal
+        }
+
+        // Credit assessment
+        const assessmentResult = await callUnderwritingAPI({
+          pan_number: userData.pan,
+          gender: "Male",
+          married: "Yes",
+          dependents: "1",
+          education: "Graduate",
+          self_employed: "No",
+          applicant_income: 5000,
+          coapplicant_income: 1500,
+          loan_amount: amount / 100000,
+          loan_amount_term: tenure,
+          credit_history: 1,
+          property_area: "Urban",
+          preferred_language: language,
+        });
+
+        const isApproved = assessmentResult && (
+          assessmentResult.decision === "APPROVED" ||
+          assessmentResult.decision === "APPROVED_WITH_CONDITIONS"
+        );
+
+        if (!isApproved) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: prev.length + 1,
+              text: assessmentResult?.message || TRANSLATIONS.rejected[language],
+              isBot: true,
+            },
+          ]);
+          return;
+        }
+
+        // Negotiation
+        const negotiationResult = await callNegotiationAPI(
+          assessmentResult.risk_score,
+          assessmentResult.risk_tier,
+          amount,
+          tenure,
+          assessmentResult.max_negotiation_rounds || 3,
+        );
+
+        // Accept negotiation (best-effort)
+        try {
+          await fetch(ENDPOINTS.negotiate_accept, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              session_id: negotiationResult?.session_id || userData.sessionId,
+              final_rate: interest,
+            }),
+          });
+        } catch {
+          // non-fatal
+        }
+
+        // Approval message
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: prev.length + 1,
+            text: `KYC Verified ✓\nCredit Check Passed ✓\nIncome Assessment Complete ✓\nRisk Analysis Completed ✓\n\n${TRANSLATIONS.approved[language]}`,
+            isBot: true,
+          },
+        ]);
+
+        // Update stage
+        setUserData((prev) => ({ ...prev, stage: "sanction" }));
+
+        // Blockchain sanction
+        let blockchainData: { transaction_id: string; block_hash: string } | undefined;
+        try {
+          setActiveAgent("Blockchain Audit Agent");
+          setPulseBadge(true);
+          const sanctionRes = await fetch(ENDPOINTS.blockchain_sanction, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              session_id: userData.sessionId,
+              applicant_name: userData.name || "Applicant",
+              pan_number: userData.pan || "ABCDE1234F",
+              loan_amount: amount,
+              interest_rate: interest,
+              tenure_years: Math.max(1, Math.round(tenure / 12)),
+            }),
+          });
+          if (sanctionRes.ok) {
+            const bData = await sanctionRes.json();
+            blockchainData = {
+              transaction_id: bData.transaction_id,
+              block_hash: bData.block_hash,
+            };
+            setUserData((prev) => ({ ...prev, blockchainData }));
+          }
+        } catch (e) {
+          console.warn("Blockchain sanction failed (non-fatal):", e);
+        } finally {
+          setPulseBadge(false);
+        }
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: prev.length + 1,
+            text: "Sanction details are being securely recorded with tamper-proof hash verification on our distributed audit ledger.",
+            isBot: true,
+          },
+        ]);
+
+        // Ensure selectedLoan has valid emi before showing sanction
+        setUserData((prev) => ({
+          ...prev,
+          stage: "sanction",
+          selectedLoan: {
+            amount,
+            interest,
+            tenure,
+            emi: prev.selectedLoan.emi || emi,
+          },
+        }));
+
+        setShowSanction(true);
+      } catch (err) {
+        console.error("handleLoanSelect flow error:", err);
+        setIsTyping(false);
+        addBotMessage(
+          language === "en"
+            ? "Something went wrong processing your application. Please try again."
+            : "आपके आवेदन को संसाधित करने में कुछ गलत हो गया। कृपया पुनः प्रयास करें।"
+        );
       }
     }, 2500);
   };

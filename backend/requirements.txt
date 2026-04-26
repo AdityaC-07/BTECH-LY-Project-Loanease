@@ -7,6 +7,8 @@ python-dotenv
 # AI/ML dependencies
 groq>=0.13.0
 xgboost
+lightgbm
+imbalanced-learn
 scikit-learn
 shap
 joblib
