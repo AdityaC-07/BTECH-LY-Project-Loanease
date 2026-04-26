@@ -5,7 +5,7 @@ pydantic-settings
 python-dotenv
 
 # AI/ML dependencies
-groq==0.11.0
+groq>=0.13.0
 xgboost
 scikit-learn
 shap
@@ -17,7 +17,6 @@ numpy
 rapidocr-onnxruntime
 opencv-python
 Pillow
-pdf2image
 PyMuPDF
 rapidfuzz
 python-multipart

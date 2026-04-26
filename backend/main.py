@@ -118,7 +118,7 @@ app.include_router(kyc_router, prefix="/kyc", tags=["KYC Agent"])
 app.include_router(underwriting_router, prefix="/credit", tags=["Credit Agent"])
 app.include_router(negotiation_router, prefix="/negotiate", tags=["Negotiation Agent"])
 app.include_router(blockchain_router, prefix="/blockchain", tags=["Blockchain Agent"])
-app.include_router(master_router, prefix="/pipeline", tags=["Master Orchestrator"])
+app.include_router(master_router, prefix="/pipeline/agent", tags=["Master Orchestrator"])
 app.include_router(ai_router)
 app.include_router(demo_router, prefix="/demo", tags=["Demo Utilities"])
 
@@ -173,3 +173,98 @@ async def get_session(session_id: str):
 async def save_escalation_preferences(payload: EscalationPreferenceRequest):
     app.state.escalation_preferences[payload.session_id] = payload.model_dump()
     return {"status": "saved", "session_id": payload.session_id}
+
+
+# ── PIPELINE START OVERRIDE ───────────────────────────────────────
+# The master_router /pipeline/start expects {customer_name, initial_message}
+# but the frontend sends a full loan payload. This override handles it.
+
+@app.post("/pipeline/start")
+async def pipeline_start_override(request: dict):
+    """Accept frontend's full pipeline start payload and return session tracking info."""
+    session_id = request.get("session_id") or f"LE-{__import__('uuid').uuid4().hex[:10].upper()}"
+    from core.session import session_store as _ss
+    _ss.get_or_create(session_id, {
+        "stage": "INITIATED",
+        "data": {
+            "pan_number": request.get("pan_number"),
+            "applicant_name": request.get("applicant_name"),
+            "loan_amount": request.get("loan_amount"),
+            "loan_term": request.get("loan_term"),
+            "offered_rate": request.get("offered_rate"),
+        }
+    })
+    return {
+        "session_id": session_id,
+        "status": "ACTIVE",
+        "message": "Pipeline started",
+        "pipeline_status": "ACTIVE",
+        "agent_trace": [],
+    }
+
+
+@app.get("/pipeline/log/{session_id}")
+async def pipeline_log(session_id: str):
+    """Return pipeline execution log for a session."""
+    from core.session import session_store as _ss
+    session = _ss.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {
+        "session_id": session_id,
+        "pipeline_status": session.get("stage", "ACTIVE"),
+        "agent_trace": session.get("agent_log", []),
+    }
+
+
+# ── CREDIT SCORE ALIAS ────────────────────────────────────────────
+# Frontend calls GET /credit-score/{pan} — proxy to the underwriting agent logic
+
+@app.get("/credit-score/{pan_number}")
+async def get_credit_score_by_pan(pan_number: str):
+    """
+    GET /credit-score/{pan} — used by the frontend after KYC to fetch
+    the simulated CIBIL score and risk tier for the applicant.
+    """
+    from services.credit_score import simulate_cibil_score, calculate_credit_score
+    from agents.underwriting_agent.main import predict_credit_score
+
+    pan = pan_number.strip().upper()
+    try:
+        cibil_score = simulate_cibil_score(pan)
+        features = {"cibil_score": cibil_score}
+        xgboost_score = predict_credit_score(features)
+        result = calculate_credit_score(cibil_score, xgboost_score)
+
+        credit_score = result["final_score"]
+        risk_category = result.get("risk_category", "MEDIUM")
+
+        # Map risk category to band label and color
+        band_map = {
+            "LOW":         {"label": "Low Risk",    "color": "green"},
+            "MEDIUM":      {"label": "Medium Risk", "color": "yellow"},
+            "MEDIUM-HIGH": {"label": "Medium-High Risk", "color": "orange"},
+            "HIGH":        {"label": "High Risk",   "color": "red"},
+        }
+        band = band_map.get(risk_category, {"label": risk_category, "color": "yellow"})
+
+        return {
+            "pan_number": pan[:5] + "XXXXX",  # masked
+            "credit_score": credit_score,
+            "credit_score_out_of": 900,
+            "credit_band": band["label"],
+            "credit_band_color": band["color"],
+            "eligible_for_loan": not result.get("hard_reject", False),
+            "risk_category": risk_category,
+            "message_en": (
+                f"Your credit score is {credit_score}. "
+                f"You are in the {band['label']} tier."
+            ),
+            "message_hi": (
+                f"आपका credit score {credit_score} है। "
+                f"आप {band['label']} tier में आते हैं।"
+            ),
+        }
+    except Exception as e:
+        logger.error(f"Credit score lookup failed for {pan}: {e}")
+        raise HTTPException(status_code=500, detail=f"Credit score lookup failed: {str(e)}")

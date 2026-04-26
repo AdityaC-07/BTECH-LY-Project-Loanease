@@ -2,6 +2,7 @@
  * Utility to fetch translations from the translation backend.
  * Supports caching to minimize API calls.
  */
+import { API_BASE_URL } from "@/config";
 
 interface TranslationCache {
   [key: string]: {
@@ -55,7 +56,7 @@ export const fetchTranslation = async (
   text: string,
   targetLanguage: "en" | "hi" = "hi",
   sourceLanguage: "en" | "hi" = "en",
-  translationServiceUrl: string = "http://localhost:8000/ai"
+  translationServiceUrl: string = `${API_BASE_URL}/ai`
 ): Promise<string> => {
   if (!text || text.trim().length === 0) {
     return text;
@@ -114,7 +115,7 @@ export const fetchBatchTranslation = async (
   texts: string[],
   targetLanguage: "en" | "hi" = "hi",
   sourceLanguage: "en" | "hi" = "en",
-  translationServiceUrl: string = "http://localhost:8000/ai"
+  translationServiceUrl: string = `${API_BASE_URL}/ai`
 ): Promise<string[]> => {
   const promises = texts.map((text) =>
     fetchTranslation(text, targetLanguage, sourceLanguage, translationServiceUrl)

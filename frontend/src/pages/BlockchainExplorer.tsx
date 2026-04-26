@@ -6,6 +6,7 @@ import { BlockCard } from "@/components/blockchain/BlockCard";
 import { MerkleTree } from "@/components/blockchain/MerkleTree";
 import { TamperDemo } from "@/components/blockchain/TamperDemo";
 import { cn } from "@/lib/utils";
+import { API_BASE_URL } from "@/config";
 
 export default function BlockchainExplorer() {
   const [data, setData] = useState<any>(null);
@@ -16,7 +17,7 @@ export default function BlockchainExplorer() {
 
   const fetchData = async () => {
     try {
-      const response = await fetch("http://localhost:8000/blockchain/explorer-data");
+      const response = await fetch(`${API_BASE_URL}/blockchain/explorer-data`);
       const json = await response.json();
       setData(json);
       if (json.blocks.length > 0 && !selectedBlock) {

@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, ShieldAlert, RefreshCw, ChevronRight, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { API_BASE_URL } from "@/config";
 
 interface TamperDemoProps {
   onTamper: (data: any) => void;
@@ -18,7 +19,7 @@ export const TamperDemo = ({ onTamper, sanctionReference, onReset }: TamperDemoP
     
     setIsRunning(true);
     try {
-      const response = await fetch("http://localhost:8000/blockchain/tamper-test", {
+      const response = await fetch(`${API_BASE_URL}/blockchain/tamper-test`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

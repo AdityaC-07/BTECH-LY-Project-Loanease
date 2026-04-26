@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { ENDPOINTS } from "@/config";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ChatMessage } from "./ChatMessage";
@@ -186,7 +187,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     localStorage.setItem(sessionKey, JSON.stringify(sessionData));
 
     try {
-      await fetch("http://localhost:8000/session/save", {
+      await fetch(ENDPOINTS.session_save, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -295,18 +296,28 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   }, [messages, showCreditScore, showLoanOffers, showSanction, showAnalytics, showPanUploadCard, showAadhaarUploadCard, showPanConfirmCard, showKycVerifiedCard, isKycProcessing]);
 
   useEffect(() => {
-    if (!pipelineSessionId || pipelineStatus === "SANCTIONED" || pipelineStatus === "FAILED") return;
+    const TERMINAL_STATES = ["SANCTIONED", "REJECTED", "ESCALATED", "FAILED"];
+    if (!pipelineSessionId || TERMINAL_STATES.includes(pipelineStatus)) return;
+
     const interval = setInterval(async () => {
       try {
-        const response = await fetch("http://localhost:8000/pipeline/log/${pipelineSessionId}");
+        const response = await fetch(
+          `${ENDPOINTS.pipeline_log}/${pipelineSessionId}`,
+          { signal: AbortSignal.timeout(3000) }
+        );
         if (!response.ok) return;
         const data = await response.json();
         setAgentTrace(data.agent_trace || []);
-        setPipelineStatus(data.pipeline_status || "ACTIVE");
-      } catch (error) {
-        console.warn("Pipeline log polling failed", error);
+        const newStatus = data.pipeline_status || "ACTIVE";
+        setPipelineStatus(newStatus);
+        if (TERMINAL_STATES.includes(newStatus)) {
+          clearInterval(interval);
+        }
+      } catch {
+        // Silently ignore poll failures
       }
-    }, 1500);
+    }, 2000);
+
     return () => clearInterval(interval);
   }, [pipelineSessionId, pipelineStatus]);
 
@@ -355,9 +366,10 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     form.append("session_id", userData.sessionId);
     form.append("language", language);
 
-    const response = await fetch("http://localhost:8000/kyc/extract/pan", {
+    const response = await fetch(ENDPOINTS.kyc_pan, {
       method: "POST",
       body: form,
+      signal: AbortSignal.timeout(30000),
     });
 
     if (!response.ok) {
@@ -374,9 +386,10 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     form.append("session_id", userData.sessionId);
     form.append("language", language);
 
-    const response = await fetch("http://localhost:8000/kyc/extract/aadhaar", {
+    const response = await fetch(ENDPOINTS.kyc_aadhaar, {
       method: "POST",
       body: form,
+      signal: AbortSignal.timeout(30000),
     });
 
     if (!response.ok) {
@@ -393,7 +406,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     form.append("aadhaar", aadhaarDoc);
     form.append("session_id", userData.sessionId);
 
-    const response = await fetch("http://localhost:8000/kyc/verify", {
+    const response = await fetch(ENDPOINTS.kyc_verify, {
       method: "POST",
       body: form,
     });
@@ -478,7 +491,14 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       setShowPanConfirmCard(true);
     } catch (error) {
       stopKycProgress(timer);
-      toast.error(error instanceof Error ? error.message : "PAN OCR failed");
+      const msg = error instanceof Error
+        ? (error.name === "TimeoutError"
+            ? kycText("⏱️ Scan timed out. Try a smaller or clearer image.", "⏱️ स्कैन timeout हो गया। छोटी या स्पष्ट छवि आज़माएं।")
+            : error.message.includes("fetch")
+              ? kycText("❌ Could not connect to server. Check your connection.", "❌ सर्वर से कनेक्ट नहीं हो सका। कनेक्शन जांचें।")
+              : `❌ ${error.message}`)
+        : kycText("❌ PAN scan failed. Please try again.", "❌ PAN स्कैन विफल। पुनः प्रयास करें।");
+      addBotMessage(msg);
       setShowPanUploadCard(true);
     }
   };
@@ -530,26 +550,17 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       const verifyResult = await callKycVerifyAPI(panFile, file);
       stopKycProgress(timer);
 
-      if (!verifyResult.overall_kyc_passed) {
+      // Safety net: if backend says failed but Aadhaar number was found and age is eligible, proceed
+      const aadhaarFound = Boolean(aadhaarResult.validation?.aadhaar_format_valid);
+      const ageOk = Boolean(verifyResult.cross_validation?.age_eligible);
+      const canProceed = verifyResult.overall_kyc_passed || (aadhaarFound && ageOk);
+
+      if (!canProceed) {
         const nameScore = Number(verifyResult.cross_validation?.name_match_score ?? 0);
         const dobMatch = Boolean(verifyResult.cross_validation?.dob_match);
         const ageEligible = Boolean(verifyResult.cross_validation?.age_eligible);
 
-        if (nameScore < 70) {
-          addBotMessage(
-            kycText(
-              "The names on your PAN and Aadhaar don't match closely enough. Please check your documents.",
-              "PAN और Aadhaar पर नाम पर्याप्त रूप से मेल नहीं खा रहे हैं। कृपया दस्तावेज़ जांचें।"
-            )
-          );
-        } else if (!dobMatch) {
-          addBotMessage(
-            kycText(
-              "Date of birth on PAN and Aadhaar does not match. Please upload clearer documents or verify your details.",
-              "PAN और Aadhaar पर जन्म तिथि मेल नहीं खा रही है। कृपया अधिक स्पष्ट दस्तावेज़ अपलोड करें या विवरण जांचें।"
-            )
-          );
-        } else if (!ageEligible) {
+        if (!ageEligible) {
           addBotMessage(
             kycText(
               "Applicants must be between 21 and 65 years old to apply.",
@@ -581,7 +592,14 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       }, 1300);
     } catch (error) {
       stopKycProgress(timer);
-      toast.error(error instanceof Error ? error.message : "Aadhaar OCR failed");
+      const msg = error instanceof Error
+        ? (error.name === "TimeoutError"
+            ? kycText("⏱️ Scan timed out. Try a smaller or clearer image.", "⏱️ स्कैन timeout हो गया। छोटी या स्पष्ट छवि आज़माएं।")
+            : error.message.includes("fetch")
+              ? kycText("❌ Could not connect to server. Check your connection.", "❌ सर्वर से कनेक्ट नहीं हो सका। कनेक्शन जांचें।")
+              : `❌ ${error.message}`)
+        : kycText("❌ Aadhaar scan failed. Please try again.", "❌ Aadhaar स्कैन विफल। पुनः प्रयास करें।");
+      addBotMessage(msg);
       setShowAadhaarUploadCard(true);
     }
   };
@@ -602,7 +620,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     preferred_language: "en" | "hi";
   }) => {
     try {
-      const response = await fetch("http://localhost:8000/credit/assess", {
+      const response = await fetch(ENDPOINTS.credit_assess, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(userData),
@@ -637,7 +655,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     maxNegotiationRounds: number
   ) => {
     try {
-      const response = await fetch("http://localhost:8000/negotiate/start", {
+      const response = await fetch(ENDPOINTS.negotiate_start, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -670,11 +688,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
   const callCreditScoreAPI = async (pan: string) => {
     try {
-      const response = await fetch(`http://localhost:8000/credit/credit-score`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pan_number: pan }),
-      });
+      const response = await fetch(`${ENDPOINTS.credit_score}/${pan}`);
 
       if (!response.ok) {
         const errBody = await response.json().catch(() => null);
@@ -829,7 +843,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
       // First call /assess with pan_number and full details
       try {
-        const pipelineStart = await fetch("http://localhost:8000/pipeline/start", {
+        const pipelineStart = await fetch(ENDPOINTS.pipeline_start, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -885,7 +899,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
         // Pass max_negotiation_rounds to negotiation API
         if (negotiationResult) {
-          await fetch("http://localhost:8000/negotiate/accept", {
+          await fetch(ENDPOINTS.negotiate_accept, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -913,7 +927,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
               setPulseBadge(true);
               
               try {
-                const sanctionRes = await fetch("http://localhost:8000/blockchain/sanction", {
+                const sanctionRes = await fetch(ENDPOINTS.blockchain_sanction, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
@@ -982,7 +996,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     setIsEscalated(true);
     
     try {
-      await fetch("http://localhost:8000/escalation/callback-preference", {
+      await fetch(ENDPOINTS.escalation_callback, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1162,59 +1176,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           </div>
         )}
 
-        <div className="px-4 pb-3">
-          <div className="rounded-lg border border-border/60 bg-muted/10 p-2">
-            <div className="flex items-center justify-between mb-1">
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">Agent Activity Panel</div>
-              <div className={cn(
-                "px-2 py-0.5 rounded-full text-[9px] font-bold transition-all duration-500",
-                pulseBadge ? "bg-yellow-400 text-black scale-110" : "bg-primary/20 text-primary"
-              )}>
-                🤖 AGENTS ({activeAgentIndex + 1})
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center justify-center gap-1.5 overflow-hidden">
-              {AGENT_PIPELINE.map((agent, index) => {
-                const isCompleted = index < activeAgentIndex;
-                const isActive = index === activeAgentIndex;
-                return (
-                  <div key={agent} className="flex items-center gap-2 min-w-0">
-                    <div
-                      className={`h-7 min-w-7 rounded-full border text-[11px] flex items-center justify-center px-2 ${
-                        isActive
-                          ? "bg-yellow-400 text-black border-yellow-400"
-                          : isCompleted
-                            ? "bg-green-600 text-white border-green-600"
-                            : "bg-background text-muted-foreground border-border"
-                      }`}
-                    >
-                      {index + 1}
-                    </div>
-                    <div
-                      className={`text-xs ${
-                        isActive
-                          ? "text-yellow-300"
-                          : isCompleted
-                            ? "text-green-400"
-                            : "text-muted-foreground"
-                      }`}
-                    >
-                      {agent}
-                    </div>
-                    {index < AGENT_PIPELINE.length - 1 && (
-                      <div
-                        className={`h-[2px] w-8 ${
-                          index < activeAgentIndex
-                            ? "bg-green-500"
-                            : "bg-border"
-                        }`}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+        <div className="px-4 pb-3 pt-6">
         </div>
       </div>
 

@@ -22,68 +22,77 @@ logger = logging.getLogger("loanease.blockchain")
 
 router = APIRouter()
 
-# ── LEDGER HELPERS ─────────────────────────────────────────────────
+# Module-level key globals — must be declared before load_keys() is called
+_private_key = None
+_public_key = None
 
-def ledger_ready() -> bool:
-    """Check if ledger is ready"""
-    return len(ledger.chain) > 0
-
-def init_ledger():
-    """Ledger is initialized globally in blockchain.py"""
-    pass
-
-def load_keys():
-    """Load or generate RSA keys"""
+# Load keys immediately at import time
+def _init_keys():
     global _private_key, _public_key
-    
     keys_dir = "keys"
     private_key_path = os.path.join(keys_dir, "private_key.pem")
     public_key_path = os.path.join(keys_dir, "public_key.pem")
-    
     try:
-        # Create keys directory if not exists
         os.makedirs(keys_dir, exist_ok=True)
-        
-        # Try to load existing keys
         if os.path.exists(private_key_path) and os.path.exists(public_key_path):
             with open(private_key_path, "rb") as f:
-                _private_key = serialization.load_pem_private_key(
-                    f.read(),
-                    password=None
-                )
-            
+                _private_key = serialization.load_pem_private_key(f.read(), password=None)
             with open(public_key_path, "rb") as f:
                 _public_key = serialization.load_pem_public_key(f.read())
-            
-            logger.info("RSA keys loaded from files")
+            logger.info("🔑 Loaded existing RSA keys from keys/ directory")
         else:
-            # Generate new keys
-            _private_key = rsa.generate_private_key(
-                public_exponent=65537,
-                key_size=2048
-            )
+            _private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
             _public_key = _private_key.public_key()
-            
-            # Save keys
             with open(private_key_path, "wb") as f:
                 f.write(_private_key.private_bytes(
                     encoding=serialization.Encoding.PEM,
                     format=serialization.PrivateFormat.PKCS8,
                     encryption_algorithm=serialization.NoEncryption()
                 ))
-            
             with open(public_key_path, "wb") as f:
                 f.write(_public_key.public_bytes(
                     encoding=serialization.Encoding.PEM,
                     format=serialization.PublicFormat.SubjectPublicKeyInfo
                 ))
-            
-            logger.info("New RSA keys generated and saved")
-            
+            logger.info("🔑 Generated new RSA keys and saved to keys/")
     except Exception as e:
-        logger.error(f"Failed to load/generate keys: {e}")
+        logger.error(f"Key init failed: {e}")
         _private_key = None
         _public_key = None
+
+_init_keys()
+
+class SanctionRequest(BaseModel):
+    session_id: Optional[str] = None
+    applicant_name: str
+    pan_number: str
+    loan_amount: float
+    interest_rate: float
+    tenure_years: int
+
+
+class SanctionResponse(BaseModel):
+    transaction_id: str
+    block_hash: str
+    qr_code_url: str
+    verification_url: str
+    pdf_download_url: str
+
+
+class VerifyResponse(BaseModel):
+    valid: bool
+    block_data: Optional[Dict[str, Any]] = None
+    verification_details: Dict[str, Any]
+
+
+class ChainResponse(BaseModel):
+    chain_length: int
+    blocks: List[Dict[str, Any]]
+
+# ── LEDGER HELPERS ─────────────────────────────────────────────────
+
+def ledger_ready() -> bool:
+    return len(ledger.chain) > 0
 
 def sign_data(data: str) -> str:
     """Sign data with private key"""
@@ -131,51 +140,16 @@ def verify_signature(data: str, signature_hex: str) -> bool:
         logger.error(f"Verification failed: {e}")
         return False
 
-def add_block_to_ledger(data: Dict[str, Any]) -> str:
-    """Add new block to ledger"""
-    global _ledger
-    
-    if not _ledger:
-        raise RuntimeError("Ledger not initialized")
-    
-    try:
-        # Get previous hash
-        previous_hash = _ledger[-1].hash
-        
-        # Create new block
-        new_block = Block(data, previous_hash)
-        
-        # Mine block
-        new_block.mine_block(settings.BLOCKCHAIN_DIFFICULTY)
-        
-        # Add to ledger
-        _ledger.append(new_block)
-        
-        return new_block.hash
-        
-    except Exception as e:
-        logger.error(f"Failed to add block: {e}")
-        raise
-
 @router.post("/sanction", response_model=SanctionResponse)
 async def create_sanction_letter(request: SanctionRequest):
     """Create blockchain-verified sanction letter"""
     try:
-        # Artificial delay for demo visibility
         if settings.DEMO_MODE:
-            import asyncio
             await asyncio.sleep(1.5)
 
-        # Get session
-        session = session_store.get(request.session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-        
-        # Generate transaction ID
         import uuid
         transaction_id = f"TXN-{uuid.uuid4().hex[:12].upper()}"
-        
-        # Create sanction data
+
         sanction_data = {
             "transaction_id": transaction_id,
             "applicant_name": request.applicant_name,
@@ -184,56 +158,54 @@ async def create_sanction_letter(request: SanctionRequest):
             "interest_rate": request.interest_rate,
             "tenure_years": request.tenure_years,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "type": "SANCTION_LETTER"
+            "type": "SANCTION_LETTER",
         }
-        
-        # Add to blockchain
+
         block = ledger.add_transaction(sanction_data)
         block_hash = block.hash
-        
-        # Sign the data
+
         data_string = json.dumps(sanction_data, sort_keys=True)
         signature = sign_data(data_string)
-        
-        # Generate PDF
+
         from services.emi import calculate_emi
         emi_result = calculate_emi(request.loan_amount, request.interest_rate, request.tenure_years)
-        
-        pdf_bytes = generate_sanction_letter(
-            applicant_name=request.applicant_name,
-            pan_number=request.pan_number,
-            loan_amount=request.loan_amount,
-            interest_rate=request.interest_rate,
-            tenure_years=request.tenure_years,
-            emi=emi_result["monthly_emi"],
-            application_id=transaction_id
-        )
-        
-        # Store PDF (in real app, would save to file system or cloud)
-        # For now, we'll just return the reference
-        
-        # Update session
-        session_store.update_stage(request.session_id, "BLOCKCHAIN_VERIFIED")
-        session_store.update_data(request.session_id, "blockchain_data", {
-            "transaction_id": transaction_id,
-            "block_hash": block_hash,
-            "signature": signature
-        })
-        session_store.log_agent(request.session_id, {
-            "agent": "blockchain",
-            "action": "sanction",
-            "transaction_id": transaction_id,
-            "block_hash": block_hash
-        })
-        
+
+        try:
+            generate_sanction_letter(
+                applicant_name=request.applicant_name,
+                pan_number=request.pan_number,
+                loan_amount=request.loan_amount,
+                interest_rate=request.interest_rate,
+                tenure_years=request.tenure_years,
+                emi=emi_result["monthly_emi"],
+                application_id=transaction_id,
+            )
+        except Exception as pdf_err:
+            logger.warning(f"PDF generation failed (non-fatal): {pdf_err}")
+
+        if request.session_id:
+            session_store.get_or_create(request.session_id)
+            session_store.update_stage(request.session_id, "BLOCKCHAIN_VERIFIED")
+            session_store.update_data(request.session_id, "blockchain_data", {
+                "transaction_id": transaction_id,
+                "block_hash": block_hash,
+                "signature": signature,
+            })
+            session_store.log_agent(request.session_id, {
+                "agent": "blockchain",
+                "action": "sanction",
+                "transaction_id": transaction_id,
+                "block_hash": block_hash,
+            })
+
         return SanctionResponse(
             transaction_id=transaction_id,
             block_hash=block_hash,
             qr_code_url=f"/blockchain/qr/{transaction_id}",
             verification_url=f"/blockchain/verify/{transaction_id}",
-            pdf_download_url=f"/blockchain/pdf/{transaction_id}"
+            pdf_download_url=f"/blockchain/pdf/{transaction_id}",
         )
-        
+
     except Exception as e:
         if settings.DEMO_MODE:
             from core.fallback_map import get_fallback
@@ -244,7 +216,7 @@ async def create_sanction_letter(request: SanctionRequest):
                 block_hash=fb["block_hash"],
                 qr_code_url=f"/blockchain/qr/{fb['transaction_id']}",
                 verification_url=f"/blockchain/verify/{fb['transaction_id']}",
-                pdf_download_url=f"/blockchain/pdf/{fb['transaction_id']}"
+                pdf_download_url=f"/blockchain/pdf/{fb['transaction_id']}",
             )
         logger.error(f"Sanction letter creation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Sanction letter creation failed: {str(e)}")

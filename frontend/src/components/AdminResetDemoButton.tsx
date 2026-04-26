@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { RefreshCcw, Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { API_BASE_URL } from "@/config";
 
 export const AdminResetDemoButton = () => {
   const [isResetting, setIsResetting] = useState(false);
@@ -11,7 +12,7 @@ export const AdminResetDemoButton = () => {
   const handleReset = async () => {
     setIsResetting(true);
     try {
-      const response = await fetch("http://localhost:8000/demo/reset", {
+      const response = await fetch(`${API_BASE_URL}/demo/reset`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ confirm: "RESET_LOANEASE_DEMO" }),

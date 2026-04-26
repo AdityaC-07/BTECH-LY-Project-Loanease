@@ -21,9 +21,23 @@ _model_features = None
 
 # Pydantic models
 class AssessRequest(BaseModel):
-    session_id: str
-    loan_amount: float
-    tenure_years: int
+    # Session-based fields (agents backend)
+    session_id: Optional[str] = None
+    loan_amount: Optional[float] = None
+    tenure_years: Optional[int] = None
+    # Frontend direct fields
+    pan_number: Optional[str] = None
+    gender: Optional[str] = None
+    married: Optional[str] = None
+    dependents: Optional[str] = None
+    education: Optional[str] = None
+    self_employed: Optional[str] = None
+    applicant_income: Optional[float] = None
+    coapplicant_income: Optional[float] = None
+    loan_amount_term: Optional[float] = None
+    credit_history: Optional[float] = None
+    property_area: Optional[str] = None
+    preferred_language: Optional[str] = "en"
 
 class AssessResponse(BaseModel):
     application_id: str
@@ -34,6 +48,13 @@ class AssessResponse(BaseModel):
     interest_rate: float
     max_loan_amount: float
     explanation: Dict[str, Any]
+    # Aliases the frontend reads
+    risk_tier: Optional[str] = None
+    max_negotiation_rounds: Optional[int] = 3
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.risk_tier is None:
+            self.risk_tier = self.risk_category
 
 class CreditScoreRequest(BaseModel):
     pan_number: str
@@ -129,97 +150,107 @@ def generate_application_id() -> str:
 
 @router.post("/assess", response_model=AssessResponse)
 async def assess_loan(request: AssessRequest):
-    """Assess loan application"""
+    """Assess loan application — accepts both session-based and direct payloads"""
+    import time
     try:
-        # Artificial delay for demo visibility
         if settings.DEMO_MODE:
             import asyncio
-            await asyncio.sleep(1.2)  # Let evaluators see Credit Agent activating
-        # Get session
-        session = session_store.get(request.session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-        
-        # Get KYC data
-        pan_data = session["data"].get("pan_data", {})
-        pan_number = pan_data.get("pan_number", "")
-        
-        # Generate application ID
+            await asyncio.sleep(1.2)
+
+        # Resolve loan_amount and tenure from either payload shape
+        loan_amount = request.loan_amount
+        tenure_years = request.tenure_years
+
+        # Frontend sends loan_amount_term (months) and loan_amount (rupees / lakhs)
+        if loan_amount is None and request.loan_amount_term is not None:
+            # loan_amount_term is tenure in months from frontend
+            tenure_years = max(1, int((request.loan_amount_term or 12) / 12))
+
+        # Frontend may send loan_amount already in rupees (e.g. 500000)
+        # or in lakhs (e.g. 5.0). Normalise: if < 1000, treat as lakhs
+        if loan_amount is not None and loan_amount < 1000:
+            loan_amount = loan_amount * 100000  # convert lakhs → rupees
+
+        if loan_amount is None:
+            loan_amount = 500000  # sensible default
+        if tenure_years is None:
+            tenure_years = 5
+
+        # Resolve PAN — from session or direct field
+        pan_number = request.pan_number or ""
+        session = None
+        if request.session_id:
+            session = session_store.get(request.session_id)
+            if session:
+                pan_data = session["data"].get("pan_data", {})
+                pan_number = pan_number or pan_data.get("pan_number", "")
+
+        # If no session exists yet, create one
+        if not session and request.session_id:
+            session_store.get_or_create(request.session_id)
+            session = session_store.get(request.session_id)
+
         app_id = generate_application_id()
-        
-        # Simulate CIBIL score
         cibil_score = simulate_cibil_score(pan_number)
-        
-        # Prepare features for XGBoost
+
+        age = 30
+        if session:
+            pan_data = session["data"].get("pan_data", {})
+            age = pan_data.get("age") or 30
+
         features = {
             "cibil_score": cibil_score,
-            "loan_amount": request.loan_amount,
-            "tenure_years": request.tenure_years,
-            "age": pan_data.get("age", 30),
-            "income_estimated": 500000,  # Default estimated income
+            "loan_amount": loan_amount,
+            "tenure_years": tenure_years,
+            "age": age,
+            "income_estimated": (request.applicant_income or 50000) * 12,
         }
-        
-        # Predict credit score
+
         xgboost_score = predict_credit_score(features)
-        
-        # Calculate final credit score
         credit_result = calculate_credit_score(cibil_score, xgboost_score)
-        
-        # Determine interest rate based on risk category
-        base_rate = 12.0  # Base rate
-        risk_adjustments = {
-            "LOW": -1.0,
-            "MEDIUM": 0.0,
-            "MEDIUM-HIGH": 1.5,
-            "HIGH": 3.0
-        }
-        
+
+        base_rate = 12.0
+        risk_adjustments = {"LOW": -1.0, "MEDIUM": 0.0, "MEDIUM-HIGH": 1.5, "HIGH": 3.0}
         interest_rate = base_rate + risk_adjustments.get(credit_result["risk_category"], 0.0)
         interest_rate = max(settings.RATE_FLOOR, min(settings.RATE_CEILING, interest_rate))
-        
-        # Determine decision
+
         if credit_result["hard_reject"]:
             decision = "REJECTED"
             max_loan = 0
         else:
             decision = "APPROVED"
-            # Calculate max loan based on credit score
-            max_loan = request.loan_amount * (credit_result["final_score"] / 900)
-        
-        # Generate explanation
+            max_loan = loan_amount * (credit_result["final_score"] / 900)
+
         explanation = {
             "factors": {
-                "cibil_score": {
-                    "value": cibil_score,
-                    "weight": settings.CIBIL_WEIGHT,
-                    "impact": "positive" if cibil_score >= 700 else "negative"
-                },
-                "xgboost_score": {
-                    "value": round(xgboost_score, 2),
-                    "weight": settings.XGBOOST_WEIGHT,
-                    "impact": "positive" if xgboost_score >= 700 else "negative"
-                }
+                "cibil_score": {"value": cibil_score, "weight": settings.CIBIL_WEIGHT,
+                                "impact": "positive" if cibil_score >= 700 else "negative"},
+                "xgboost_score": {"value": round(xgboost_score, 2), "weight": settings.XGBOOST_WEIGHT,
+                                  "impact": "positive" if xgboost_score >= 700 else "negative"},
             },
-            "reasoning": f"Credit score of {credit_result['final_score']} falls in {credit_result['risk_category']} risk category"
+            "reasoning": f"Credit score {credit_result['final_score']} → {credit_result['risk_category']} risk",
         }
-        
-        # Update session
-        session_store.update_stage(request.session_id, "UNDERWRITING_COMPLETE")
-        session_store.update_data(request.session_id, "underwriting_result", {
-            "application_id": app_id,
-            "decision": decision,
-            "credit_score": credit_result["final_score"],
-            "interest_rate": interest_rate
-        })
-        session_store.log_agent(request.session_id, {
-            "agent": "underwriting",
-            "action": "assessment",
-            "success": decision == "APPROVED",
-            "application_id": app_id,
-            "credit_score": credit_result["final_score"],
-            "decision": decision
-        })
-        
+
+        if request.session_id:
+            session_store.update_stage(request.session_id, "UNDERWRITING_COMPLETE")
+            session_store.update_data(request.session_id, "underwriting_result", {
+                "application_id": app_id,
+                "decision": decision,
+                "credit_score": credit_result["final_score"],
+                "interest_rate": interest_rate,
+                "risk_category": credit_result["risk_category"],
+                "risk_score": credit_result["risk_score"],
+                "loan_amount": loan_amount,
+                "tenure_years": tenure_years,
+            })
+            session_store.log_agent(request.session_id, {
+                "agent": "underwriting", "action": "assessment",
+                "success": decision == "APPROVED",
+                "application_id": app_id,
+                "credit_score": credit_result["final_score"],
+                "decision": decision,
+            })
+
         return AssessResponse(
             application_id=app_id,
             credit_score=credit_result["final_score"],
@@ -228,9 +259,9 @@ async def assess_loan(request: AssessRequest):
             decision=decision,
             interest_rate=interest_rate,
             max_loan_amount=max_loan,
-            explanation=explanation
+            explanation=explanation,
         )
-        
+
     except Exception as e:
         if settings.DEMO_MODE:
             from core.fallback_map import get_fallback
@@ -243,8 +274,8 @@ async def assess_loan(request: AssessRequest):
                 risk_score=75,
                 decision="APPROVED",
                 interest_rate=10.5,
-                max_loan_amount=request.loan_amount,
-                explanation={"reasoning": "Fallback assessment due to component unavailability."}
+                max_loan_amount=request.loan_amount or 500000,
+                explanation={"reasoning": "Fallback assessment."},
             )
         logger.error(f"Loan assessment error: {e}")
         raise HTTPException(status_code=500, detail=f"Loan assessment failed: {str(e)}")

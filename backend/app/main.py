@@ -117,7 +117,14 @@ app = FastAPI(title="LoanEase Unified Backend API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -627,23 +634,34 @@ if PIPELINE_AVAILABLE:
     @app.post("/pipeline/start")
     async def start_pipeline(request: dict) -> dict:
         """Start a complete loan processing pipeline"""
-        session_id = request.get("session_id") or str(uuid4())
-        request["session_id"] = session_id
+        try:
+            session_id = request.get("session_id") or str(uuid4())
+            request["session_id"] = session_id
 
-        if session_id in running_tasks and not running_tasks[session_id].done():
-            return {"session_id": session_id, "status": "ACTIVE", "message": "Pipeline already running"}
+            if session_id in running_tasks and not running_tasks[session_id].done():
+                return {"session_id": session_id, "status": "ACTIVE", "message": "Pipeline already running"}
 
-        running_tasks[session_id] = asyncio.create_task(pipeline.run_full_pipeline(request))
-        return {"session_id": session_id, "status": "ACTIVE", "message": "Pipeline started"}
+            running_tasks[session_id] = asyncio.create_task(pipeline.run_full_pipeline(request))
+            return {"session_id": session_id, "status": "ACTIVE", "message": "Pipeline started"}
+        except Exception as e:
+            logger.error(f"Pipeline start error: {e}")
+            fallback_id = request.get("session_id") or str(uuid4())
+            return {"session_id": fallback_id, "status": "error", "message": "Pipeline could not start. Please try again."}
 
 
     @app.get("/pipeline/log/{session_id}")
     def get_pipeline_log(session_id: str) -> dict:
         """Get pipeline execution logs for a session"""
-        log = pipeline.get_session_log(session_id)
-        if not log.get("agent_trace"):
-            raise HTTPException(status_code=404, detail="Session not found")
-        return log
+        try:
+            log = pipeline.get_session_log(session_id)
+            if not log.get("agent_trace"):
+                raise HTTPException(status_code=404, detail="Session not found")
+            return log
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Pipeline log error: {e}")
+            raise HTTPException(status_code=500, detail="Pipeline log unavailable")
 
 
 # =============================================================================

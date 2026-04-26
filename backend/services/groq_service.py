@@ -45,6 +45,7 @@ class GroqService:
             self._connected = False
         self._primary_model = primary_model
         self._fallback_model = fallback_model
+        self._timeout = timeout
         self._last_model: Optional[str] = None
         self._fallback_used = False
 
@@ -208,11 +209,14 @@ class GroqService:
         while attempts < 3:
             attempts += 1
             try:
-                response = await self._client.chat.completions.create(
-                    model=selected_model,
-                    messages=self._build_messages(system_prompt, messages),
-                    temperature=temperature,
-                    max_tokens=max_tokens,
+                response = await asyncio.wait_for(
+                    self._client.chat.completions.create(
+                        model=selected_model,
+                        messages=self._build_messages(system_prompt, messages),
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    ),
+                    timeout=self._timeout,
                 )
                 usage = getattr(response, "usage", None)
                 usage_dict = usage.model_dump() if usage else None
@@ -236,6 +240,15 @@ class GroqService:
                     model_used=selected_model,
                     usage=usage_dict,
                 )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Groq timeout model=%s attempt=%s (limit=%ss)",
+                    selected_model, attempts, self._timeout,
+                )
+                if attempts < 3:
+                    selected_model = fallback_model
+                    continue
+                raise RuntimeError(f"Groq request timed out after {self._timeout}s")
             except Exception as exc:
                 status = _get_status_code(exc)
                 logger.warning("Groq error model=%s attempt=%s: %s", selected_model, attempts, exc)
@@ -247,8 +260,6 @@ class GroqService:
                     await _backoff(attempts)
                     continue
                 raise
-
-        raise RuntimeError("Groq request failed after retries")
 
     def _build_messages(self, system_prompt: str, messages: Iterable[Message]) -> List[Message]:
         return [{"role": "system", "content": system_prompt}, *list(messages)]

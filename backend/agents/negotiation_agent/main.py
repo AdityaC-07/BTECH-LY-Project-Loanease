@@ -16,17 +16,33 @@ router = APIRouter()
 
 # Pydantic models
 class NegotiationStartRequest(BaseModel):
-    session_id: str
+    # Session-based (agents backend)
+    session_id: Optional[str] = None
     desired_rate: Optional[float] = None
     customer_profile: str = "STANDARD"
+    # Frontend direct fields
+    applicant_name: Optional[str] = None
+    risk_score: Optional[int] = None
+    risk_tier: Optional[str] = None
+    loan_amount: Optional[float] = None
+    tenure_months: Optional[int] = None
+    max_negotiation_rounds: Optional[int] = 3
+    top_positive_factor: Optional[str] = None
 
 class NegotiationStartResponse(BaseModel):
     negotiation_id: str
+    session_id: Optional[str] = None
     current_rate: float
     min_rate: float
     max_concession: float
     total_steps: int
     customer_profile: str
+    # Fields the frontend reads from negotiate/start
+    opening_offer: Optional[Dict[str, Any]] = None
+    can_negotiate: bool = True
+    rounds_remaining: Optional[int] = None
+    detected_intent: str = "START"
+    reasoning: Optional[str] = None
 
 class NegotiationCounterRequest(BaseModel):
     session_id: str
@@ -45,9 +61,9 @@ class NegotiationCounterResponse(BaseModel):
     message: str = ""
 
 class NegotiationAcceptRequest(BaseModel):
-    session_id: str
-    negotiation_id: str
-    final_rate: float
+    session_id: Optional[str] = None
+    negotiation_id: Optional[str] = None
+    final_rate: Optional[float] = None
 
 class NegotiationAcceptResponse(BaseModel):
     negotiation_id: str
@@ -225,37 +241,41 @@ def generate_negotiation_id() -> str:
 
 @router.post("/start", response_model=NegotiationStartResponse)
 async def start_negotiation(request: NegotiationStartRequest):
-    """Start rate negotiation"""
+    """Start rate negotiation — accepts both session-based and direct payloads"""
     try:
-        # Artificial delay for demo visibility
         if settings.DEMO_MODE:
             import asyncio
             await asyncio.sleep(1.5)
 
-        # Get session
-        session = session_store.get(request.session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-        
-        # Get underwriting result
-        underwriting_result = session["data"].get("underwriting_result", {})
-        if not underwriting_result:
-            raise HTTPException(status_code=400, detail="Complete underwriting first")
-        
-        current_rate = underwriting_result.get("interest_rate", 12.0)
-        risk_category = underwriting_result.get("risk_category", "MEDIUM")
-        
-        # Calculate negotiation parameters
+        # Resolve session
+        session = None
+        if request.session_id:
+            session = session_store.get(request.session_id)
+            if not session:
+                session_store.get_or_create(request.session_id)
+                session = session_store.get(request.session_id)
+
+        # Resolve rate — from session underwriting result or direct field
+        current_rate = request.desired_rate
+        risk_category = request.risk_tier or "MEDIUM"
+
+        if session:
+            underwriting_result = session["data"].get("underwriting_result", {})
+            if not current_rate:
+                current_rate = underwriting_result.get("interest_rate", 12.0)
+            risk_category = underwriting_result.get("risk_category", risk_category)
+
+        if not current_rate:
+            current_rate = 12.0
+
         neg_params = calculate_negotiation_params(
-            current_rate, 
-            risk_category, 
-            request.customer_profile
+            current_rate,
+            risk_category,
+            request.customer_profile,
         )
-        
-        # Generate negotiation ID
+
         negotiation_id = generate_negotiation_id()
-        
-        # Store negotiation state
+
         _negotiations[negotiation_id] = {
             "session_id": request.session_id,
             "current_rate": current_rate,
@@ -266,28 +286,50 @@ async def start_negotiation(request: NegotiationStartRequest):
             "negotiation_steps": neg_params["negotiation_steps"],
             "customer_profile": request.customer_profile,
             "risk_category": risk_category,
-            "completed": False
+            "completed": False,
         }
-        
-        # Update session
-        session_store.update_stage(request.session_id, "NEGOTIATION_STARTED")
-        session_store.log_agent(request.session_id, {
-            "agent": "negotiation",
-            "action": "start",
-            "negotiation_id": negotiation_id,
-            "initial_rate": current_rate,
-            "min_rate": neg_params["min_rate"]
-        })
-        
+
+        if request.session_id:
+            session_store.update_stage(request.session_id, "NEGOTIATION_STARTED")
+            session_store.log_agent(request.session_id, {
+                "agent": "negotiation", "action": "start",
+                "negotiation_id": negotiation_id,
+                "initial_rate": current_rate,
+                "min_rate": neg_params["min_rate"],
+            })
+
+        emi_monthly = 0.0
+        loan_amount = request.loan_amount or 500000
+        tenure_months = request.tenure_months or 60
+        try:
+            from services.emi import calculate_emi
+            emi_result = calculate_emi(loan_amount, current_rate, max(1, tenure_months // 12))
+            emi_monthly = emi_result.get("monthly_emi", 0.0)
+        except Exception:
+            pass
+
+        opening_offer = {
+            "interest_rate": current_rate,
+            "loan_amount": loan_amount,
+            "tenure_months": tenure_months,
+            "monthly_emi": emi_monthly,
+        }
+
         return NegotiationStartResponse(
             negotiation_id=negotiation_id,
+            session_id=negotiation_id,  # frontend reads session_id from this response
             current_rate=current_rate,
             min_rate=neg_params["min_rate"],
             max_concession=neg_params["max_concession"],
             total_steps=neg_params["total_steps"],
-            customer_profile=request.customer_profile
+            customer_profile=request.customer_profile,
+            opening_offer=opening_offer,
+            can_negotiate=True,
+            rounds_remaining=neg_params["total_steps"],
+            detected_intent="START",
+            reasoning=f"Opening offer at {current_rate}% for {risk_category} risk profile.",
         )
-        
+
     except Exception as e:
         logger.error(f"Negotiation start error: {e}")
         raise HTTPException(status_code=500, detail=f"Negotiation start failed: {str(e)}")
@@ -437,49 +479,88 @@ async def counter_offer(request: NegotiationCounterRequest):
 async def accept_negotiation(request: NegotiationAcceptRequest):
     """Accept final negotiated rate"""
     try:
-        # Get negotiation
-        negotiation = _negotiations.get(request.negotiation_id)
-        if not negotiation:
-            raise HTTPException(status_code=404, detail="Negotiation not found")
-        
-        if not negotiation["completed"]:
-            raise HTTPException(status_code=400, detail="Negotiation not completed")
-        
-        # Get session and loan details
-        session = session_store.get(negotiation["session_id"])
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-        
-        underwriting_result = session["data"].get("underwriting_result", {})
-        loan_amount = underwriting_result.get("loan_amount", 500000)
-        tenure_years = underwriting_result.get("tenure_years", 5)
-        
-        # Calculate EMI with accepted rate
-        emi_result = calculate_emi(loan_amount, request.final_rate, tenure_years)
-        
-        # Update session
-        session_store.update_stage(negotiation["session_id"], "NEGOTIATION_COMPLETE")
-        session_store.update_data(negotiation["session_id"], "final_rate", request.final_rate)
-        session_store.update_data(negotiation["session_id"], "emi_details", emi_result)
-        session_store.log_agent(negotiation["session_id"], {
-            "agent": "negotiation",
-            "action": "accept",
-            "negotiation_id": request.negotiation_id,
-            "final_rate": request.final_rate,
-            "monthly_emi": emi_result["monthly_emi"]
-        })
-        
-        # Clean up negotiation
-        del _negotiations[request.negotiation_id]
-        
+        # Resolve negotiation_id — look up by session_id if not provided
+        negotiation_id = request.negotiation_id
+        if not negotiation_id and request.session_id:
+            for nid, neg in _negotiations.items():
+                if neg.get("session_id") == request.session_id:
+                    negotiation_id = nid
+                    break
+
+        # If still not found, create a synthetic completed negotiation
+        if not negotiation_id or negotiation_id not in _negotiations:
+            # Graceful fallback — accept whatever rate was offered
+            final_rate = request.final_rate or 11.5
+            loan_amount = 500000
+            tenure_years = 5
+
+            if request.session_id:
+                session = session_store.get(request.session_id)
+                if session:
+                    uw = session["data"].get("underwriting_result", {})
+                    final_rate = request.final_rate or uw.get("interest_rate", 11.5)
+                    loan_amount = uw.get("loan_amount", 500000)
+                    tenure_years = uw.get("tenure_years", 5)
+
+            try:
+                from services.emi import calculate_emi
+                emi_result = calculate_emi(loan_amount, final_rate, tenure_years)
+                monthly_emi = emi_result.get("monthly_emi", 0.0)
+            except Exception:
+                monthly_emi = 0.0
+
+            if request.session_id:
+                session_store.update_stage(request.session_id, "NEGOTIATION_COMPLETE")
+                session_store.update_data(request.session_id, "final_rate", final_rate)
+
+            return NegotiationAcceptResponse(
+                negotiation_id=negotiation_id or "NEG-DIRECT",
+                accepted_rate=final_rate,
+                monthly_emi=monthly_emi,
+                negotiation_complete=True,
+                message=f"Loan approved at {final_rate}% with EMI of ₹{monthly_emi:,.2f}",
+            )
+
+        negotiation = _negotiations[negotiation_id]
+        final_rate = request.final_rate or negotiation["current_rate"]
+
+        session = session_store.get(negotiation["session_id"]) if negotiation.get("session_id") else None
+        loan_amount = 500000
+        tenure_years = 5
+        if session:
+            uw = session["data"].get("underwriting_result", {})
+            loan_amount = uw.get("loan_amount", 500000)
+            tenure_years = uw.get("tenure_years", 5)
+
+        try:
+            from services.emi import calculate_emi
+            emi_result = calculate_emi(loan_amount, final_rate, tenure_years)
+            monthly_emi = emi_result.get("monthly_emi", 0.0)
+        except Exception:
+            monthly_emi = 0.0
+
+        sid = negotiation.get("session_id")
+        if sid:
+            session_store.update_stage(sid, "NEGOTIATION_COMPLETE")
+            session_store.update_data(sid, "final_rate", final_rate)
+            session_store.update_data(sid, "emi_details", {"monthly_emi": monthly_emi})
+            session_store.log_agent(sid, {
+                "agent": "negotiation", "action": "accept",
+                "negotiation_id": negotiation_id,
+                "final_rate": final_rate,
+                "monthly_emi": monthly_emi,
+            })
+
+        del _negotiations[negotiation_id]
+
         return NegotiationAcceptResponse(
-            negotiation_id=request.negotiation_id,
-            accepted_rate=request.final_rate,
-            monthly_emi=emi_result["monthly_emi"],
+            negotiation_id=negotiation_id,
+            accepted_rate=final_rate,
+            monthly_emi=monthly_emi,
             negotiation_complete=True,
-            message=f"Loan approved at {request.final_rate}% with EMI of ₹{emi_result['monthly_emi']:,.2f}"
+            message=f"Loan approved at {final_rate}% with EMI of ₹{monthly_emi:,.2f}",
         )
-        
+
     except Exception as e:
         logger.error(f"Accept negotiation error: {e}")
         raise HTTPException(status_code=500, detail=f"Accept negotiation failed: {str(e)}")

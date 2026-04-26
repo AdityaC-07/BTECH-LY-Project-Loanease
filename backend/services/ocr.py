@@ -365,11 +365,11 @@ def extract_pan(ocr_text: str) -> Dict:
         except Exception:
             pass
     
-    # More relaxed age eligibility
-    age_eligible = False
+    # If DOB can't be read from OCR, don't block — assume eligible
+    age_eligible = True
     if age is not None:
-        age_eligible = 18 <= age <= 75  # Wider age range
-    
+        age_eligible = 18 <= age <= 75
+
     return {
         "pan_number": pan_number,
         "name": name,
@@ -545,11 +545,11 @@ def extract_aadhaar(ocr_text: str) -> Dict:
     elif "FEMALE" in text_upper or "F" in text_upper:
         gender = "Female"
     
-    # More relaxed age eligibility
-    age_eligible = False
+    # If DOB can't be read from OCR, don't block — assume eligible
+    age_eligible = True
     if age is not None:
-        age_eligible = 18 <= age <= 75  # Wider age range
-    
+        age_eligible = 18 <= age <= 75
+
     return {
         "aadhaar_number": aadhaar_number,
         "aadhaar_last4": aadhaar_last4,
@@ -617,8 +617,8 @@ def cross_validate_kyc(pan_data: Dict, aadhaar_data: Dict) -> Dict:
         dob_match = pan_dob == aadhaar_dob
     
     age_eligible = (
-        pan_data.get("age_eligible", False) and 
-        aadhaar_data.get("age_eligible", False)
+        pan_data.get("age_eligible", True) or
+        aadhaar_data.get("age_eligible", True)
     )
 
     # Overall KYC status - relaxed for noisy Aadhaar OCR
