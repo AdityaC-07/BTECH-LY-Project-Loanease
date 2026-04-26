@@ -141,6 +141,13 @@ def _extract_pan_number(raw_text: str) -> str | None:
             if _validate_pan_format(normalized):
                 return normalized
 
+        # Also scan for spaced PAN patterns (e.g., "ABCDE 1234 F" or "ABCD E1234P")
+        spaced_match = re.search(r'([A-Z]{5})\s?([0-9]{4})\s?([A-Z])', source)
+        if spaced_match:
+            candidate = spaced_match.group(1) + spaced_match.group(2) + spaced_match.group(3)
+            if _validate_pan_format(candidate):
+                return candidate
+
     return None
 
 

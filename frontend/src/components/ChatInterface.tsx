@@ -67,6 +67,7 @@ interface AadhaarKycFields {
 }
 
 export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [language, setLanguage] = useState<"en" | "hi">(
     () => (localStorage.getItem("loanease_language") as "en" | "hi") || "en"
   );
@@ -247,12 +248,16 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   };
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messagesContainerRef.current) {
+      setTimeout(() => {
+        messagesContainerRef.current!.scrollTop = messagesContainerRef.current!.scrollHeight;
+      }, 0);
+    }
   };
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, showCreditScore, showLoanOffers, showSanction, showAnalytics]);
+  }, [messages, showCreditScore, showLoanOffers, showSanction, showAnalytics, showPanUploadCard, showAadhaarUploadCard, showPanConfirmCard, showKycVerifiedCard, isKycProcessing]);
 
   useEffect(() => {
     if (!pipelineSessionId || pipelineStatus === "SANCTIONED" || pipelineStatus === "FAILED") return;
@@ -954,6 +959,25 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   };
 
   return (
+    <>
+      <style>{`
+        .chat-messages-container::-webkit-scrollbar {
+          width: 6px;
+        }
+        .chat-messages-container::-webkit-scrollbar-track {
+          background: #1a1a1a;
+        }
+        .chat-messages-container::-webkit-scrollbar-thumb {
+          background: #F5C518;
+          border-radius: 3px;
+        }
+        .chat-messages-container::-webkit-scrollbar-thumb:hover {
+          background: #e6b800;
+        }
+        .chat-messages-container {
+          scroll-behavior: smooth;
+        }
+      `}</style>
     <div className="fixed inset-0 bg-background z-50 flex flex-col">
       {/* Session Resume Banner */}
       {showSessionBanner && (
@@ -1131,9 +1155,9 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         </div>
       </div>
 
-      <div className="flex flex-1 flex-col gap-4 p-4 lg:flex-row">
+      <div className="flex flex-1 flex-col gap-4 p-4 lg:flex-row overflow-hidden min-h-0">
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto space-y-6 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] bg-fixed pr-2 lg:pr-80">
+        <div ref={messagesContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden space-y-6 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] bg-fixed pr-2 lg:pr-80 chat-messages-container min-h-0">
           {messages.map((message) => (
           <div key={message.id} className="space-y-3">
             <ChatMessage
@@ -1364,7 +1388,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           <div ref={messagesEndRef} />
         </div>
 
-        <div className="lg:w-[340px] lg:ml-4">
+        <div className="lg:w-[340px] lg:ml-4 min-h-0 overflow-y-auto chat-messages-container">
           <AgentActivityPanel trace={agentTrace} pipelineStatus={pipelineStatus} />
         </div>
       </div>
@@ -1407,5 +1431,6 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         </div>
       </div>
     </div>
+    </>
   );
 };

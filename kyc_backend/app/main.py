@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -15,6 +16,13 @@ from app.schemas import (
     VerifyResponse,
 )
 from app.service import KYCService
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("kyc.ocr")
 
 app = FastAPI(title="LoanEase KYC Verification API", version="1.0.0")
 
@@ -78,10 +86,15 @@ async def extract_pan(
     _assert_upload_constraints(document, file_bytes)
 
     try:
-        result, conf, elapsed, _ = service.extract_pan(file_bytes, document.filename or "upload.jpg")
+        result, conf, elapsed, ocr_text = service.extract_pan(file_bytes, document.filename or "upload.jpg")
+        logger.info(f"KYC PAN: OCR completed in {elapsed}ms, confidence {conf:.2f}")
+        logger.info(f"KYC PAN: Raw OCR text (first 200 chars): {ocr_text[:200] if ocr_text else 'EMPTY'}")
+        logger.info(f"KYC PAN: Extracted fields - pan={result.get('extracted_fields', {}).get('pan_number')}, name={result.get('extracted_fields', {}).get('name')}")
     except UnsupportedDocumentError as exc:
+        logger.error(f"KYC PAN: Document error - {str(exc)}")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        logger.error(f"KYC PAN: Extraction failed - {str(exc)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"PAN extraction failed: {str(exc)}") from exc
 
     result["validation"]["issues"].extend(_confidence_issues(conf, language))
@@ -100,6 +113,8 @@ async def extract_pan(
         result["validation"].get("overall_valid")
         or (core_pan_fields_ok and conf >= 0.35)
     )
+    
+    logger.info(f"KYC PAN: Validation complete - overall_valid={result['validation']['overall_valid']}, confidence={conf:.2f}")
 
     return PanExtractResponse(
         document_type="PAN",
@@ -113,13 +128,21 @@ async def extract_pan(
 @app.post("/kyc/extract/aadhaar", response_model=AadhaarExtractResponse)
 async def extract_aadhaar(document: UploadFile = File(...)) -> AadhaarExtractResponse:
     file_bytes = await document.read()
+    
+    logger.info(f"KYC Aadhaar: Received file {document.filename}, type {document.content_type}, size {len(file_bytes)} bytes")
+    
     _assert_upload_constraints(document, file_bytes)
 
     try:
-        result, conf, elapsed, _ = service.extract_aadhaar(file_bytes, document.filename or "upload.jpg")
+        result, conf, elapsed, ocr_text = service.extract_aadhaar(file_bytes, document.filename or "upload.jpg")
+        logger.info(f"KYC Aadhaar: OCR completed in {elapsed}ms, confidence {conf:.2f}")
+        logger.info(f"KYC Aadhaar: Raw OCR text (first 200 chars): {ocr_text[:200] if ocr_text else 'EMPTY'}")
+        logger.info(f"KYC Aadhaar: Extracted fields - aadhaar_last4={result.get('extracted_fields', {}).get('aadhaar_last4')}, name={result.get('extracted_fields', {}).get('name')}")
     except UnsupportedDocumentError as exc:
+        logger.error(f"KYC Aadhaar: Document error - {str(exc)}")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        logger.error(f"KYC Aadhaar: Extraction failed - {str(exc)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Aadhaar extraction failed: {str(exc)}") from exc
 
     result["validation"]["issues"].extend(_confidence_issues(conf, "en"))
