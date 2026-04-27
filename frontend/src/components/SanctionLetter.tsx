@@ -3,7 +3,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "react-router-dom";
 import { Download, Shield, FileCheck, TrendingUp, CheckCircle2, Lock, QrCode } from "lucide-react";
-import { formatIndianCurrency } from "@/lib/languageUtils";
 
 interface SanctionLetterProps {
   customerName: string;
@@ -70,7 +69,7 @@ export const SanctionLetter = ({
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div>
               <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider mb-1">Loan Amount</p>
-              <p className="font-black text-yellow-400 text-lg">{formatIndianCurrency(loanAmount)}</p>
+              <p className="font-black text-yellow-400 text-lg">₹{loanAmount.toLocaleString('en-IN')}</p>
             </div>
             <div>
               <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider mb-1">Interest Rate</p>
@@ -82,7 +81,7 @@ export const SanctionLetter = ({
             </div>
             <div>
               <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider mb-1">Monthly EMI</p>
-              <p className="font-black text-yellow-400 text-lg">{formatIndianCurrency(emi)}</p>
+              <p className="font-black text-yellow-400 text-lg">₹{emi.toLocaleString('en-IN')}</p>
             </div>
           </div>
         </div>

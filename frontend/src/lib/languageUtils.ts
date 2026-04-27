@@ -69,34 +69,16 @@ export const detectLanguage = async (
  * Format number in Indian style (e.g., 5,00,000 instead of 500,000)
  */
 export const formatIndianNumber = (num: number): string => {
-  if (num === null || num === undefined || isNaN(num)) {
-    return "0";
-  }
-  
-  // Handle negative numbers
-  const isNegative = num < 0;
-  const absNum = Math.abs(num);
-  
-  // Handle decimal numbers
-  const parts = absNum.toFixed(2).split(".");
+  const parts = num.toString().split(".");
   const integerPart = parts[0].replace(/\B(?=(\d{2})+(?!\d))/g, ",");
-  
-  // Remove trailing .00 if present
-  const formatted = parts.length > 1 && parts[1] === "00" 
-    ? integerPart 
-    : `${integerPart}.${parts[1]}`;
-  
-  return isNegative ? `-₹${formatted}` : formatted;
+  return parts.length > 1 ? `${integerPart}.${parts[1]}` : integerPart;
 };
 
 /**
  * Format currency in Indian style with rupee symbol
  */
 export const formatIndianCurrency = (amount: number): string => {
-  if (amount === null || amount === undefined || isNaN(amount)) {
-    return "₹0";
-  }
-  return `₹${formatIndianNumber(Math.floor(Math.abs(amount)))}`;
+  return `₹${formatIndianNumber(Math.floor(amount))}`;
 };
 
 /**

@@ -1207,7 +1207,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
       <div className="flex flex-1 flex-col gap-4 p-4 lg:flex-row overflow-hidden min-h-0">
         {/* Messages */}
-        <div ref={messagesContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden space-y-6 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] bg-fixed pr-2 chat-messages-container min-h-0">
+        <div ref={messagesContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden space-y-6 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] bg-fixed pr-2 lg:pr-80 chat-messages-container min-h-0">
           {messages.map((message) => (
           <div key={message.id} className="space-y-3">
             <ChatMessage
@@ -1438,8 +1438,9 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Agent Activity Sidebar - collapsible */}
-        <AgentActivityPanel trace={agentTrace} pipelineStatus={pipelineStatus} />
+        <div className="lg:w-[340px] lg:ml-4 min-h-0 overflow-y-auto chat-messages-container">
+          <AgentActivityPanel trace={agentTrace} pipelineStatus={pipelineStatus} />
+        </div>
       </div>
 
       {/* Input */}
