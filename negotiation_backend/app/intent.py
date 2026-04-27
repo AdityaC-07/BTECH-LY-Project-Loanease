@@ -32,6 +32,37 @@ def detect_intent(message: str) -> str:
         for k in ["pay more upfront", "upfront", "down payment"]
     ):
         return "TENURE_QUERY"
+    # TENURE_REQUEST - longer tenure
+    if any(
+        k in text
+        for k in [
+            "longer",
+            "more months",
+            "extend tenure",
+            "extend period",
+            "zyada time",
+            "aur samay",
+            "more time",
+            "increase tenure",
+        ]
+    ):
+        return "TENURE_EXTEND_REQUEST"
+    # TENURE_REQUEST - shorter tenure
+    if any(
+        k in text
+        for k in [
+            "shorter",
+            "less months",
+            "reduce tenure",
+            "jaldi",
+            "kam samay",
+            "chhote tenure",
+            "kam mahine",
+            "faster",
+            "quick repayment",
+        ]
+    ):
+        return "TENURE_REDUCE_REQUEST"
     if any(
         k in text for k in ["i'll think", "ill think", "not sure", "later", "maybe"]
     ):
@@ -63,6 +94,22 @@ def detect_hinglish_intent(message: str) -> str:
     Maps common Hinglish phrases to intents.
     """
     text = (message or "").strip().lower()
+
+    # TENURE_QUERY (Hinglish variants)
+    if any(
+        k in text
+        for k in [
+            "tenure",
+            "mahine",
+            "months",
+            "kitne mahine",
+            "kitne mahino",
+            "time period",
+            "duration",
+            "mahat",
+        ]
+    ):
+        return "TENURE_QUERY"
 
     # LOAN_REQUEST
     if any(
@@ -113,6 +160,42 @@ def detect_hinglish_intent(message: str) -> str:
         ]
     ):
         return "COUNTER_REQUEST"
+
+    # TENURE_EXTEND_REQUEST (Hinglish)
+    if any(
+        k in text
+        for k in [
+            "zyada time",
+            "aur samay",
+            "jyada mahine",
+            "jyade mahine",
+            "more time",
+            "extend",
+            "bada tenure",
+            "bada time",
+            "lamba tenure",
+            "lamba time",
+        ]
+    ):
+        return "TENURE_EXTEND_REQUEST"
+
+    # TENURE_REDUCE_REQUEST (Hinglish)
+    if any(
+        k in text
+        for k in [
+            "kam time",
+            "kam samay",
+            "chhote tenure",
+            "chhota tenure",
+            "kam mahine",
+            "jaldi",
+            "jldi",
+            "chhota time",
+            "chhoti tenure",
+            "faster",
+        ]
+    ):
+        return "TENURE_REDUCE_REQUEST"
 
     # ACCEPTANCE
     if any(
