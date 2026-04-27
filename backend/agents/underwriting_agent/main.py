@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import joblib
@@ -94,7 +95,6 @@ def load_model():
         _metadata = None
 
 # Initial load
-import json
 _metadata = None
 load_model()
 
@@ -334,17 +334,33 @@ async def underwriting_health():
 
 @router.get("/model-info")
 async def get_model_info():
-    """Returns model metadata and training details"""
+    """Returns model metadata and training details for the analytics dashboard"""
     global _metadata
     if not _metadata:
-        # Try to reload if missing
         load_model()
-        
+
     if not _metadata:
         return {
-            "error": "Model metadata not found",
             "status": "degraded",
-            "message": "Model is running in rule-based fallback mode"
+            "message": "Model running in rule-based fallback mode — run models/train_pipeline.py to train",
+            "model_type": "RuleBasedFallback",
+            "datasets_used": [],
+            "total_training_samples": 0,
+            "test_auc_roc": None,
         }
-    
-    return _metadata
+
+    # Build a dashboard-friendly summary on top of the raw metadata
+    comparison = _metadata.get("model_comparison", [])
+    summary = {
+        **_metadata,
+        "dashboard_summary": {
+            "headline": (
+                f"Trained on {_metadata.get('total_dataset_rows', _metadata.get('total_training_samples', '?')):,}"
+                f" samples across {len(_metadata.get('datasets_used', []))} public credit datasets"
+            ),
+            "auc_display": f"AUC-ROC: {_metadata.get('test_auc_roc', 'N/A')}",
+            "model_display": f"Best model: {_metadata.get('model_type', 'N/A')} (best of 5 compared)",
+            "models_compared": len(comparison),
+        },
+    }
+    return summary
