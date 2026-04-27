@@ -1,11 +1,215 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.constants import CONCESSION_STEP, MAX_ROUNDS, RATE_CEILING, RATE_FLOOR, RISK_CONCESSION_LIMITS
 from app.intent import detect_intent
 from app.utils import calculate_emi_components, round_to_step, with_currency_format
+
+
+def analyze_counter_request(
+    user_message: str,
+    current_rate: float,
+    floor_rate: float
+) -> dict:
+    """
+    Analyze the applicant's counter-offer to extract their requested rate
+    and assess the aggressiveness and feasibility of their proposal.
+    """
+    # Try to extract a specific rate from the user's message
+    rate_patterns = [
+        r'(\d+\.?\d*)\s*%',
+        r'(\d+\.?\d*)\s*percent',
+        r'(\d+\.?\d*)\s*प्रतिशत',
+    ]
+    
+    requested_rate = None
+    for pattern in rate_patterns:
+        match = re.search(pattern, user_message.lower())
+        if match:
+            requested_rate = float(match.group(1))
+            break
+    
+    if requested_rate:
+        gap = current_rate - requested_rate
+        
+        if requested_rate < floor_rate:
+            aggressiveness = 1.0
+            feasibility = "impossible"
+        elif gap <= 0.25:
+            aggressiveness = 0.3
+            feasibility = "likely"
+        elif gap <= 0.50:
+            aggressiveness = 0.6
+            feasibility = "possible"
+        else:
+            aggressiveness = 0.9
+            feasibility = "unlikely"
+    else:
+        aggressiveness = 0.5
+        feasibility = "possible"
+        requested_rate = current_rate - 0.25
+    
+    return {
+        "requested_rate": requested_rate,
+        "aggressiveness": aggressiveness,
+        "feasibility": feasibility,
+        "gap_from_current": current_rate - (requested_rate or current_rate)
+    }
+
+
+def calculate_concession(
+    risk_score: int,
+    current_rate: float,
+    floor_rate: float,
+    round_number: int,
+    max_rounds: int,
+    aggressiveness: float,
+    requested_rate: float
+) -> dict:
+    """
+    Calculate a smart concession based on risk profile, negotiation progress,
+    and the applicant's counter-offer aggressiveness.
+    """
+    from app.utils import calculate_emi_components
+    
+    headroom = current_rate - floor_rate
+    
+    if headroom <= 0:
+        return {
+            "action": "HOLD_FIRM",
+            "new_rate": current_rate,
+            "concession": 0.0,
+            "reason": "floor_reached"
+        }
+    
+    # Determine max step based on risk score
+    if risk_score >= 80:
+        max_step = 0.50
+    elif risk_score >= 65:
+        max_step = 0.25
+    else:
+        max_step = 0.0
+    
+    # Round factor decreases as negotiation progresses
+    round_factor = 1 - ((round_number - 1) / max(max_rounds, 1)) * 0.5
+    
+    concession = min(max_step * round_factor, headroom)
+    
+    # If applicant requested a specific rate, consider it
+    if requested_rate and requested_rate >= floor_rate:
+        halfway = (current_rate - requested_rate) / 2
+        concession = min(concession, max(halfway, 0.25))
+    
+    # Round to step (0.25 increments)
+    concession = round(round(concession / 0.25) * 0.25, 2)
+    
+    if concession == 0:
+        return {
+            "action": "HOLD_FIRM",
+            "new_rate": current_rate,
+            "concession": 0.0,
+            "reason": "profile_insufficient"
+        }
+    
+    new_rate = round(current_rate - concession, 2)
+    
+    # Calculate savings for display
+    old_emi = calculate_emi_components(500000, current_rate, 60)["emi"]
+    new_emi = calculate_emi_components(500000, new_rate, 60)["emi"]
+    
+    return {
+        "action": "CONCEDE",
+        "new_rate": max(new_rate, floor_rate),
+        "concession": concession,
+        "reason": "profile_merit",
+        "savings_per_month": old_emi - new_emi
+    }
+
+
+async def generate_counter_response(
+    concession_result: dict,
+    counter_analysis: dict,
+    loan_context: dict,
+    language: str
+) -> str:
+    """
+    Generate a Groq-powered counter-response that references
+    the applicant's specific rate request.
+    """
+    try:
+        from backend.groq_client import groq_client
+    except ImportError:
+        # Fallback if groq_client not available
+        return _generate_fallback_response(concession_result, counter_analysis, loan_context)
+    
+    requested_rate = counter_analysis.get("requested_rate") or loan_context.get("current_rate", 0)
+    current_rate = loan_context.get("current_rate", 0)
+    new_rate = concession_result.get("new_rate", current_rate)
+    savings = concession_result.get("savings_per_month", 0)
+    
+    if concession_result["action"] == "HOLD_FIRM":
+        prompt = f"""
+The applicant requested {requested_rate:.2f}% but we cannot reduce below {current_rate:.2f}%.
+
+Explain firmly but kindly why this rate is our best offer.
+Reference their risk profile: score {loan_context.get('risk_score', 'N/A')}, tier {loan_context.get('risk_tier', 'N/A')}.
+Offer escalation as an alternative.
+Language: {language}. Max 60 words.
+Sound like a helpful relationship manager.
+"""
+    else:
+        prompt = f"""
+We're reducing the rate from {current_rate:.2f}% to {new_rate:.2f}%.
+
+The applicant asked for {requested_rate:.2f}%.
+We met them partway.
+
+Explain this positively.
+Mention they save ₹{savings:.0f}/month.
+Language: {language}. Max 70 words.
+Sound like a helpful relationship manager.
+"""
+    
+    try:
+        response = await groq_client.complete(
+            [{"role": "user", "content": prompt}],
+            max_tokens=150,
+            temperature=0.35
+        )
+        return response.content
+    except Exception as e:
+        # Fallback to template response
+        return _generate_fallback_response(concession_result, counter_analysis, loan_context)
+
+
+def _generate_fallback_response(
+    concession_result: dict,
+    counter_analysis: dict,
+    loan_context: dict
+) -> str:
+    """Generate a simple fallback response when Groq is unavailable."""
+    current_rate = loan_context.get("current_rate", 0)
+    new_rate = concession_result.get("new_rate", current_rate)
+    savings = concession_result.get("savings_per_month", 0)
+    requested_rate = counter_analysis.get("requested_rate") or current_rate
+    
+    if concession_result["action"] == "HOLD_FIRM":
+        return (
+            f"We appreciate your counter-offer of {requested_rate:.2f}%. "
+            f"However, based on your risk profile (score: {loan_context.get('risk_score', 'N/A')}), "
+            f"our current rate of {current_rate:.2f}% is the best we can offer. "
+            f"If you'd like us to review this further, please use the escalation option."
+        )
+    else:
+        return (
+            f"Thank you for your counter-offer of {requested_rate:.2f}%. "
+            f"We're happy to reduce your rate from {current_rate:.2f}% to {new_rate:.2f}%. "
+            f"This means you save ₹{savings:.0f} every month on your EMI. "
+            f"We appreciate your negotiation and are glad to meet you partway."
+        )
 
 
 def normalize_tier(risk_tier: str, risk_score: int) -> str:
