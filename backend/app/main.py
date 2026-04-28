@@ -29,40 +29,69 @@ from app.credit_score import get_credit_score, get_credit_band, mask_pan
 from app.kyc_extractors import extract_pan, extract_aadhaar, cross_validate_kyc
 from app.kyc_preprocess import preprocess_image, run_ocr, MAX_UPLOAD_BYTES, UnsupportedDocumentError
 
-# Import negotiation backend components
-from pathlib import Path
-import importlib.util
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("kyc.ocr")
 
 # Load negotiation backend constants, service, and store
 neg_backend_path = Path(__file__).resolve().parent.parent.parent / "negotiation_backend" / "app"
 
-spec = importlib.util.spec_from_file_location("negotiation_app_constants", neg_backend_path / "constants.py")
-negotiation_constants = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(negotiation_constants)
+
+def _load_module(module_name: str, module_path: Path, aliases: list[str] | None = None):
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load module from {module_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    if aliases:
+        for alias in aliases:
+                        sys.modules[alias] = module
+    spec.loader.exec_module(module)
+    return module
+
+negotiation_constants = _load_module(
+    "negotiation_app_constants",
+    neg_backend_path / "constants.py",
+    aliases=["app.constants"],
+)
 MAX_ROUNDS = negotiation_constants.MAX_ROUNDS
 
-spec = importlib.util.spec_from_file_location("negotiation_app_service", neg_backend_path / "service.py")
-negotiation_service = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(negotiation_service)
+negotiation_intent = _load_module(
+    "negotiation_app_intent",
+    neg_backend_path / "intent.py",
+    aliases=["app.intent"],
+)
 
-spec = importlib.util.spec_from_file_location("negotiation_app_store", neg_backend_path / "store.py")
-negotiation_store_module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(negotiation_store_module)
+negotiation_utils = _load_module(
+    "negotiation_app_utils",
+    neg_backend_path / "utils.py",
+    aliases=["app.utils"],
+)
 
-spec = importlib.util.spec_from_file_location("negotiation_app_schemas", neg_backend_path / "schemas.py")
-negotiation_schemas = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(negotiation_schemas)
+negotiation_service = _load_module(
+    "negotiation_app_service",
+    neg_backend_path / "service.py",
+)
+
+negotiation_store_module = _load_module(
+    "negotiation_app_store",
+    neg_backend_path / "store.py",
+)
+
+negotiation_schemas = _load_module(
+    "negotiation_app_schemas",
+    neg_backend_path / "schemas.py",
+)
 
 # Import specific functions and classes
-from negotiation_app_service import (
-    append_history,
-    build_escalation_reference,
-    build_offer,
-    build_sanction_reference,
-    counter_session,
-    extract_top_positive_factor,
-    start_session,
-)
+append_history = negotiation_service.append_history
+build_escalation_reference = negotiation_service.build_escalation_reference
+build_offer = negotiation_service.build_offer
+build_sanction_reference = negotiation_service.build_sanction_reference
+counter_session = negotiation_service.counter_session
+extract_top_positive_factor = negotiation_service.extract_top_positive_factor
+start_session = negotiation_service.start_session
 SessionStore = negotiation_store_module.SessionStore
 
 # Import translation backend components  
@@ -104,10 +133,6 @@ except ImportError as e:
     PIPELINE_AVAILABLE = False
     logger.warning(f"Pipeline not available: {e}")
     LoanPipeline = None
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("kyc.ocr")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 ARTIFACTS_DIR = BASE_DIR / "artifacts"

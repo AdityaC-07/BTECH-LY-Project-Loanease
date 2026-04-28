@@ -168,6 +168,7 @@ def extract_pan(raw_text: str) -> dict:
     lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
     
     pan_number = _extract_pan_number(raw_text)
+    pan_ok = bool(pan_number)
     
     # Extract name
     name = None

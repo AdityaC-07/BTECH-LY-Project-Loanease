@@ -1,174 +1,276 @@
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
-import { Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 
 interface CreditScoreCardProps {
   score: number;
   maxScore?: number;
 }
 
+interface ShapFactor {
+  label: string;
+  value: number;
+  positive: boolean;
+}
+
 export const CreditScoreCard = ({ score, maxScore = 900 }: CreditScoreCardProps) => {
   const [step, setStep] = useState(1);
   const [displayScore, setDisplayScore] = useState(300);
+  const [arcReady, setArcReady] = useState(false);
+  const [detailsReady, setDetailsReady] = useState(false);
+  const [barsReady, setBarsReady] = useState(false);
 
   useEffect(() => {
-    // Step 1: 0-0.5s Show "Checking your CIBIL score..."
-    const t1 = setTimeout(() => setStep(2), 500);
+    const timers: number[] = [];
+    const targetScore = Math.max(300, Math.min(score, maxScore));
+    const duration = 1800;
+    let frameId = 0;
+    const startTime = performance.now();
 
-    // Step 2: 0.5-2.5s Score counter animates from 300 to actual_score
-    let interval: NodeJS.Timeout;
-    const t2 = setTimeout(() => {
-      interval = setInterval(() => {
-        setDisplayScore((prev) => {
-          if (prev >= score) {
-            clearInterval(interval);
-            return score;
-          }
-          return Math.min(prev + 5, score);
-        });
-      }, (2000 / ((score - 300) / 5))); // Complete in 2s
-    }, 500);
+    const animateScore = (now: number) => {
+      const progress = Math.min(1, (now - startTime) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplayScore(Math.round(300 + (targetScore - 300) * eased));
 
-    // Step 3: 2.5s Bar fills
-    const t3 = setTimeout(() => setStep(3), 2500);
-    
-    // Step 4: 3.0s Tier badge drops in
-    const t4 = setTimeout(() => setStep(4), 3000);
+      if (progress < 1) {
+        frameId = window.requestAnimationFrame(animateScore);
+      }
+    };
 
-    // Step 5: 3.3s SHAP explanation bullets appear
-    const t5 = setTimeout(() => setStep(5), 3300);
+    timers.push(window.setTimeout(() => setStep(2), 450));
+    timers.push(window.setTimeout(() => setArcReady(true), 525));
+    timers.push(window.setTimeout(() => setDetailsReady(true), 1050));
+    timers.push(window.setTimeout(() => setBarsReady(true), 1400));
+    timers.push(
+      window.setTimeout(() => {
+        frameId = window.requestAnimationFrame(animateScore);
+      }, 500)
+    );
 
     return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearInterval(interval);
-      clearTimeout(t3);
-      clearTimeout(t4);
-      clearTimeout(t5);
+      timers.forEach((timer) => window.clearTimeout(timer));
+      window.cancelAnimationFrame(frameId);
     };
-  }, [score]);
+  }, [score, maxScore]);
 
-  const percentage = (displayScore / maxScore) * 100;
-  const isEligible = score >= 700;
-  
-  const getScoreColor = () => {
-    if (score >= 750) return "text-green-500";
-    if (score >= 700) return "text-yellow-400";
-    if (score >= 650) return "text-orange-400";
-    return "text-red-500";
+  const normalizedScore = Math.max(300, Math.min(displayScore, maxScore));
+  const gaugeProgress = Math.max(0, Math.min(1, (normalizedScore - 300) / (maxScore - 300)));
+  const radius = 72;
+  const circumference = 2 * Math.PI * radius;
+  const dashLength = circumference * gaugeProgress;
+  const bandPosition = Math.max(0, Math.min(100, ((score - 300) / (maxScore - 300)) * 100));
+
+  const getScoreTone = () => {
+    if (score >= 700) return "text-[#22c55e]";
+    if (score >= 550) return "text-[#F5C518]";
+    return "text-[#ef4444]";
   };
 
-  const getStrokeColor = () => {
-    if (score >= 750) return "#22c55e";
-    if (score >= 700) return "#facc15";
-    if (score >= 650) return "#fb923c";
-    return "#ef4444";
+  const getTierLabel = () => {
+    if (score >= 700) return "LOW RISK TIER";
+    if (score >= 550) return "MEDIUM RISK TIER";
+    return "HIGH RISK TIER";
   };
 
-  const getScoreLabel = () => {
-    if (score >= 750) return "Excellent";
-    if (score >= 700) return "Good";
-    if (score >= 650) return "Fair";
-    return "Poor";
+  const getRateBand = () => {
+    if (score >= 700) return "10.5% – 12.5% p.a. eligible";
+    if (score >= 550) return "12.5% – 15.0% p.a. eligible";
+    return "15.5%+ p.a. likely";
   };
 
-  const getShapBullets = () => {
+  const getFactors = (): ShapFactor[] => {
     if (score >= 700) {
       return [
-        { text: "Consistent repayment history", positive: true },
-        { text: "Low credit utilization (12%)", positive: true },
-        { text: "Multiple active accounts", positive: true },
+        { label: "Credit History", value: 0.42, positive: true },
+        { label: "Income Level", value: 0.28, positive: true },
+        { label: "Employment", value: 0.12, positive: true },
+        { label: "Loan Amount", value: -0.15, positive: false },
+        { label: "Existing EMIs", value: -0.09, positive: false },
       ];
     }
+
     return [
-      { text: "Recent missed payments", positive: false },
-      { text: "High credit utilization (85%)", positive: false },
-      { text: "Short credit history length", positive: false },
+      { label: "Credit History", value: 0.22, positive: true },
+      { label: "Income Level", value: 0.16, positive: true },
+      { label: "Employment", value: 0.11, positive: true },
+      { label: "Loan Amount", value: -0.31, positive: false },
+      { label: "Existing EMIs", value: -0.24, positive: false },
     ];
   };
 
   if (step === 1) {
     return (
-      <div className="bg-gradient-card rounded-2xl p-6 shadow-lg border border-border animate-slide-up flex flex-col items-center justify-center min-h-[300px]">
-        <Loader2 className="w-12 h-12 animate-spin text-yellow-400 mb-4" />
-        <p className="text-lg font-medium text-muted-foreground animate-pulse">Checking your CIBIL score...</p>
+      <div className="flex min-h-[320px] flex-col items-center justify-center rounded-2xl border border-[#2a2a2a] bg-gradient-to-br from-[#161616] via-[#111111] to-[#0d0d0d] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
+        <Loader2 className="mb-4 h-12 w-12 animate-spin text-[#F5C518]" />
+        <p className="text-lg font-medium text-slate-300 animate-pulse">Checking your CIBIL score...</p>
       </div>
     );
   }
 
+  const factors = getFactors();
+  const maxAbsValue = Math.max(...factors.map((factor) => Math.abs(factor.value)));
+
   return (
-    <div className="bg-gradient-card rounded-2xl p-6 shadow-lg border border-border animate-slide-up relative overflow-hidden">
-      <div className="text-center mb-6">
-        <p className="text-sm text-muted-foreground mb-2 font-medium tracking-wide uppercase">Your Credit Score</p>
-        <div className="relative inline-flex items-center justify-center">
-          <svg className="w-40 h-40 transform -rotate-90">
+    <div className="relative overflow-hidden rounded-2xl border border-[#2a2a2a] bg-gradient-to-br from-[#161616] via-[#111111] to-[#0d0d0d] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.35)] animate-slide-up">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(245,197,24,0.06),transparent_40%)]" />
+
+      <div className="relative text-center">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-slate-400">Your Credit Score</p>
+
+        <div className="relative mx-auto mt-5 inline-flex items-center justify-center">
+          <svg className="h-[220px] w-[220px] -rotate-90 transform" viewBox="0 0 220 220" aria-hidden="true">
+            <defs>
+              <linearGradient id="credit-score-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#ef4444" />
+                <stop offset="50%" stopColor="#F5C518" />
+                <stop offset="100%" stopColor="#22c55e" />
+              </linearGradient>
+            </defs>
             <circle
-              cx="80"
-              cy="80"
-              r="70"
-              stroke="currentColor"
-              strokeWidth="12"
+              cx="110"
+              cy="110"
+              r={radius}
               fill="none"
-              className="text-muted/30"
+              stroke="rgba(255,255,255,0.08)"
+              strokeWidth="14"
             />
             <circle
-              cx="80"
-              cy="80"
-              r="70"
-              stroke={getStrokeColor()}
-              strokeWidth="12"
+              cx="110"
+              cy="110"
+              r={radius}
               fill="none"
+              stroke="url(#credit-score-gradient)"
+              strokeWidth="14"
               strokeLinecap="round"
-              strokeDasharray={step >= 3 ? `${percentage * 4.4} 440` : "0 440"}
-              style={{
-                transition: "stroke-dasharray 0.8s ease-out",
-              }}
+              strokeDasharray={`${arcReady ? dashLength : 0} ${circumference}`}
+              style={{ transition: "stroke-dasharray 2s ease-in-out" }}
             />
           </svg>
+
           <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <span className={cn("text-5xl font-black font-display tracking-tighter", getScoreColor())}>
+            <span className={cn("text-[48px] font-black leading-none tracking-tight", getScoreTone())}>
               {displayScore}
             </span>
-            <span className="text-xs text-muted-foreground font-bold mt-1">/ {maxScore}</span>
+            <span className="mt-1 text-xs font-semibold tracking-[0.3em] text-slate-400">/ {maxScore}</span>
+          </div>
+        </div>
+
+        <div
+          className={cn(
+            "mx-auto mt-4 inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-bold tracking-[0.25em] uppercase transition-all duration-500",
+            score >= 700
+              ? "border-[#22c55e]/30 bg-[#22c55e]/10 text-[#22c55e]"
+              : score >= 550
+                ? "border-[#F5C518]/30 bg-[#F5C518]/10 text-[#F5C518]"
+                : "border-[#ef4444]/30 bg-[#ef4444]/10 text-[#ef4444]",
+            detailsReady ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
+          )}
+        >
+          <CheckCircle2 className="h-4 w-4" />
+          {getTierLabel()}
+        </div>
+      </div>
+
+      <div className="relative mt-6 rounded-2xl border border-[#2a2a2a] bg-[#0f0f0f]/90 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+        <div className="mb-2 flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.3em] text-slate-500">
+          <span>300</span>
+          <span>550</span>
+          <span>700</span>
+          <span>{maxScore}</span>
+        </div>
+
+        <div className="relative h-4 overflow-hidden rounded-full bg-[#262626]">
+          <div className="absolute inset-y-0 left-0 w-[40%] bg-[#ef4444]" />
+          <div className="absolute inset-y-0 left-[40%] w-[25%] bg-[#F5C518]" />
+          <div className="absolute inset-y-0 left-[65%] w-[35%] bg-[#22c55e]" />
+
+          <div
+            className="absolute -top-1.5 h-7 w-7 -translate-x-1/2 transition-[left] duration-1000 ease-out"
+            style={{ left: `${bandPosition}%` }}
+          >
+            <div className="mx-auto h-0 w-0 border-l-[8px] border-r-[8px] border-t-[11px] border-l-transparent border-r-transparent border-t-[#F5C518] drop-shadow-[0_2px_6px_rgba(245,197,24,0.35)]" />
+          </div>
+        </div>
+
+        <div
+          className="mt-2 text-[10px] font-semibold uppercase tracking-[0.28em] text-[#F5C518] transition-all duration-700"
+          style={{ marginLeft: `calc(${bandPosition}% - 2.5rem)` }}
+        >
+          Your score: HERE ↑
+        </div>
+
+        <div className="mt-4 grid grid-cols-3 gap-2 text-center text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-300">
+          <div className="rounded-xl border border-[#3a1f1f] bg-[#1a1212] px-2 py-3">
+            <div className="text-[#ef4444]">300-549</div>
+            <div className="mt-1 text-slate-100">High Risk</div>
+            <div className="mt-2 h-2 rounded-full bg-[#351515]">
+              <div className="h-full w-[72%] rounded-full bg-[#ef4444]" />
+            </div>
+          </div>
+          <div className="rounded-xl border border-[#4b3b13] bg-[#1b170d] px-2 py-3">
+            <div className="text-[#F5C518]">550-699</div>
+            <div className="mt-1 text-slate-100">Medium Risk</div>
+            <div className="mt-2 h-2 rounded-full bg-[#272218]">
+              <div className="h-full w-[84%] rounded-full bg-[#F5C518]" />
+            </div>
+          </div>
+          <div className="rounded-xl border border-[#16381f] bg-[#0d1710] px-2 py-3">
+            <div className="text-[#22c55e]">700-900</div>
+            <div className="mt-1 text-slate-100">Low Risk</div>
+            <div className="mt-2 h-2 rounded-full bg-[#17261b]">
+              <div className="h-full w-[92%] rounded-full bg-[#22c55e]" />
+            </div>
           </div>
         </div>
       </div>
-      
-      <div className="text-center space-y-4">
-        <div className={cn(
-          "transition-all duration-500 transform",
-          step >= 4 ? "scale-100 opacity-100" : "scale-0 opacity-0"
-        )}>
-          <span className={cn(
-            "inline-block px-4 py-1.5 rounded-full text-sm font-bold tracking-wider uppercase border-2",
-            score >= 750 ? "bg-green-500/10 text-green-500 border-green-500/20" :
-            score >= 700 ? "bg-yellow-400/10 text-yellow-400 border-yellow-400/20" :
-            score >= 650 ? "bg-orange-400/10 text-orange-400 border-orange-400/20" :
-            "bg-red-500/10 text-red-500 border-red-500/20"
-          )}>
-            {getScoreLabel()} Risk Tier
-          </span>
+
+      <div className={cn("relative mt-6 space-y-4 transition-all duration-500", detailsReady ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0") }>
+        <div>
+          <p className="mb-3 text-xs font-semibold uppercase tracking-[0.32em] text-slate-400">Why you were approved</p>
+          <div className="space-y-3">
+            {factors.map((factor, index) => {
+              const width = (Math.abs(factor.value) / maxAbsValue) * 100;
+
+              return (
+                <div
+                  key={factor.label}
+                  className="grid grid-cols-[120px_minmax(0,1fr)_56px] items-center gap-3 text-sm sm:grid-cols-[140px_minmax(0,1fr)_64px]"
+                  style={{ transitionDelay: `${index * 90}ms` }}
+                >
+                  <span className="text-slate-300">{factor.label}</span>
+                  <div className="relative h-2 overflow-hidden rounded-full bg-[#2a2a2a]">
+                    <div className="absolute inset-y-0 left-1/2 w-px bg-white/10" />
+                    <div
+                      className={cn(
+                        "absolute inset-y-0 rounded-full transition-all duration-700 ease-out",
+                        factor.positive ? "bg-[#22c55e]" : "bg-[#ef4444]"
+                      )}
+                      style={{
+                        width: barsReady ? `${width}%` : "0%",
+                        left: factor.positive ? 0 : `calc(50% - ${barsReady ? width : 0}%)`,
+                      }}
+                    />
+                  </div>
+                  <span className={cn("text-right text-xs font-semibold", factor.positive ? "text-[#22c55e]" : "text-[#ef4444]") }>
+                    {factor.value > 0 ? "+" : ""}{factor.value.toFixed(2)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
-        {step >= 5 && (
-          <div className="pt-4 border-t border-border/50 text-left space-y-2">
-            <p className="text-xs text-muted-foreground font-semibold mb-3 uppercase tracking-wider">AI Assessment Factors</p>
-            {getShapBullets().map((bullet, i) => (
-              <div 
-                key={i} 
-                className="flex items-start gap-2 text-sm animate-in slide-in-from-right-4 fade-in duration-300 fill-mode-both"
-                style={{ animationDelay: `${i * 200}ms` }}
-              >
-                {bullet.positive ? (
-                  <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0 mt-0.5" />
-                ) : (
-                  <AlertCircle className="w-4 h-4 text-orange-400 shrink-0 mt-0.5" />
-                )}
-                <span className="text-muted-foreground">{bullet.text}</span>
-              </div>
-            ))}
+        <div className="rounded-2xl border border-[#2f2608] bg-[#111111] px-4 py-4 shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-[#F5C518]">What this means for your rate</p>
+          <p className="mt-2 text-sm text-slate-200">{getRateBand()}</p>
+        </div>
+
+        <div className="rounded-2xl border border-[#2a2a2a] bg-[#101010] px-4 py-4">
+          <div className="flex items-start gap-2 text-xs text-slate-300">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-[#22c55e]" />
+            <p>Green bars = helped your application. Red bars = reduced your score.</p>
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

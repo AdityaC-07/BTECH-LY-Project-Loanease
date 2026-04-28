@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "react-router-dom";
 import { Download, Shield, FileCheck, TrendingUp, CheckCircle2, Lock, QrCode } from "lucide-react";
+import { useState } from "react";
 
 interface SanctionLetterProps {
   customerName: string;
@@ -27,6 +28,45 @@ export const SanctionLetter = ({
   blockchainHash,
   onViewAnalytics,
 }: SanctionLetterProps) => {
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const handleDownloadPDF = async () => {
+    try {
+      setIsDownloading(true);
+      
+      // Fetch PDF from backend
+      const response = await fetch(`/api/blockchain/sanction?reference_id=${referenceId}`, {
+        method: "GET",
+        headers: {
+          "Accept": "application/pdf",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to generate PDF");
+      }
+
+      // Create blob from response
+      const blob = await response.blob();
+      
+      // Create download link
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Sanction_Letter_${referenceId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      
+      // Cleanup
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("PDF download failed:", error);
+      alert("Failed to download PDF. Please try again.");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
   return (
     <Card className="max-w-2xl mx-auto animate-slide-up overflow-hidden border-2 border-border/50 shadow-2xl">
       <div className="bg-gradient-primary p-6 text-primary-foreground relative overflow-hidden">
@@ -130,9 +170,15 @@ export const SanctionLetter = ({
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-          <Button variant="accent" className="w-full h-12 text-sm font-bold tracking-wide" size="lg">
+          <Button 
+            variant="accent" 
+            className="w-full h-12 text-sm font-bold tracking-wide" 
+            size="lg"
+            onClick={handleDownloadPDF}
+            disabled={isDownloading}
+          >
             <Download className="w-4 h-4 mr-2" />
-            Download PDF
+            {isDownloading ? "Generating..." : "Download PDF"}
           </Button>
 
           <Link to="/blockchain/explorer" className="w-full">

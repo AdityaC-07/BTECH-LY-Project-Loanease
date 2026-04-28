@@ -144,10 +144,17 @@ def run_ocr(preprocessed_img: np.ndarray | list[np.ndarray]) -> tuple[str, float
         avg_conf = sum(conf_vals) / len(conf_vals) if conf_vals else 0.0
         score = avg_conf + min(len(text) / 250.0, 0.25)
 
+        elapsed_value = elapse
+        if isinstance(elapsed_value, (list, tuple)):
+            try:
+                elapsed_value = sum(float(item) for item in elapsed_value)
+            except (TypeError, ValueError):
+                elapsed_value = len(elapsed_value)
+
         logger.info(
             f"OCR variant {i}: {len(text_lines)} lines, "
             f"conf={avg_conf:.2f}, score={score:.2f}, "
-            f"elapsed={elapse:.2f}s"
+            f"elapsed={float(elapsed_value):.2f}s"
         )
 
         if score > best_score:

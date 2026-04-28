@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { ChevronDown, Loader2, CheckCircle2, Bot, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -35,31 +35,69 @@ const LABELS: Record<string, string> = {
 export const AgentActivityPanel = ({ trace, pipelineStatus }: AgentActivityPanelProps) => {
   const [collapsed, setCollapsed] = useState(true);
   const [isDemoMode, setIsDemoMode] = useState(false);
+  const [isInView, setIsInView] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
   const doneSet = useMemo(() => new Set(trace.map((item) => item.agent)), [trace]);
   
+  const activeAgent = useMemo(() => {
+    const next = AGENT_ORDER.find((agent) => !doneSet.has(agent));
+    return pipelineStatus === "SANCTIONED" || pipelineStatus === "FAILED" ? null : next ?? null;
+  }, [doneSet, pipelineStatus]);
+
   // Detect demo mode from URL param
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setIsDemoMode(params.get("demo") === "true");
   }, []);
 
-  const activeAgent = useMemo(() => {
-    const next = AGENT_ORDER.find((agent) => !doneSet.has(agent));
-    return pipelineStatus === "SANCTIONED" || pipelineStatus === "FAILED" ? null : next ?? null;
-  }, [doneSet, pipelineStatus]);
+  // Detect visibility with Intersection Observer
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setIsInView(entry.isIntersecting);
+        // Auto-expand when comes into view if there's an active agent
+        if (entry.isIntersecting && activeAgent) {
+          setCollapsed(false);
+        }
+      },
+      { threshold: 0.1, rootMargin: "100px" }
+    );
+
+    if (panelRef.current) {
+      observer.observe(panelRef.current);
+    }
+
+    return () => {
+      if (panelRef.current) {
+        observer.unobserve(panelRef.current);
+      }
+    };
+  }, [activeAgent]);
 
   // Auto-expand when active, but allow manual collapse
   useEffect(() => {
-    if (activeAgent) {
+    if (activeAgent && isInView) {
       setCollapsed(false);
     }
-  }, [activeAgent]);
+  }, [activeAgent, isInView]);
 
   const hasActiveAgent = activeAgent !== null;
+
+  // Don't show if not in view and collapsed
+  if (!isInView && collapsed) {
+    return (
+      <div 
+        ref={panelRef}
+        className="fixed bottom-6 right-6 z-50 w-1 h-1"
+        aria-hidden="true"
+      />
+    );
+  }
 
   if (collapsed) {
     return (
       <div 
+        ref={panelRef}
         className="fixed bottom-6 right-6 z-50 animate-slide-up"
         onClick={() => setCollapsed(false)}
       >
@@ -77,7 +115,7 @@ export const AgentActivityPanel = ({ trace, pipelineStatus }: AgentActivityPanel
   }
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 w-80 animate-in slide-in-from-bottom-5 duration-300">
+    <div ref={panelRef} className="fixed bottom-6 right-6 z-50 w-80 animate-in slide-in-from-bottom-5 duration-300">
       <div className="rounded-xl border border-border bg-card shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
         <div className="flex items-center justify-between p-3 border-b border-border/50 bg-muted/30">
           <div className="flex items-center gap-2">

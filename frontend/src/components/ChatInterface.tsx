@@ -1,9 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { ENDPOINTS } from "@/config";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { ChatMessage } from "./ChatMessage";
-import { LoanCard } from "./LoanCard";
 import { CreditScoreCard } from "./CreditScoreCard";
 import { SanctionLetter } from "./SanctionLetter";
 import { AnalyticsDashboard } from "./AnalyticsDashboard";
@@ -16,7 +15,7 @@ import { LoanComparisonCards } from "./LoanComparisonCards";
 import { AgentActivityPanel, type AgentTraceItem } from "./AgentActivityPanel";
 import { Badge } from "@/components/ui/badge";
 import { TRANSLATIONS } from "@/lib/translations";
-import { formatIndianCurrency, detectLanguage, formatEMI } from "@/lib/languageUtils";
+import { formatIndianCurrency, detectLanguage } from "@/lib/languageUtils";
 import { cn } from "@/lib/utils";
 import { User } from "lucide-react";
 
@@ -43,6 +42,7 @@ interface Message {
   status?: "sent" | "delivered" | "responded";
   quickReplies?: { label: string; value: string }[];
   type?: "emi-calculator" | "escalation" | "comparison-cards";
+  variant?: "system";
 }
 
 interface ChatInterfaceProps {
@@ -103,18 +103,14 @@ interface SessionData {
 
 export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const [language, setLanguage] = useState<"en" | "hi">(
     () => (localStorage.getItem("loanease_language") as "en" | "hi") || "en"
   );
-  const [messages, setMessages] = useState<Message[]>(() => [
-    {
-      id: 1,
-      text: TRANSLATIONS.opening[(localStorage.getItem("loanease_language") as "en" | "hi") || "en"],
-      isBot: true,
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [isBackendBusy, setIsBackendBusy] = useState(false);
   const [showCreditScore, setShowCreditScore] = useState(false);
   const [showLoanOffers, setShowLoanOffers] = useState(false);
   const [showSanction, setShowSanction] = useState(false);
@@ -152,6 +148,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [showSessionBanner, setShowSessionBanner] = useState(false);
   const [sessionToResume, setSessionToResume] = useState<SessionData | null>(null);
   const [pulseBadge, setPulseBadge] = useState(false);
+  const [hasStartedConversation, setHasStartedConversation] = useState(false);
   const [isEscalated, setIsEscalated] = useState(false);
   const [escalationData, setEscalationData] = useState({ preferredTime: "", whatsapp: false });
   const [pipelineSessionId, setPipelineSessionId] = useState<string>("");
@@ -165,6 +162,18 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const activeAgentIndex = AGENT_PIPELINE.indexOf(activeAgent);
   const panInputRef = useRef<HTMLInputElement>(null);
   const aadhaarInputRef = useRef<HTMLInputElement>(null);
+  const showWelcomeState = messages.length === 0 && !showSessionBanner && !hasStartedConversation;
+  const isInputLocked =
+    isEscalated ||
+    !hasStartedConversation ||
+    showLoanOffers ||
+    showSanction ||
+    isKycProcessing ||
+    showPanUploadCard ||
+    showAadhaarUploadCard ||
+    showPanConfirmCard ||
+    isTyping ||
+    isBackendBusy;
 
   const handleLanguageChange = (lang: "en" | "hi") => {
     setLanguage(lang);
@@ -206,6 +215,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     if (sessionToResume) {
       setMessages(sessionToResume.messages);
       setUserData(sessionToResume.applicant_data);
+      setHasStartedConversation(true);
       setShowSessionBanner(false);
       toast.success("Session restored successfully!");
     }
@@ -214,8 +224,27 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const handleStartFresh = () => {
     const sessionKey = `loanease_session_${new Date().toISOString().split('T')[0]}`;
     localStorage.removeItem(sessionKey);
+    setHasStartedConversation(false);
     setShowSessionBanner(false);
     toast.info("Started a new session.");
+  };
+
+  const handleStartConversation = () => {
+    if (!hasStartedConversation) {
+      setHasStartedConversation(true);
+      conversationStep.current = 0;
+      activateAgent("KYC Verification Agent", "Let's begin your application.");
+      addBotMessage(
+        kycText(
+          "Hello! I'm your Loan Assistant. What is your full name?",
+          "नमस्ते! मैं आपका Loan Assistant हूँ। आपका पूरा नाम क्या है?"
+        )
+      );
+    }
+
+    requestAnimationFrame(() => {
+      textAreaRef.current?.focus();
+    });
   };
 
   useEffect(() => {
@@ -240,6 +269,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         id: prev.length + 1,
         text: `${agentName} activated.\n${note}`,
         isBot: true,
+        variant: "system",
       },
     ]);
   };
@@ -338,6 +368,14 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     detectAndSwitch();
   }, [input, language]);
 
+  useEffect(() => {
+    const element = textAreaRef.current;
+    if (!element) return;
+
+    element.style.height = "auto";
+    element.style.height = `${Math.min(element.scrollHeight, 100)}px`;
+  }, [input]);
+
   const startKycProgress = (label: string) => {
     setIsKycProcessing(true);
     setKycProcessingText(label);
@@ -361,62 +399,77 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   };
 
   const callKycPanExtractAPI = async (file: File) => {
-    const form = new FormData();
-    form.append("document", file);
-    form.append("session_id", userData.sessionId);
-    form.append("language", language);
+    setIsBackendBusy(true);
+    try {
+      const form = new FormData();
+      form.append("document", file);
+      form.append("session_id", userData.sessionId);
+      form.append("language", language);
 
-    const response = await fetch(ENDPOINTS.kyc_pan, {
-      method: "POST",
-      body: form,
-      signal: AbortSignal.timeout(30000),
-    });
+      const response = await fetch(ENDPOINTS.kyc_pan, {
+        method: "POST",
+        body: form,
+        signal: AbortSignal.timeout(30000),
+      });
 
-    if (!response.ok) {
-      const errBody = await response.json().catch(() => null);
-      throw new Error(errBody?.detail || "PAN extraction failed");
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => null);
+        throw new Error(errBody?.detail || "PAN extraction failed");
+      }
+
+      return response.json();
+    } finally {
+      setIsBackendBusy(false);
     }
-
-    return response.json();
   };
 
   const callKycAadhaarExtractAPI = async (file: File) => {
-    const form = new FormData();
-    form.append("document", file);
-    form.append("session_id", userData.sessionId);
-    form.append("language", language);
+    setIsBackendBusy(true);
+    try {
+      const form = new FormData();
+      form.append("document", file);
+      form.append("session_id", userData.sessionId);
+      form.append("language", language);
 
-    const response = await fetch(ENDPOINTS.kyc_aadhaar, {
-      method: "POST",
-      body: form,
-      signal: AbortSignal.timeout(30000),
-    });
+      const response = await fetch(ENDPOINTS.kyc_aadhaar, {
+        method: "POST",
+        body: form,
+        signal: AbortSignal.timeout(30000),
+      });
 
-    if (!response.ok) {
-      const errBody = await response.json().catch(() => null);
-      throw new Error(errBody?.detail || "Aadhaar extraction failed");
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => null);
+        throw new Error(errBody?.detail || "Aadhaar extraction failed");
+      }
+
+      return response.json();
+    } finally {
+      setIsBackendBusy(false);
     }
-
-    return response.json();
   };
 
   const callKycVerifyAPI = async (panDoc: File, aadhaarDoc: File) => {
-    const form = new FormData();
-    form.append("pan", panDoc);
-    form.append("aadhaar", aadhaarDoc);
-    form.append("session_id", userData.sessionId);
+    setIsBackendBusy(true);
+    try {
+      const form = new FormData();
+      form.append("pan", panDoc);
+      form.append("aadhaar", aadhaarDoc);
+      form.append("session_id", userData.sessionId);
 
-    const response = await fetch(ENDPOINTS.kyc_verify, {
-      method: "POST",
-      body: form,
-    });
+      const response = await fetch(ENDPOINTS.kyc_verify, {
+        method: "POST",
+        body: form,
+      });
 
-    if (!response.ok) {
-      const errBody = await response.json().catch(() => null);
-      throw new Error(errBody?.detail || "KYC verification failed");
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => null);
+        throw new Error(errBody?.detail || "KYC verification failed");
+      }
+
+      return response.json();
+    } finally {
+      setIsBackendBusy(false);
     }
-
-    return response.json();
   };
 
   const proceedToCreditFlow = async (panNumber: string) => {
@@ -619,6 +672,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     property_area: string;
     preferred_language: "en" | "hi";
   }) => {
+    setIsBackendBusy(true);
     try {
       const response = await fetch(ENDPOINTS.credit_assess, {
         method: "POST",
@@ -644,6 +698,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       setIsOfflineMode(true);
       toast.error("⚠️ Connection issue — using offline mode");
       return null;
+    } finally {
+      setIsBackendBusy(false);
     }
   };
 
@@ -654,6 +710,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     tenureMonths: number,
     maxNegotiationRounds: number
   ) => {
+    setIsBackendBusy(true);
     try {
       const response = await fetch(ENDPOINTS.negotiate_start, {
         method: "POST",
@@ -683,10 +740,13 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       setIsOfflineMode(true);
       toast.error("⚠️ Connection issue — using offline mode");
       return null;
+    } finally {
+      setIsBackendBusy(false);
     }
   };
 
   const callCreditScoreAPI = async (pan: string) => {
+    setIsBackendBusy(true);
     try {
       const response = await fetch(`${ENDPOINTS.credit_score}/${pan}`);
 
@@ -705,15 +765,16 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       setIsOfflineMode(true);
       toast.error("⚠️ Connection issue — using offline mode");
       return null;
+    } finally {
+      setIsBackendBusy(false);
     }
   };
 
-  const simulateBotResponse = (userMessage: string) => {
+  const simulateBotResponse = (userMessage: string, sourceMessageId?: number) => {
     setIsTyping(true);
     const prevMessages = [...messages];
 
     setTimeout(async () => {
-      setIsTyping(false);
       let botResponse = "";
 
       switch (conversationStep.current) {
@@ -762,34 +823,44 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         }
 
         const newMsg: Message = { id: prevMessages.length + 1, text: botResponse, isBot: true, quickReplies, type };
-        setMessages((prev) => [...prev, newMsg]);
+        setMessages((prev) => {
+          const updated = sourceMessageId
+            ? prev.map((message) => (message.id === sourceMessageId ? { ...message, status: "responded" as const } : message))
+            : prev;
+          return [...updated, newMsg];
+        });
         saveSession([...prevMessages, newMsg], userData.stage, userData);
       }
+
+      setIsTyping(false);
     }, 1500);
   };
 
   const handleSend = () => {
-    if (!input.trim() || isEscalated) return;
+    if (!input.trim() || isEscalated || isInputLocked) return;
 
     const userMessage = input.trim();
     const newMsg: Message = { id: messages.length + 1, text: userMessage, isBot: false, status: "sent" };
+    setIsTyping(true);
     setMessages((prev) => [...prev, newMsg]);
     setInput("");
 
     // Simulate delivery
     setTimeout(() => {
-      setMessages(prev => prev.map(m => m.id === newMsg.id ? { ...m, status: "delivered" } : m));
+      setMessages((prev) => prev.map((message) => (message.id === newMsg.id ? { ...message, status: "delivered" } : message)));
       
       // Check for EMI keywords
       if (userMessage.toLowerCase().includes("emi") || userMessage.toLowerCase().includes("tenure") || userMessage.toLowerCase().includes("किस्त")) {
          setTimeout(() => {
-           setMessages(prev => [
-             ...prev, 
+           setMessages((prev) => [
+             ...prev,
              { id: prev.length + 1, text: "Sure! You can use this calculator to see how different amounts and tenures affect your EMI.", isBot: true, type: "emi-calculator" }
            ]);
+           setMessages((prev) => prev.map((message) => (message.id === newMsg.id ? { ...message, status: "responded" } : message)));
+           setIsTyping(false);
          }, 800);
       } else {
-        simulateBotResponse(userMessage);
+        simulateBotResponse(userMessage, newMsg.id);
       }
     }, 500);
   };
@@ -829,6 +900,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     ]);
 
     setIsTyping(true);
+    setIsBackendBusy(true);
     setTimeout(async () => {
       try {
         setIsTyping(false);
@@ -839,6 +911,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
             id: prev.length + 1,
             text: "Dynamic Negotiation Agent activated.\nApplying negotiation policy and offer optimization.\n\nYour application is being processed.",
             isBot: true,
+            variant: "system",
           },
         ]);
 
@@ -996,6 +1069,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
             ? "Something went wrong processing your application. Please try again."
             : "आपके आवेदन को संसाधित करने में कुछ गलत हो गया। कृपया पुनः प्रयास करें।"
         );
+      } finally {
+        setIsBackendBusy(false);
       }
     }, 2500);
   };
@@ -1019,6 +1094,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const handleEscalationSubmit = async (preferredTime: string, whatsapp: boolean) => {
     setEscalationData({ preferredTime, whatsapp });
     setIsEscalated(true);
+    setIsBackendBusy(true);
     
     try {
       await fetch(ENDPOINTS.escalation_callback, {
@@ -1032,31 +1108,27 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       });
     } catch (e) {
       console.warn("Escalation preference save failed", e);
+    } finally {
+      setIsBackendBusy(false);
     }
 
     addBotMessage("Your application is on hold pending human review. We'll reach out shortly.");
   };
 
   const handleQuickReply = (value: string) => {
-    // Clear quick replies from last message
-    setMessages(prev => {
-      const last = prev[prev.length - 1];
-      if (last.isBot && last.quickReplies) {
-        return [...prev.slice(0, -1), { ...last, quickReplies: undefined }];
-      }
-      return prev;
-    });
-
     handleSendWithText(value);
   };
 
   const handleSendWithText = (text: string) => {
+    if (isInputLocked || isEscalated) return;
+
     const newMsg: Message = { id: messages.length + 1, text, isBot: false, status: "sent" };
+    setIsTyping(true);
     setMessages((prev) => [...prev, newMsg]);
     
     setTimeout(() => {
-      setMessages(prev => prev.map(m => m.id === newMsg.id ? { ...m, status: "delivered" } : m));
-      simulateBotResponse(text);
+      setMessages((prev) => prev.map((message) => (message.id === newMsg.id ? { ...message, status: "delivered" } : message)));
+      simulateBotResponse(text, newMsg.id);
     }, 500);
   };
 
@@ -1078,6 +1150,92 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         }
         .chat-messages-container {
           scroll-behavior: smooth;
+        }
+        .chat-input-container {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 12px 16px;
+          background: #111111;
+          border-top: 1px solid #1f1f1f;
+          flex-shrink: 0;
+        }
+        .chat-input {
+          flex: 1;
+          background: #1a1a1a;
+          border: 1px solid #2a2a2a;
+          border-radius: 24px;
+          padding: 10px 18px;
+          color: #ffffff;
+          font-size: 14px;
+          outline: none;
+          transition: border-color 0.2s, box-shadow 0.2s;
+          resize: none;
+          max-height: 100px;
+          overflow-y: auto;
+        }
+        .chat-input:focus {
+          border-color: #F5C518;
+          box-shadow: 0 0 0 3px rgba(245, 197, 24, 0.1);
+        }
+        .chat-input::placeholder {
+          color: #4b5563;
+        }
+        .send-button {
+          width: 40px;
+          height: 40px;
+          border-radius: 9999px;
+          background: #F5C518;
+          border: none;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          transition: all 0.2s;
+        }
+        .send-button:hover {
+          background: #e6b800;
+          transform: scale(1.05);
+        }
+        .send-button:disabled {
+          background: #2a2a2a;
+          cursor: not-allowed;
+          transform: none;
+        }
+        .typing-indicator {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          padding: 12px 16px;
+          background: #1e1e1e;
+          border: 1px solid #2a2a2a;
+          border-radius: 18px 18px 18px 4px;
+          width: fit-content;
+          margin-left: 44px;
+        }
+        .typing-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 9999px;
+          background: #F5C518;
+          animation: typing-bounce 1.2s ease-in-out infinite;
+        }
+        .typing-dot:nth-child(2) {
+          animation-delay: 0.2s;
+        }
+        .typing-dot:nth-child(3) {
+          animation-delay: 0.4s;
+        }
+        @keyframes typing-bounce {
+          0%, 80%, 100% {
+            transform: translateY(0);
+            opacity: 0.4;
+          }
+          40% {
+            transform: translateY(-6px);
+            opacity: 1;
+          }
         }
       `}</style>
     <div className="fixed inset-0 bg-background z-50 flex flex-col">
@@ -1208,64 +1366,84 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       <div className="flex flex-1 flex-col gap-4 p-4 lg:flex-row overflow-hidden min-h-0">
         {/* Messages */}
         <div ref={messagesContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden space-y-6 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] bg-fixed pr-2 lg:pr-80 chat-messages-container min-h-0">
-          {messages.map((message) => (
-          <div key={message.id} className="space-y-3">
-            <ChatMessage
-              message={message.text}
-              isBot={message.isBot}
-              status={message.status}
-            />
-            
-            {message.isBot && message.quickReplies && (
-              <QuickReplies options={message.quickReplies} onSelect={handleQuickReply} />
-            )}
-
-            {message.isBot && message.type === "emi-calculator" && (
-              <EmiCalculatorWidget onUseTerms={handleEmiTerms} />
-            )}
-
-            {message.isBot && message.type === "escalation" && (
-              <div className="max-w-md rounded-2xl p-6 bg-card border border-border shadow-2xl animate-in slide-in-from-left duration-500">
-                 <div className="flex items-center gap-3 mb-4">
-                   <div className="w-10 h-10 rounded-full bg-yellow-400 flex items-center justify-center">
-                     <User className="text-black w-5 h-5" />
-                   </div>
-                   <div>
-                     <h3 className="font-bold">Connecting to Human Agent</h3>
-                     <p className="text-xs text-muted-foreground">Ticket: ESC-2026-{Math.floor(100 + Math.random() * 899)}</p>
-                   </div>
-                 </div>
-                 <p className="text-sm mb-6 text-muted-foreground">A loan officer will call you within 2 business hours. Your application is saved.</p>
-                 
-                 <div className="space-y-4">
-                    <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold text-muted-foreground">Preferred Callback Time</label>
-                      <div className="flex gap-2">
-                        {["Morning", "Afternoon", "Evening"].map(t => (
-                          <Button key={t} size="sm" variant={escalationData.preferredTime === t ? "accent" : "outline"} className="flex-1 text-[10px]" onClick={() => setEscalationData(prev => ({ ...prev, preferredTime: t }))}>{t}</Button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between bg-muted/30 p-3 rounded-lg border border-border/50">
-                      <span className="text-xs font-medium">Get updates on WhatsApp?</span>
-                      <Button size="sm" variant={escalationData.whatsapp ? "accent" : "outline"} onClick={() => setEscalationData(prev => ({ ...prev, whatsapp: !prev.whatsapp }))}>{escalationData.whatsapp ? "Yes ✓" : "No"}</Button>
-                    </div>
-                    <Button className="w-full bg-yellow-400 hover:bg-yellow-500 text-black font-bold" disabled={!escalationData.preferredTime} onClick={() => handleEscalationSubmit(escalationData.preferredTime, escalationData.whatsapp)}>Confirm Preference</Button>
-                 </div>
+          {showWelcomeState ? (
+            <div className="flex min-h-full items-center justify-center px-4 py-8">
+              <div className="w-full max-w-md rounded-3xl border border-[#2a2a2a] bg-[#101010]/95 p-8 text-center shadow-[0_20px_60px_rgba(0,0,0,0.45)] backdrop-blur-sm">
+                <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-[#F5C518]/15 text-[#F5C518] shadow-[0_0_0_8px_rgba(245,197,24,0.04)]">
+                  <MessageCircle className="h-8 w-8" />
+                </div>
+                <h3 className="text-2xl font-black tracking-tight text-slate-100">Hi! I'm your Loan Assistant</h3>
+                <p className="mt-3 text-sm leading-6 text-slate-300">{TRANSLATIONS.opening[language]}</p>
+                <div className="mt-6 grid gap-2 text-left text-sm text-slate-300 sm:grid-cols-2">
+                  <div className="rounded-xl border border-[#2a2a2a] bg-[#151515] px-3 py-3">✓ No paperwork</div>
+                  <div className="rounded-xl border border-[#2a2a2a] bg-[#151515] px-3 py-3">✓ Instant credit check</div>
+                  <div className="rounded-xl border border-[#2a2a2a] bg-[#151515] px-3 py-3">✓ AI-powered negotiation</div>
+                  <div className="rounded-xl border border-[#2a2a2a] bg-[#151515] px-3 py-3">✓ Blockchain-secured letter</div>
+                </div>
+                <Button
+                  variant="chat"
+                  className="mt-7 w-full bg-[#F5C518] font-bold text-black hover:bg-[#e6b800]"
+                  onClick={handleStartConversation}
+                >
+                  Apply for a Loan →
+                </Button>
               </div>
-            )}
-          </div>
-          ))}
-
-        {isTyping && (
-          <div className="flex items-start gap-3 w-[80%] max-w-sm animate-pulse">
-            <div className="w-8 h-8 rounded-full bg-muted shrink-0" />
-            <div className="flex-1 space-y-2">
-              <div className="h-4 bg-muted rounded-md w-3/4" />
-              <div className="h-4 bg-muted rounded-md w-1/2" />
             </div>
-          </div>
-        )}
+          ) : (
+            <>
+              {messages.map((message) => (
+                <div key={message.id} className="space-y-3">
+                  <ChatMessage
+                    message={message.text}
+                    isBot={message.isBot}
+                    status={message.status}
+                    variant={message.variant}
+                  />
+
+                  {message.isBot && message.quickReplies && (
+                    <QuickReplies options={message.quickReplies} onSelect={handleQuickReply} />
+                  )}
+
+                  {message.isBot && message.type === "emi-calculator" && (
+                    <EmiCalculatorWidget onUseTerms={handleEmiTerms} />
+                  )}
+
+                  {message.isBot && message.type === "escalation" && (
+                    <div className="max-w-md rounded-2xl border border-[#2a2a2a] bg-[#111111] p-6 shadow-2xl animate-in slide-in-from-left duration-500">
+                       <div className="mb-4 flex items-center gap-3">
+                         <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#F5C518]">
+                           <User className="w-5 h-5 text-black" />
+                         </div>
+                         <div>
+                           <h3 className="font-bold text-slate-100">Connecting to Human Agent</h3>
+                           <p className="text-xs text-slate-500">Ticket: ESC-2026-{Math.floor(100 + Math.random() * 899)}</p>
+                         </div>
+                       </div>
+                       <p className="mb-6 text-sm text-slate-400">A loan officer will call you within 2 business hours. Your application is saved.</p>
+                       
+                       <div className="space-y-4">
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-bold uppercase text-slate-500">Preferred Callback Time</label>
+                            <div className="flex gap-2">
+                              {["Morning", "Afternoon", "Evening"].map((t) => (
+                                <Button key={t} size="sm" variant={escalationData.preferredTime === t ? "accent" : "outline"} className="flex-1 text-[10px]" onClick={() => setEscalationData((prev) => ({ ...prev, preferredTime: t }))}>{t}</Button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between rounded-lg border border-[#2a2a2a] bg-[#151515] p-3">
+                            <span className="text-xs font-medium text-slate-300">Get updates on WhatsApp?</span>
+                            <Button size="sm" variant={escalationData.whatsapp ? "accent" : "outline"} onClick={() => setEscalationData((prev) => ({ ...prev, whatsapp: !prev.whatsapp }))}>{escalationData.whatsapp ? "Yes ✓" : "No"}</Button>
+                          </div>
+                          <Button className="w-full bg-[#F5C518] font-bold text-black hover:bg-[#e6b800]" disabled={!escalationData.preferredTime} onClick={() => handleEscalationSubmit(escalationData.preferredTime, escalationData.whatsapp)}>Confirm Preference</Button>
+                       </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {isTyping && <ChatMessage message="" isBot isTyping />}
+            </>
+          )}
 
         {isKycProcessing && (
           <div className="max-w-md rounded-xl border border-yellow-500/40 bg-card p-4 shadow-lg shadow-yellow-500/10 animate-in fade-in zoom-in duration-300">
@@ -1444,23 +1622,28 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       </div>
 
       {/* Input */}
-      <div className="p-4 border-t border-border bg-card">
-        <div className="flex gap-2 max-w-4xl mx-auto">
-          <Input
+      <div className="chat-input-container">
+        <div className="flex max-w-4xl flex-1 items-center gap-3 mx-auto w-full">
+          <Textarea
+            ref={textAreaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={isEscalated ? "Chat disabled pending human review" : "Type your message..."}
-            onKeyPress={(e) => e.key === "Enter" && handleSend()}
-            className="flex-1"
-            disabled={
-              isEscalated ||
-              showLoanOffers ||
-              showSanction ||
-              isKycProcessing ||
-              showPanUploadCard ||
-              showAadhaarUploadCard ||
-              showPanConfirmCard
+            placeholder={
+              isEscalated
+                ? "Chat disabled pending human review"
+                : !hasStartedConversation
+                  ? "Click 'Apply for a Loan' to start"
+                  : "Type your message..."
             }
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            rows={1}
+            className="chat-input flex-1"
+            disabled={isInputLocked}
           />
           <Button
             variant="chat"
@@ -1468,13 +1651,9 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
             onClick={handleSend}
             disabled={
               !input.trim() ||
-              showLoanOffers ||
-              showSanction ||
-              isKycProcessing ||
-              showPanUploadCard ||
-              showAadhaarUploadCard ||
-              showPanConfirmCard
+              isInputLocked
             }
+            className="send-button h-10 w-10"
           >
             <Send className="w-4 h-4" />
           </Button>
