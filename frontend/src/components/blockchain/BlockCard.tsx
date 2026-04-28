@@ -10,6 +10,8 @@ interface BlockData {
   hash: string;
   merkle_root: string;
   nonce: number;
+  block_type?: string;
+  transaction_count?: number;
 }
 
 interface BlockCardProps {
@@ -52,9 +54,11 @@ export const BlockCard = ({ block, isValid, onDetailsClick, isLast }: BlockCardP
           </div>
           <span className={cn(
             "text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-tighter",
-            isGenesis ? "bg-blue-500/20 text-blue-400" : "bg-green-500/20 text-green-400"
+            isGenesis ? "bg-blue-500/20 text-blue-400" : 
+            block.block_type === "SANCTION" ? "bg-green-500/20 text-green-400" : 
+            "bg-purple-500/20 text-purple-400"
           )}>
-            {isGenesis ? "Genesis" : "Sanction"}
+            {block.block_type || (isGenesis ? "GENESIS" : "TRANSACTION")}
           </span>
         </div>
 

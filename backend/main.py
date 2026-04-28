@@ -175,6 +175,95 @@ async def save_escalation_preferences(payload: EscalationPreferenceRequest):
     return {"status": "saved", "session_id": payload.session_id}
 
 
+@app.get("/analytics/{session_id}")
+async def get_analytics(session_id: str):
+    """Get comprehensive analytics data for post-sanction dashboard"""
+    try:
+        # Get session data
+        session = session_store.get(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        session_data = session.get("data", {})
+        
+        # Extract loan data
+        loan_amount = session_data.get("loan_amount", 500000)
+        interest_rate = session_data.get("offered_rate", 11.0)
+        tenure_months = session_data.get("loan_term", 60)
+        
+        # Calculate EMI using standard formula
+        monthly_rate = interest_rate / 12 / 100
+        emi = loan_amount * monthly_rate * (1 + monthly_rate) ** tenure_months / ((1 + monthly_rate) ** tenure_months - 1)
+        total_payable = emi * tenure_months
+        total_interest = total_payable - loan_amount
+        
+        # Get credit assessment data
+        credit_score = session_data.get("credit_score", 720)
+        risk_score = session_data.get("risk_score", 75)
+        
+        # Determine risk tier
+        if risk_score >= 75:
+            risk_tier = "Low Risk"
+        elif risk_score >= 50:
+            risk_tier = "Medium Risk"
+        else:
+            risk_tier = "High Risk"
+        
+        # SHAP factors (mock data if not available)
+        shap_factors = session_data.get("shap_explanation", [
+            {"feature": "Credit History", "value": 0.42, "direction": "positive"},
+            {"feature": "Income Level", "value": 0.28, "direction": "positive"},
+            {"feature": "Loan Amount", "value": -0.15, "direction": "negative"},
+            {"feature": "Employment Stability", "value": 0.18, "direction": "positive"},
+            {"feature": "Debt-to-Income", "value": -0.08, "direction": "negative"}
+        ])
+        
+        # Negotiation summary
+        opening_rate = session_data.get("initial_rate", 11.5)
+        final_rate = interest_rate
+        rounds_taken = session_data.get("negotiation_rounds", 2)
+        monthly_savings = (opening_rate - final_rate) * loan_amount / 12 / 100
+        total_savings = monthly_savings * tenure_months
+        
+        # Benchmark data (static averages)
+        benchmark = {
+            "avg_credit_score": 720,
+            "avg_income_normalized": 70,
+            "avg_loan_to_income": 65,
+            "avg_employment": 75,
+            "avg_repayment": 80,
+            "avg_coapplicant": 60
+        }
+        
+        return {
+            "loan_data": {
+                "amount": loan_amount,
+                "rate": interest_rate,
+                "tenure_months": tenure_months,
+                "emi": round(emi, 2),
+                "total_payable": round(total_payable, 2),
+                "total_interest": round(total_interest, 2)
+            },
+            "credit_data": {
+                "credit_score": credit_score,
+                "risk_score": risk_score,
+                "risk_tier": risk_tier,
+                "shap_factors": shap_factors
+            },
+            "negotiation_summary": {
+                "opening_rate": opening_rate,
+                "final_rate": final_rate,
+                "rounds_taken": rounds_taken,
+                "total_savings": round(total_savings, 2)
+            },
+            "benchmark": benchmark
+        }
+        
+    except Exception as e:
+        logger.error(f"Analytics error for session {session_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get analytics: {str(e)}")
+
+
 # ── PIPELINE START OVERRIDE ───────────────────────────────────────
 # The master_router /pipeline/start expects {customer_name, initial_message}
 # but the frontend sends a full loan payload. This override handles it.

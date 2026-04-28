@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "react-router-dom";
-import { Download, Shield, FileCheck, TrendingUp, CheckCircle2, Lock, QrCode } from "lucide-react";
+import { Download, Shield, FileCheck, TrendingUp, CheckCircle2, Lock, QrCode, BarChart3 } from "lucide-react";
 import { useState } from "react";
 
 interface SanctionLetterProps {
@@ -14,6 +14,8 @@ interface SanctionLetterProps {
   sanctionDate: string;
   referenceId: string;
   blockchainHash: string;
+  blockIndex?: number;
+  sessionId?: string;
   onViewAnalytics?: () => void;
 }
 
@@ -26,6 +28,8 @@ export const SanctionLetter = ({
   sanctionDate,
   referenceId,
   blockchainHash,
+  blockIndex,
+  sessionId,
   onViewAnalytics,
 }: SanctionLetterProps) => {
   const [isDownloading, setIsDownloading] = useState(false);
@@ -151,7 +155,7 @@ export const SanctionLetter = ({
                 </div>
                 <div className="flex items-start gap-2">
                   <span className="text-[10px] uppercase font-bold text-muted-foreground w-12 shrink-0">Block</span>
-                  <span className="font-mono text-[10px] text-foreground">#3,049,182</span>
+                  <span className="font-mono text-[10px] text-foreground">#{blockIndex !== undefined ? blockIndex : 'Latest'}</span>
                 </div>
               </div>
 
@@ -180,6 +184,18 @@ export const SanctionLetter = ({
             <Download className="w-4 h-4 mr-2" />
             {isDownloading ? "Generating..." : "Download PDF"}
           </Button>
+
+          {onViewAnalytics && (
+            <Button
+              variant="outline"
+              className="w-full h-12 text-sm font-bold tracking-wide border-border hover:bg-muted"
+              size="lg"
+              onClick={onViewAnalytics}
+            >
+              <BarChart3 className="w-4 h-4 mr-2" />
+              View Loan Analytics
+            </Button>
+          )}
 
           <Link to="/blockchain/explorer" className="w-full">
             <Button

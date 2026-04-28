@@ -167,7 +167,8 @@ export const DemoChecklist = () => {
         {progress === total && (
           <div className="px-4 py-2.5 border-t border-[hsl(0,0%,25%)] bg-green-500/5">
             <div className="text-center text-xs font-semibold text-green-400">
-              ✅ All demo features covered!
+              <CheckCircle2 className="w-4 h-4 inline mr-1" />
+All demo features covered!
             </div>
           </div>
         )}

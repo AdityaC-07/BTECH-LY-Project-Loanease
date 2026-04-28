@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { ChevronLeft, Database, Activity, Lock, Layers, Info, X, ExternalLink } from "lucide-react";
+import { ChevronLeft, Database, Activity, Lock, Layers, Info, X, ExternalLink, ShieldCheck } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { BlockCard } from "@/components/blockchain/BlockCard";
 import { MerkleTree } from "@/components/blockchain/MerkleTree";
@@ -9,6 +9,27 @@ import { cn } from "@/lib/utils";
 import { API_BASE_URL } from "@/config";
 
 export default function BlockchainExplorer() {
+  // Helper function to format block timestamps
+  const formatBlockTime = (timestamp: string | undefined): string => {
+    if (!timestamp) return 'Unknown'
+    try {
+      const d = new Date(timestamp)
+      if (isNaN(d.getTime())) {
+        // Try parsing as ISO string
+        return timestamp.split('T')[0] || 'Invalid Date'
+      }
+      return d.toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric'
+      }) + ' ' + d.toLocaleTimeString('en-IN', { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      })
+    } catch {
+      return 'Unknown'
+    }
+  }
   const [data, setData] = useState<any>(null);
   const [selectedBlock, setSelectedBlock] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -63,8 +84,11 @@ export default function BlockchainExplorer() {
   const merkleTrees = data?.merkle_trees || {};
 
   // Find the latest sanction reference for the tamper demo
-  const latestSanction = blocks.slice().reverse().find((b: any) => b.transaction_data.type === "SANCTION_LETTER");
-  const sanctionRef = latestSanction?.transaction_data?.transaction_id;
+  const latestSanction = blocks.slice().reverse().find((b: any) => 
+    b.block_type === "SANCTION" || 
+    (b.transaction_data && (b.transaction_data.type === "SANCTION_LETTER" || b.transaction_data.sanction_reference))
+  );
+  const sanctionRef = latestSanction?.transaction_data?.sanction_reference || latestSanction?.transaction_data?.transaction_id;
 
   return (
     <div className="min-h-screen bg-black text-white font-sans selection:bg-[hsl(47,100%,50%)] selection:text-black">
@@ -100,10 +124,10 @@ export default function BlockchainExplorer() {
         {/* Stats Row */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {[
-            { label: "Total Blocks", value: stats.total_blocks, icon: Database, color: "text-blue-400" },
-            { label: "Active Sanctions", value: stats.total_sanctions, icon: Lock, color: "text-[hsl(47,100%,50%)]" },
-            { label: "Chain Status", value: isBroken ? "INVALID" : "VERIFIED", icon: ShieldCheck, color: isBroken ? "text-red-500" : "text-green-500" },
-            { label: "PoW Difficulty", value: "Level 2", icon: Activity, color: "text-purple-400" }
+            { label: "Total Blocks", value: stats.total_blocks || 0, icon: Database, color: "text-blue-400" },
+            { label: "Active Sanctions", value: stats.active_sanctions || 0, icon: Lock, color: "text-[hsl(47,100%,50%)]" },
+            { label: "Chain Status", value: stats.chain_valid ? "VERIFIED" : "INVALID", icon: ShieldCheck, color: stats.chain_valid ? "text-green-500" : "text-red-500" },
+            { label: "PoW Difficulty", value: `Level ${stats.pow_difficulty || 2}`, icon: Activity, color: "text-purple-400" }
           ].map((stat, i) => (
             <Card key={i} className="bg-[hsl(0,0%,7%)] border-[hsl(0,0%,15%)] hover:border-[hsl(0,0%,25%)] transition-colors">
               <CardContent className="p-6 flex items-center gap-4">
@@ -132,21 +156,30 @@ export default function BlockchainExplorer() {
           </div>
 
           <div className="bg-[hsl(0,0%,5%)] border border-[hsl(0,0%,15%)] rounded-3xl p-10 overflow-x-auto custom-scrollbar">
-            <div className="flex min-w-max pb-4">
-              {blocks.map((block: any, idx: number) => {
-                // If chain is broken at this index or after
-                const blockValid = !isBroken || idx < latestSanction?.index;
-                return (
-                  <BlockCard 
-                    key={idx}
-                    block={block}
-                    isValid={blockValid}
-                    onDetailsClick={setSelectedBlock}
-                    isLast={idx === blocks.length - 1}
-                  />
-                );
-              })}
-            </div>
+            {blocks.length === 0 ? (
+              <div className="flex items-center justify-center h-32 text-gray-400">
+                <div className="text-center">
+                  <Database className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                  <p className="text-sm">No blocks yet. Complete a loan to see the chain.</p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex min-w-max pb-4">
+                {blocks.map((block: any, idx: number) => {
+                  // If chain is broken at this index or after
+                  const blockValid = !isBroken || idx < (latestSanction?.index || 0);
+                  return (
+                    <BlockCard 
+                      key={idx}
+                      block={block}
+                      isValid={blockValid}
+                      onDetailsClick={setSelectedBlock}
+                      isLast={idx === blocks.length - 1}
+                    />
+                  );
+                })}
+              </div>
+            )}
           </div>
         </section>
 
@@ -164,11 +197,11 @@ export default function BlockchainExplorer() {
                 
                 <div className="space-y-6">
                   {[
-                    { label: "Timestamp", value: new Date(selectedBlock?.timestamp).toLocaleString() },
-                    { label: "Block Type", value: selectedBlock?.index === 0 ? "GENESIS" : "SANCTION" },
-                    { label: "Transactions", value: selectedBlock?.index === 0 ? "3 (Simulated)" : "1" },
-                    { label: "Nonce", value: selectedBlock?.nonce },
-                    { label: "Merkle Root", value: selectedBlock?.merkle_root?.slice(0, 16) + "..." },
+                    { label: "Timestamp", value: formatBlockTime(selectedBlock?.timestamp) },
+                    { label: "Block Type", value: selectedBlock?.block_type || (selectedBlock?.index === 0 ? "GENESIS" : "TRANSACTION") },
+                    { label: "Transactions", value: selectedBlock?.transaction_count || (selectedBlock?.index === 0 ? "3 (Simulated)" : "1") },
+                    { label: "Nonce", value: selectedBlock?.nonce || 0 },
+                    { label: "Merkle Root", value: (selectedBlock?.merkle_root || "").slice(0, 16) + "..." || "—" },
                   ].map((row, i) => (
                     <div key={i} className="border-b border-white/5 pb-4 last:border-0">
                       <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">{row.label}</p>

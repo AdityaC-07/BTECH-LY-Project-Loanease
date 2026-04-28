@@ -239,7 +239,7 @@ _DEFAULT_CONTEXT: Dict[str, Any] = {
 }
 
 
-def get_system_prompt(stage: str, context: Dict[str, Any] | None = None, current_stage: str | None = None) -> str:
+def get_system_prompt(stage: str, context: Dict[str, Any] | None = None, current_stage: str | None = None, channel: str = "web") -> str:
     """Return a fully formatted system prompt for the requested stage.
 
     Args:
@@ -247,6 +247,7 @@ def get_system_prompt(stage: str, context: Dict[str, Any] | None = None, current
         context: Optional context dictionary used to fill template variables.
         current_stage: Optional pipeline stage (INITIATED, KYC_PENDING, CREDIT_ASSESSED,
             NEGOTIATING, SANCTIONED) to append stage-specific behavioral instructions.
+        channel: Communication channel ('web' or 'whatsapp').
 
     Returns:
         A formatted system prompt string.
@@ -261,6 +262,33 @@ def get_system_prompt(stage: str, context: Dict[str, Any] | None = None, current
     merged_context: Dict[str, Any] = dict(_DEFAULT_CONTEXT)
     if context:
         merged_context.update(context)
+
+    # Add channel-specific instructions
+    if channel == "whatsapp":
+        merged_context.update({
+            "channel_instructions": """
+WhatsApp Channel Instructions:
+- Keep responses under 50 words maximum
+- Use line breaks liberally for readability
+- Avoid complex tables or formatting
+- Use emojis naturally (💰, 📅, 📊, ✅, 🟢, ⭐)
+- Format loan options as numbered lists with emojis
+- Use markdown-style bolding with *text* for emphasis
+- Present quick replies as numbered options (1️⃣, 2️⃣, 3️⃣)
+- Keep messages concise and scannable
+- Focus on key information only
+"""
+        })
+    else:
+        merged_context.update({
+            "channel_instructions": """
+Web Channel Instructions:
+- Provide detailed, comprehensive responses
+- Use rich formatting with tables, cards, and structured data
+- Include full explanations and context
+- Use appropriate visual elements and formatting
+"""
+        })
 
     template = _PROMPTS_BY_STAGE[normalized_stage]
     base_prompt = template.format(**merged_context)

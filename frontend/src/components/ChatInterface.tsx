@@ -7,7 +7,7 @@ import { CreditScoreCard } from "./CreditScoreCard";
 import { SanctionLetter } from "./SanctionLetter";
 import { AnalyticsDashboard } from "./AnalyticsDashboard";
 import { LanguageSwitcher } from "./LanguageSwitcher";
-import { Send, ArrowLeft, MessageCircle, Upload, CheckCircle2, FileText, Pencil, Check, X } from "lucide-react";
+import { Send, ArrowLeft, MessageCircle, Upload, CheckCircle2, FileText, Pencil, Check, X, Smartphone, Zap, Bot, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 import { QuickReplies } from "./QuickReplies";
 import { EmiCalculatorWidget } from "./EmiCalculatorWidget";
@@ -18,6 +18,7 @@ import { TRANSLATIONS } from "@/lib/translations";
 import { formatIndianCurrency, detectLanguage } from "@/lib/languageUtils";
 import { cn } from "@/lib/utils";
 import { User } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 const AGENT_PIPELINE = [
   "Master Agent",
@@ -102,6 +103,7 @@ interface SessionData {
 }
 
 export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
+  const navigate = useNavigate();
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const [language, setLanguage] = useState<"en" | "hi">(
@@ -1271,7 +1273,10 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
                   "text-[10px] py-0 px-1.5 h-4",
                   isOfflineMode ? "border-muted-foreground/50 text-muted-foreground" : "border-yellow-400/50 text-yellow-400"
                 )}>
-                  {isOfflineMode ? "⚡ Quick Mode" : "🤖 AI Mode"}
+                  {isOfflineMode ? <><Zap className="w-3 h-3 mr-1" />Quick Mode</> : <><Bot className="w-3 h-3 mr-1" />AI Mode</>}
+                </Badge>
+                <Badge variant="outline" className="text-[10px] py-0 px-1.5 h-4 border-blue-400/50 text-blue-400">
+                  <MessageSquare className="w-3 h-3 mr-1" />Web
                 </Badge>
               </div>
               <p className="text-[10px] text-muted-foreground font-mono">
@@ -1279,7 +1284,18 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
               </p>
             </div>
           </div>
-          <LanguageSwitcher currentLanguage={language} onLanguageChange={handleLanguageChange} />
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate('/whatsapp')}
+              className="text-xs px-2 py-1 h-7 border border-green-500/20 hover:bg-green-500/10"
+            >
+              <Smartphone className="w-3 h-3 mr-1" />
+              WhatsApp
+            </Button>
+            <LanguageSwitcher currentLanguage={language} onLanguageChange={handleLanguageChange} />
+          </div>
         </div>
 
         {/* Progress Indicator */}
@@ -1605,6 +1621,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         {showAnalytics && (
           <div className="py-8 bg-background/50 rounded-xl border border-border/50 animate-slide-up">
             <AnalyticsDashboard
+              sessionId={userData.sessionId}
               customerName={userData.name}
               initialAmount={userData.selectedLoan.amount}
               initialInterest={userData.selectedLoan.interest}

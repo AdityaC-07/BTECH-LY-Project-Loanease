@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { MessageCircle, Shield, Zap, Clock, CheckCircle, Check, X, Minus } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { ChannelSelector } from "./ChannelSelector";
 
 interface HeroProps {
   onStartChat: () => void;
@@ -45,17 +46,7 @@ export const Hero = ({ onStartChat }: HeroProps) => {
                 From KYC to sanction letter – all in one conversation.
               </p>
 
-              <div className="flex flex-col sm:flex-row gap-4">
-                <Button variant="hero" size="xl" onClick={onStartChat}>
-                  <MessageCircle className="w-5 h-5 mr-2" />
-                  Start Application
-                </Button>
-                <Button variant="outline" size="xl" asChild>
-                  <a href="#how-it-works">
-                    Learn How It Works
-                  </a>
-                </Button>
-              </div>
+              <ChannelSelector onWebChat={onStartChat} />
 
               <div className="flex items-center gap-6 pt-4">
                 <div className="flex items-center gap-2">

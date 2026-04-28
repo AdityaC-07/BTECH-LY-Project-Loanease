@@ -199,6 +199,18 @@
     @apply bg-transparent text-ey-yellow border-2 border-ey-yellow font-semibold px-6 py-3 rounded-lg;
     @apply hover:bg-ey-yellow hover:text-ey-black transition-all duration-200;
   }
+
+  /* Hide yellow resize handle when not being used */
+  .resize-handle,
+  [data-resize-handle] {
+    display: none !important;
+  }
+
+  /* Only show resize handle on hover or when explicitly needed */
+  .resizable-panel:hover .resize-handle,
+  .resizable-panel:focus-within .resize-handle {
+    display: flex !important;
+  }
 }
 
 @keyframes float {

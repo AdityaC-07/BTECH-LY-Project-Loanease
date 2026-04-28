@@ -22,6 +22,19 @@ Experience a seamless, conversational loan journey. Our AI assistant guides you 
 - **Natural Language Interaction**: No complex forms; just chat.
 - **Instant Eligibility Assessment**: Real-time credit evaluation.
 - **Smart Offer Generation**: Personalized loan terms based on your profile.
+- **Multi-Channel Support**: Web chat and WhatsApp share the same loan journey and channel-aware prompts.
+
+### 📊 Decision Dashboard
+The post-decision flow now surfaces a richer underwriting summary.
+- **Live Credit Insights**: Credit score, risk tier, and SHAP factors are shown with updated banding.
+- **Post-Sanction Analytics**: EMI, total payable, total interest, and benchmark comparisons come from the analytics endpoint.
+- **Sanction Letter Export**: The sanction letter now has a working PDF download action and an analytics shortcut.
+
+### 🔗 Blockchain Transparency
+The blockchain explorer now mirrors the backend block metadata more closely.
+- **Block Typing**: Explorer cards distinguish genesis, transaction, and sanction blocks.
+- **Stable Explorer Stats**: Chain validity, active sanctions, and PoW difficulty are surfaced consistently.
+- **Tamper Demo Fallbacks**: The tamper demo can still run with a fallback reference when a live sanction reference is unavailable.
 
 ### 📊 LoanEase vs Traditional Lending
 We’ve benchmarked our performance against industry standards to ensure our borrowers get the best experience.
@@ -101,7 +114,11 @@ loanease/
 │   │   ├── components/      # Functional and UI components
 │   │   │   ├── ui/          # shadcn and Radix primitives
 │   │   │   └── ...          # Feature components
+│   │   │   ├── ChannelSelector.tsx
+│   │   │   ├── WhatsAppChat.tsx
+│   │   │   └── WhatsAppInput.tsx
 │   │   ├── pages/           # App-level page views
+│   │   │   └── WhatsAppPage.tsx
 │   │   ├── hooks/           # Custom React hooks
 │   │   ├── lib/             # Shared frontend utilities
 │   │   ├── App.tsx
@@ -139,11 +156,98 @@ loanease/
 
 ---
 
+## 📚 API Reference
+
+The tables below reflect the currently mounted routes in the unified backend and the standalone service modules. Every service also exposes OpenAPI docs at `/docs` on its local port.
+
+### Unified Backend (`backend/app/main.py`)
+
+| Method | Endpoint | Purpose |
+| :--- | :--- | :--- |
+| `GET` | `/` | Service banner / root health entry |
+| `GET` | `/health` | Unified backend health |
+| `POST` | `/session/save` | Persist chat/session state |
+| `GET` | `/session/{session_id}` | Load stored session data |
+| `POST` | `/escalation/preferences` | Save escalation callback preferences |
+| `GET` | `/analytics/{session_id}` | EMI, payoff, risk, and benchmark analytics |
+| `POST` | `/pipeline/start` | Start the orchestrated pipeline |
+| `GET` | `/pipeline/log/{session_id}` | Fetch pipeline step log |
+| `GET` | `/credit-score/{pan_number}` | Credit score simulation and banding |
+| `GET` | `/credit/credit-score` | Legacy credit-score alias |
+| `POST` | `/assess` | Risk assessment and decision generation |
+| `POST` | `/credit/assess` | Legacy assessment alias |
+| `POST` | `/explain/{application_id}` | Stored-application explanation and SHAP waterfall |
+| `POST` | `/escalation/callback-preference` | Legacy callback preference alias |
+| `POST` | `/kyc/extract/pan` | PAN OCR extraction and validation |
+| `POST` | `/kyc/extract/aadhaar` | Aadhaar OCR extraction and validation |
+| `POST` | `/kyc/verify` | Cross-document KYC verification |
+| `POST` | `/negotiate/start` | Start a negotiation session |
+| `POST` | `/negotiate/start-from-underwriting` | Start negotiation from underwriting context |
+| `POST` | `/negotiate/counter` | Submit a counter-offer |
+| `POST` | `/negotiate/accept` | Accept the current offer |
+| `POST` | `/negotiate/escalate` | Escalate to a human officer |
+| `GET` | `/negotiate/history/{session_id}` | Negotiation history and current state |
+| `POST` | `/translate` | Translate between English and Hindi |
+| `POST` | `/detect-hinglish-intent` | Detect Hinglish intent |
+| `POST` | `/chat` | Channel-aware chat endpoint |
+| `POST` | `/chat/stream` | Streaming chat endpoint |
+| `POST` | `/intent/classify` | Classify the current user intent |
+| `POST` | `/explain/credit` | Credit explanation helper |
+| `POST` | `/explain/negotiation` | Negotiation explanation helper |
+| `POST` | `/generate/rejection` | Generate rejection messaging |
+| `GET` | `/groq/health` | Groq integration health |
+
+### Blockchain Service (`backend/blockchain_service.py` and blockchain agent)
+
+| Method | Endpoint | Purpose |
+| :--- | :--- | :--- |
+| `POST` | `/blockchain/sanction` | Register and seal a sanction record |
+| `GET` | `/blockchain/verify/{reference}` | Verify a blockchain reference |
+| `GET` | `/blockchain/chain` | Return the blockchain chain payload |
+| `GET` | `/blockchain/stats` | Return chain statistics |
+| `GET` | `/blockchain/explorer-data` | Explorer-ready chain metadata |
+| `POST` | `/blockchain/tamper-test` | Run tamper simulation |
+| `GET` | `/blockchain/verify-chain` | Chain verification summary |
+| `GET` | `/health` | Blockchain service health |
+
+### Negotiation Backend (`negotiation_backend/`)
+
+| Method | Endpoint | Purpose |
+| :--- | :--- | :--- |
+| `POST` | `/negotiate/start` | Start a negotiation session from risk context |
+| `POST` | `/negotiate/start-from-underwriting` | Start negotiation via underwriting output |
+| `POST` | `/negotiate/counter` | Submit a counter request |
+| `POST` | `/negotiate/accept` | Accept current negotiated offer |
+| `POST` | `/negotiate/escalate` | Escalate case to a human officer |
+| `GET` | `/negotiate/history/{session_id}` | Retrieve session history |
+| `GET` | `/health` | Negotiation service health |
+| `GET` | `/negotiate/analytics` | Negotiation analytics summary |
+
+### Translation Service (`translation_backend/`)
+
+| Method | Endpoint | Purpose |
+| :--- | :--- | :--- |
+| `POST` | `/translate` | Translate text between English and Hindi |
+| `POST` | `/detect-hinglish-intent` | Detect intent from Hinglish input |
+| `GET` | `/health` | Translation service health |
+
+### KYC Verification Backend (`kyc_backend/`)
+
+| Method | Endpoint | Purpose |
+| :--- | :--- | :--- |
+| `POST` | `/kyc/extract/pan` | Extract PAN fields and validate |
+| `POST` | `/kyc/extract/aadhaar` | Extract Aadhaar fields and validate |
+| `POST` | `/kyc/verify` | Cross-validate PAN and Aadhaar |
+| `POST` | `/kyc/extract/auto` | Auto-detect document type and extract |
+| `GET` | `/health` | KYC service health |
+
 ## ⚙️ Backend Services
 
-LoanEase includes four FastAPI backend agents:
+LoanEase includes the following FastAPI backend services:
 
 - `backend/` for credit underwriting and explainability.
+- `backend/routers/ai_router.py` for chat, intent, and prompt orchestration.
+- `backend/blockchain_service.py` and `backend/agents/blockchain_agent/` for blockchain audit and explorer data.
 - `negotiation_backend/` for dynamic loan-rate negotiation.
 - `translation_backend/` for multilingual translation + Hinglish intent detection.
 - `kyc_backend/` for PAN/Aadhaar OCR extraction and KYC verification.
@@ -155,6 +259,7 @@ LoanEase includes four FastAPI backend agents:
 - Produces prediction artifacts in `backend/artifacts/`.
 - Exposes underwriting APIs for assessment, explanation, and health monitoring.
 - Returns SHAP-based plain-English factor explanations.
+- Serves a post-decision analytics endpoint at `/analytics/{session_id}` for EMI, payoff, and benchmark summaries.
 
 #### Setup
 From repository root:
@@ -213,6 +318,11 @@ Docs: `http://localhost:8000/docs`
 | `GET` | `/credit-score/{pan_number}` | Credit score simulation, score band, and eligibility context |
 | `POST` | `/assess` | Risk assessment and decision generation |
 | `POST` | `/explain/{application_id}` | Full explanation and SHAP waterfall for a stored application |
+
+#### Risk bands
+- `300-549` = High Risk
+- `550-699` = Medium Risk
+- `700-900` = Low Risk
 
 #### Risk policy (current)
 - Final risk combines credit score band + model risk score.
@@ -343,6 +453,8 @@ Docs: `http://localhost:8002/docs`
 - **Hardcoded Critical Strings**: Core messages (approval, rejection, KYC) in both languages
 - **Number Formatting**: Indian style (₹5,00,000) in Hindi mode
 - **Translation Caching**: 24-hour client-side cache for translations
+- **Channel Selector**: Users can choose web chat or WhatsApp entry from the hero flow.
+- **Channel-Aware Prompts**: Backend prompts adjust response length and formatting per channel.
 
 #### Example Usage
 
@@ -375,6 +487,13 @@ curl -X POST "http://localhost:8002/detect-hinglish-intent" \
 5. **Verify franc-min Support**: Ensure language code is supported by franc-min library
 
 For detailed integration steps, see `MULTILINGUAL_INTEGRATION.md`.
+
+### Frontend Decision Flow
+
+- **Agent Activity Panel**: Collapsible floating sidebar that expands only when it is visible or opened manually.
+- **Credit Score Card**: Score 592 is treated as Medium Risk in the UI thresholding.
+- **Sanction Letter**: Download PDF now triggers a real export flow.
+- **Analytics Dashboard**: Pulls live session analytics from `/analytics/{session_id}` and renders charts from backend data.
 
 ### KYC Verification Backend (`kyc_backend/`) — OCR + Document Validation
 

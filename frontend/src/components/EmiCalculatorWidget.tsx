@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Slider } from "./ui/slider";
 import { Button } from "./ui/button";
 import { formatIndianCurrency } from "@/lib/languageUtils";
+import { DollarSign } from "lucide-react";
 
 interface EmiCalculatorWidgetProps {
   initialAmount?: number;
@@ -35,7 +36,7 @@ export const EmiCalculatorWidget = ({
   return (
     <div className="p-4 bg-card rounded-xl border border-border shadow-lg max-w-sm space-y-6 animate-in zoom-in-95 duration-300 my-4">
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-xl">💰</span>
+        <DollarSign className="w-5 h-5" />
         <h3 className="font-semibold text-lg">EMI Calculator</h3>
       </div>
 

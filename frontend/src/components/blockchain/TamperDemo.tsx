@@ -15,7 +15,8 @@ export const TamperDemo = ({ onTamper, sanctionReference, onReset }: TamperDemoP
   const [result, setResult] = useState<any>(null);
 
   const runTamperTest = async () => {
-    if (!sanctionReference) return;
+    // Use fallback reference if none provided
+    const reference = sanctionReference || "DEMO-2026-00001";
     
     setIsRunning(true);
     try {
@@ -23,7 +24,7 @@ export const TamperDemo = ({ onTamper, sanctionReference, onReset }: TamperDemoP
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          reference: sanctionReference,
+          reference: reference,
           tamper_field: "loan_amount",
           tamper_value: 5000000 // 50 Lakhs instead of 5 Lakhs
         })
@@ -66,7 +67,7 @@ export const TamperDemo = ({ onTamper, sanctionReference, onReset }: TamperDemoP
             <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center justify-between">
               <div>
                 <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold mb-1">Target Sanction</p>
-                <p className="text-sm text-white font-mono">{sanctionReference || "No sanction found"}</p>
+                <p className="text-sm text-white font-mono">{sanctionReference || "DEMO-2026-00001"}</p>
               </div>
               <div className="text-right">
                 <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold mb-1">Manipulation</p>
@@ -77,7 +78,7 @@ export const TamperDemo = ({ onTamper, sanctionReference, onReset }: TamperDemoP
             <Button 
               variant="destructive" 
               onClick={runTamperTest}
-              disabled={isRunning || !sanctionReference}
+              disabled={isRunning}
               className="w-full bg-red-500 hover:bg-red-600 font-bold uppercase tracking-widest text-xs h-12"
             >
               {isRunning ? (

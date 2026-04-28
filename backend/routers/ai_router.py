@@ -35,6 +35,7 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
     session_id: Optional[str] = None
     stage: str = "kyc"
+    channel: Optional[str] = "web"
     context: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -129,7 +130,8 @@ async def chat_stream(
             system_prompt = get_system_prompt(
                 requested_stage,
                 prompt_context,
-                current_stage=pipeline_stage_key
+                current_stage=pipeline_stage_key,
+                channel=payload.channel or "web"
             )
             messages = memory.get_messages(session_id)
 
@@ -186,7 +188,8 @@ async def chat_sync(
     system_prompt = get_system_prompt(
         stage,
         prompt_context,
-        current_stage=pipeline_stage_key
+        current_stage=pipeline_stage_key,
+        channel=payload.channel or "web"
     )
     messages = memory.get_messages(session_id)
 
