@@ -3,12 +3,16 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Download, Info, TrendingUp, AlertCircle, CheckCircle2, BarChart3 } from "lucide-react";
+import { formatIndianRupees } from "@/lib/languageUtils";
 import { API_BASE_URL } from "@/config";
 import { toast } from "sonner";
 
 interface AnalyticsDashboardProps {
   sessionId: string;
   customerName: string;
+  initialAmount?: number;
+  initialInterest?: number;
+  initialTenure?: number;
 }
 
 declare global {
@@ -19,12 +23,12 @@ declare global {
   }
 }
 
-export const AnalyticsDashboard = ({ sessionId, customerName }: AnalyticsDashboardProps) => {
+export const AnalyticsDashboard = ({ sessionId, customerName, initialAmount, initialInterest, initialTenure }: AnalyticsDashboardProps) => {
   const [analyticsData, setAnalyticsData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [loanAmount, setLoanAmount] = useState(500000);
-  const [interestRate, setInterestRate] = useState(11.0);
-  const [tenure, setTenure] = useState(60);
+  const [loanAmount, setLoanAmount] = useState(initialAmount || 500000);
+  const [interestRate, setInterestRate] = useState(initialInterest || 11.0);
+  const [tenure, setTenure] = useState(initialTenure || 60);
   const dashboardRef = useRef<HTMLDivElement>(null);
 
   // Fetch analytics data from backend
@@ -73,11 +77,7 @@ export const AnalyticsDashboard = ({ sessionId, customerName }: AnalyticsDashboa
   const totalInterest = totalPayable - loanAmount;
 
   const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
-      maximumFractionDigits: 0,
-    }).format(val);
+    return formatIndianRupees(val);
   };
 
   // Amortization Schedule

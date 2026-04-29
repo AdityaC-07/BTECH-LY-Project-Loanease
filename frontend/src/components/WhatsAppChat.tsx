@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Smile, Paperclip, Mic, Send, FileText, CheckCircle, HelpCircle } from "lucide-react";
+import { Smile, Paperclip, Mic, Send, FileText, CheckCircle, HelpCircle, Check, CheckCheck } from "lucide-react";
 
 interface Message {
   id: string;
@@ -26,11 +26,11 @@ const SimpleMessage = ({ message }: { message: Message }) => {
   const getStatusIcon = (status?: string) => {
     switch (status) {
       case 'sent':
-        return '✓';
+        return <Check className="w-4 h-4" />;
       case 'delivered':
-        return '✓✓';
+        return <CheckCheck className="w-4 h-4" />;
       case 'read':
-        return <span style={{ color: '#53bdeb' }}>✓✓</span>;
+        return <CheckCheck className="w-4 h-4 text-blue-400" />;
       default:
         return null;
     }

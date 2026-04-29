@@ -7,7 +7,7 @@ import { CreditScoreCard } from "./CreditScoreCard";
 import { SanctionLetter } from "./SanctionLetter";
 import { AnalyticsDashboard } from "./AnalyticsDashboard";
 import { LanguageSwitcher } from "./LanguageSwitcher";
-import { Send, ArrowLeft, MessageCircle, Upload, CheckCircle2, FileText, Pencil, Check, X, Smartphone, Zap, Bot, MessageSquare } from "lucide-react";
+import { Send, ArrowLeft, MessageCircle, Upload, CheckCircle2, FileText, Pencil, Check, X, Smartphone, Zap, Bot, MessageSquare, Clock, AlertTriangle, CheckCircle, Shield } from "lucide-react";
 import { toast } from "sonner";
 import { QuickReplies } from "./QuickReplies";
 import { EmiCalculatorWidget } from "./EmiCalculatorWidget";
@@ -15,7 +15,7 @@ import { LoanComparisonCards } from "./LoanComparisonCards";
 import { AgentActivityPanel, type AgentTraceItem } from "./AgentActivityPanel";
 import { Badge } from "@/components/ui/badge";
 import { TRANSLATIONS } from "@/lib/translations";
-import { formatIndianCurrency, detectLanguage } from "@/lib/languageUtils";
+import { formatIndianRupees, detectLanguage } from "@/lib/languageUtils";
 import { cn } from "@/lib/utils";
 import { User } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -158,6 +158,61 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [agentTrace, setAgentTrace] = useState<AgentTraceItem[]>([]);
   const [showCreditSummaryPopup, setShowCreditSummaryPopup] = useState(false);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
+  const [isDemoMode, setIsDemoMode] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  const toggleAgentSidebar = () => {
+    setIsSidebarOpen(!isSidebarOpen);
+  };
+
+  const updatePipelineTracker = (stage: string) => {
+    const stageMap = {
+      'INITIATED': 1,
+      'KYC_PENDING': 1,
+      'KYC_VERIFIED': 2,
+      'CREDIT_ASSESSED': 2,
+      'OFFER_GENERATED': 3,
+      'NEGOTIATING': 4,
+      'ACCEPTED': 4,
+      'SANCTIONED': 5
+    };
+    
+    const currentStep = stageMap[stage as keyof typeof stageMap] || 1;
+    
+    // Update pipeline step indicators
+    const pipelineSteps = document.querySelectorAll('.pipeline-step');
+    pipelineSteps.forEach((step, i) => {
+      const stepNum = i + 1;
+      step.classList.remove('completed', 'active', 'upcoming');
+      
+      if (stepNum < currentStep) {
+        step.classList.add('completed');
+      } else if (stepNum === currentStep) {
+        step.classList.add('active');
+      } else {
+        step.classList.add('upcoming');
+      }
+    });
+    
+    // Update header stage text
+    const stageLabels = {
+      'KYC_PENDING': 'KYC',
+      'KYC_VERIFIED': 'Credit Check',
+      'OFFER_GENERATED': 'Offer',
+      'NEGOTIATING': 'Negotiating',
+      'SANCTIONED': 'Sanctioned'
+    };
+    
+    const headerStageLabel = document.querySelector('.header-stage-label');
+    if (headerStageLabel) {
+      headerStageLabel.textContent = stageLabels[stage as keyof typeof stageLabels] || stage;
+    }
+  };
+
+  // Update pipeline tracker when userData.stage changes
+  useEffect(() => {
+    updatePipelineTracker(userData.stage);
+  }, [userData.stage]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationStep = useRef(0);
@@ -548,11 +603,11 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       stopKycProgress(timer);
       const msg = error instanceof Error
         ? (error.name === "TimeoutError"
-            ? kycText("⏱️ Scan timed out. Try a smaller or clearer image.", "⏱️ स्कैन timeout हो गया। छोटी या स्पष्ट छवि आज़माएं।")
+            ? kycText("Scan timed out. Try a smaller or clearer image.", "स्कैन timeout हो गया। छोटी या स्पष्ट छवि आज़माएं।")
             : error.message.includes("fetch")
-              ? kycText("❌ Could not connect to server. Check your connection.", "❌ सर्वर से कनेक्ट नहीं हो सका। कनेक्शन जांचें।")
-              : `❌ ${error.message}`)
-        : kycText("❌ PAN scan failed. Please try again.", "❌ PAN स्कैन विफल। पुनः प्रयास करें।");
+              ? kycText("Could not connect to server. Check your connection.", "सर्वर से कनेक्ट नहीं हो सका। कनेक्शन जांचें।")
+              : `${error.message}`)
+        : kycText("PAN scan failed. Please try again.", "PAN स्कैन विफल। पुनः प्रयास करें।");
       addBotMessage(msg);
       setShowPanUploadCard(true);
     }
@@ -649,11 +704,11 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       stopKycProgress(timer);
       const msg = error instanceof Error
         ? (error.name === "TimeoutError"
-            ? kycText("⏱️ Scan timed out. Try a smaller or clearer image.", "⏱️ स्कैन timeout हो गया। छोटी या स्पष्ट छवि आज़माएं।")
+            ? kycText("Scan timed out. Try a smaller or clearer image.", "स्कैन timeout हो गया। छोटी या स्पष्ट छवि आज़माएं।")
             : error.message.includes("fetch")
-              ? kycText("❌ Could not connect to server. Check your connection.", "❌ सर्वर से कनेक्ट नहीं हो सका। कनेक्शन जांचें।")
-              : `❌ ${error.message}`)
-        : kycText("❌ Aadhaar scan failed. Please try again.", "❌ Aadhaar स्कैन विफल। पुनः प्रयास करें।");
+              ? kycText("Could not connect to server. Check your connection.", "सर्वर से कनेक्ट नहीं हो सका। कनेक्शन जांचें।")
+              : `${error.message}`)
+        : kycText("Aadhaar scan failed. Please try again.", "Aadhaar स्कैन विफल। पुनः प्रयास करें।");
       addBotMessage(msg);
       setShowAadhaarUploadCard(true);
     }
@@ -698,7 +753,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     } catch (error) {
       console.error("Underwriting error:", error);
       setIsOfflineMode(true);
-      toast.error("⚠️ Connection issue — using offline mode");
+      toast.error("Connection issue — using offline mode");
       return null;
     } finally {
       setIsBackendBusy(false);
@@ -740,7 +795,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     } catch (error) {
       console.error("Negotiation error:", error);
       setIsOfflineMode(true);
-      toast.error("⚠️ Connection issue — using offline mode");
+      toast.error("Connection issue — using offline mode");
       return null;
     } finally {
       setIsBackendBusy(false);
@@ -765,7 +820,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     } catch (error) {
       console.error("Credit score error:", error);
       setIsOfflineMode(true);
-      toast.error("⚠️ Connection issue — using offline mode");
+      toast.error("Connection issue — using offline mode");
       return null;
     } finally {
       setIsBackendBusy(false);
@@ -868,7 +923,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   };
 
   const handleEmiTerms = (amount: number, rate: number, tenure: number) => {
-    addBotMessage(`Perfect. I'll use these terms: ${formatIndianCurrency(amount)} at ${rate}% for ${tenure} months.`);
+    addBotMessage(`Perfect. I'll use these terms: ${formatIndianRupees(amount)} at ${rate}% for ${tenure} months.`);
     setUserData(prev => ({ ...prev, selectedLoan: { amount, interest: rate, tenure, emi: 0 }, stage: "negotiate" }));
     // Trigger negotiation with these terms
     handleLoanSelect(rate, tenure, amount);
@@ -889,8 +944,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
     const selectionMessage =
       language === "en"
-        ? `You selected: ${formatIndianCurrency(amount)} at ${interest}% for ${tenure} months.\n\n${TRANSLATIONS.emi[language]}: ${formatIndianCurrency(emi)}/month`
-        : `आपने चुना: ${formatIndianCurrency(amount)} ${interest}% पर ${tenure} महीनों के लिए।\n\n${TRANSLATIONS.emi[language]}: ${formatIndianCurrency(emi)}/month`;
+        ? `You selected: ${formatIndianRupees(amount)} at ${interest}% for ${tenure} months.\n\n${TRANSLATIONS.emi[language]}: ${formatIndianRupees(emi)}/month`
+        : `आपने चुना: ${formatIndianRupees(amount)} ${interest}% पर ${tenure} महीनों के लिए।\n\n${TRANSLATIONS.emi[language]}: ${formatIndianRupees(emi)}/month`;
 
     setMessages((prev) => [
       ...prev,
@@ -1137,6 +1192,243 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   return (
     <>
       <style>{`
+        /* Main app layout */
+        .app-layout {
+          display: flex;
+          height: 100vh;
+          width: 100vw;
+          overflow: hidden;
+          background: #111111;
+        }
+
+        /* Chat area — takes all available space */
+        .chat-area {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          min-width: 0;
+          height: 100vh;
+          overflow: hidden;
+          transition: all 0.3s ease;
+        }
+
+        /* Sidebar — fixed width when open */
+        .agent-sidebar {
+          width: 320px;
+          min-width: 320px;
+          max-width: 320px;
+          height: 100vh;
+          background: #1a1a1a;
+          border-left: 1px solid #2a2a2a;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          transition: width 0.3s ease, min-width 0.3s ease, opacity 0.3s ease;
+        }
+
+        /* Sidebar COLLAPSED state */
+        .agent-sidebar.collapsed {
+          width: 0;
+          min-width: 0;
+          opacity: 0;
+          border-left: none;
+          pointer-events: none;
+        }
+
+        /* Sidebar COLLAPSED — show thin tab */
+        .sidebar-tab {
+          position: fixed;
+          right: 0;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 28px;
+          height: 80px;
+          background: #2a2a2a;
+          border-radius: 8px 0 0 8px;
+          border: 1px solid #3a3a3a;
+          border-right: none;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          z-index: 100;
+          transition: background 0.2s;
+          writing-mode: vertical-rl;
+          font-size: 10px;
+          color: #F5C518;
+          letter-spacing: 1px;
+          font-weight: 600;
+        }
+        .sidebar-tab:hover {
+          background: #333333;
+        }
+        .agent-sidebar:not(.collapsed) ~ .sidebar-tab,
+        .sidebar-tab.hidden {
+          display: none;
+        }
+
+        /* Chat messages — proper scroll */
+        .chat-messages {
+          flex: 1;
+          min-height: 0;
+          overflow-y: auto;
+          overflow-x: hidden;
+          padding: 16px 20px;
+          scroll-behavior: smooth;
+          background: url('https://www.transparenttextures.com/patterns/dark-matter.png');
+          background-attachment: fixed;
+        }
+
+        /* Remove yellow vertical bar artifacts */
+        .chat-area::after,
+        .chat-area::before {
+          display: none !important;
+        }
+
+        /* Sidebar header */
+        .sidebar-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 16px 20px;
+          border-bottom: 1px solid #2a2a2a;
+          flex-shrink: 0;
+        }
+
+        .sidebar-title {
+          font-size: 14px;
+          font-weight: 700;
+          color: #ffffff;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        /* Agent items — full width cards */
+        .agent-item {
+          padding: 14px 20px;
+          border-bottom: 1px solid #1f1f1f;
+          display: flex;
+          align-items: flex-start;
+          gap: 12px;
+          transition: background 0.2s;
+        }
+
+        .agent-item.active {
+          background: #1f1f1f;
+          border-left: 3px solid #F5C518;
+        }
+
+        .agent-item.completed {
+          border-left: 3px solid #22c55e;
+        }
+
+        .agent-item.waiting {
+          opacity: 0.5;
+        }
+
+        /* Agent status indicator */
+        .agent-status-dot {
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          margin-top: 4px;
+          flex-shrink: 0;
+        }
+        .agent-status-dot.active {
+          background: #F5C518;
+          box-shadow: 0 0 8px #F5C518;
+          animation: pulse 1.5s infinite;
+        }
+        .agent-status-dot.completed {
+          background: #22c55e;
+        }
+        .agent-status-dot.waiting {
+          background: #3a3a3a;
+          border: 1px solid #4a4a4a;
+        }
+
+        @keyframes pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.6; transform: scale(0.8); }
+        }
+
+        .agent-info {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .agent-name {
+          font-size: 13px;
+          font-weight: 600;
+          color: #ffffff;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .agent-status-text {
+          font-size: 11px;
+          color: #6b7280;
+          margin-top: 2px;
+        }
+
+        .agent-duration {
+          font-size: 10px;
+          color: #F5C518;
+          margin-top: 2px;
+        }
+
+        /* Progress bar for active agent */
+        .agent-progress {
+          height: 2px;
+          background: #2a2a2a;
+          border-radius: 1px;
+          margin-top: 8px;
+          overflow: hidden;
+        }
+        .agent-progress-fill {
+          height: 100%;
+          background: #F5C518;
+          border-radius: 1px;
+          animation: progress-pulse 1.5s ease-in-out infinite;
+        }
+        @keyframes progress-pulse {
+          0% { width: 20%; }
+          50% { width: 80%; }
+          100% { width: 20%; }
+        }
+
+        /* Sidebar footer — Groq status */
+        .sidebar-footer {
+          padding: 12px 20px;
+          border-top: 1px solid #2a2a2a;
+          margin-top: auto;
+          flex-shrink: 0;
+        }
+
+        .groq-status {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 11px;
+          color: #6b7280;
+        }
+
+        .groq-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: #22c55e;
+        }
+
+        .api-endpoint {
+          font-size: 10px;
+          color: #4b5563;
+          margin-top: 4px;
+          font-family: monospace;
+        }
+
         .chat-messages-container::-webkit-scrollbar {
           width: 6px;
         }
@@ -1178,66 +1470,44 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         }
         .chat-input:focus {
           border-color: #F5C518;
-          box-shadow: 0 0 0 3px rgba(245, 197, 24, 0.1);
-        }
-        .chat-input::placeholder {
-          color: #4b5563;
+          box-shadow: 0 0 0 2px rgba(245, 197, 24, 0.1);
         }
         .send-button {
+          background: #F5C518;
+          color: #000000;
+          border: none;
+          border-radius: 50%;
           width: 40px;
           height: 40px;
-          border-radius: 9999px;
-          background: #F5C518;
-          border: none;
-          cursor: pointer;
           display: flex;
           align-items: center;
           justify-content: center;
-          flex-shrink: 0;
+          cursor: pointer;
           transition: all 0.2s;
         }
-        .send-button:hover {
+        .send-button:hover:not(:disabled) {
           background: #e6b800;
           transform: scale(1.05);
         }
         .send-button:disabled {
-          background: #2a2a2a;
+          opacity: 0.5;
           cursor: not-allowed;
-          transform: none;
         }
-        .typing-indicator {
-          display: flex;
-          align-items: center;
-          gap: 4px;
-          padding: 12px 16px;
-          background: #1e1e1e;
-          border: 1px solid #2a2a2a;
-          border-radius: 18px 18px 18px 4px;
-          width: fit-content;
-          margin-left: 44px;
+        
+        /* Pipeline tracker styles */
+        .pipeline-step.completed {
+          color: #22c55e;
         }
-        .typing-dot {
-          width: 6px;
-          height: 6px;
-          border-radius: 9999px;
-          background: #F5C518;
-          animation: typing-bounce 1.2s ease-in-out infinite;
+        .pipeline-step.active {
+          color: #F5C518;
+          animation: pulse-border 2s infinite;
         }
-        .typing-dot:nth-child(2) {
-          animation-delay: 0.2s;
+        .pipeline-step.upcoming {
+          color: #6b7280;
         }
-        .typing-dot:nth-child(3) {
-          animation-delay: 0.4s;
-        }
-        @keyframes typing-bounce {
-          0%, 80%, 100% {
-            transform: translateY(0);
-            opacity: 0.4;
-          }
-          40% {
-            transform: translateY(-6px);
-            opacity: 1;
-          }
+        @keyframes pulse-border {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(245, 197, 24, 0.7); }
+          50% { box-shadow: 0 0 0 8px rgba(245, 197, 24, 0); }
         }
       `}</style>
     <div className="fixed inset-0 bg-background z-50 flex flex-col">
@@ -1255,48 +1525,60 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         </div>
       )}
 
-      {/* Header */}
-      <div className="bg-card border-b border-border shadow-md">
-        <div className="flex items-center justify-between px-4 py-3">
-          <Button variant="ghost" size="icon" onClick={onClose}>
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center relative">
-              <MessageCircle className="w-4 h-4 text-primary-foreground" />
-              <div className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full border-2 border-card" />
-            </div>
-            <div>
+      <div className="app-layout">
+        {/* Chat Area */}
+        <div className="chat-area">
+          {/* Header */}
+          <div className="bg-card border-b border-border shadow-md">
+            <div className="flex items-center justify-between px-4 py-3">
+              <Button variant="ghost" size="icon" onClick={onClose}>
+                <ArrowLeft className="w-5 h-5" />
+              </Button>
               <div className="flex items-center gap-2">
-                <h2 className="text-sm font-bold">Loan Assistant</h2>
-                <Badge variant="outline" className={cn(
-                  "text-[10px] py-0 px-1.5 h-4",
-                  isOfflineMode ? "border-muted-foreground/50 text-muted-foreground" : "border-yellow-400/50 text-yellow-400"
-                )}>
-                  {isOfflineMode ? <><Zap className="w-3 h-3 mr-1" />Quick Mode</> : <><Bot className="w-3 h-3 mr-1" />AI Mode</>}
-                </Badge>
-                <Badge variant="outline" className="text-[10px] py-0 px-1.5 h-4 border-blue-400/50 text-blue-400">
-                  <MessageSquare className="w-3 h-3 mr-1" />Web
-                </Badge>
+                <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center relative">
+                  <MessageCircle className="w-4 h-4 text-primary-foreground" />
+                  <div className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full border-2 border-card" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-bold">Loan Assistant</h2>
+                    <Badge variant="outline" className={cn(
+                      "text-[10px] py-0 px-1.5 h-4",
+                      isOfflineMode ? "border-muted-foreground/50 text-muted-foreground" : "border-yellow-400/50 text-yellow-400"
+                    )}>
+                      {isOfflineMode ? <><Zap className="w-3 h-3 mr-1" />Quick Mode</> : <><Bot className="w-3 h-3 mr-1" />AI Mode</>}
+                    </Badge>
+                    <Badge variant="outline" className="text-[10px] py-0 px-1.5 h-4 border-blue-400/50 text-blue-400">
+                      <MessageSquare className="w-3 h-3 mr-1" />Web
+                    </Badge>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground font-mono">
+                    {userData.sessionId} | Stage: <span className="text-yellow-400 uppercase header-stage-label">{userData.stage}</span>
+                  </p>
+                </div>
               </div>
-              <p className="text-[10px] text-muted-foreground font-mono">
-                {userData.sessionId} | Stage: <span className="text-yellow-400 uppercase">{userData.stage}</span>
-              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigate('/whatsapp')}
+                  className="text-xs px-2 py-1 h-7 border border-green-500/20 hover:bg-green-500/10"
+                >
+                  <Smartphone className="w-3 h-3 mr-1" />
+                  WhatsApp
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={toggleAgentSidebar}
+                  className="text-xs px-2 py-1 h-7 border border-yellow-400/20 hover:bg-yellow-400/10 agents-toggle-btn"
+                >
+                  <Bot className="w-3 h-3 mr-1" />
+                  AGENTS ({agentTrace?.length || 2})
+                </Button>
+                <LanguageSwitcher currentLanguage={language} onLanguageChange={handleLanguageChange} />
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => navigate('/whatsapp')}
-              className="text-xs px-2 py-1 h-7 border border-green-500/20 hover:bg-green-500/10"
-            >
-              <Smartphone className="w-3 h-3 mr-1" />
-              WhatsApp
-            </Button>
-            <LanguageSwitcher currentLanguage={language} onLanguageChange={handleLanguageChange} />
-          </div>
-        </div>
 
         {/* Progress Indicator */}
         <div className="px-4 pb-2 relative z-20">
@@ -1311,7 +1593,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
               return (
                 <div 
                   key={s.id} 
-                  className="flex flex-col items-center gap-1 group cursor-pointer relative" 
+                  className={`flex flex-col items-center gap-1 group cursor-pointer relative pipeline-step ${isCompleted ? 'completed' : isActive ? 'active' : 'upcoming'}`}
                   onClick={() => {
                     if (s.id === "credit" && isCompleted) {
                       setShowCreditSummaryPopup(true);
@@ -1379,10 +1661,9 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         </div>
       </div>
 
-      <div className="flex flex-1 flex-col gap-4 p-4 lg:flex-row overflow-hidden min-h-0">
-        {/* Messages */}
-        <div ref={messagesContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden space-y-6 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] bg-fixed pr-2 lg:pr-80 chat-messages-container min-h-0">
-          {showWelcomeState ? (
+          {/* Messages */}
+          <div ref={messagesContainerRef} className="chat-messages">
+            {showWelcomeState ? (
             <div className="flex min-h-full items-center justify-center px-4 py-8">
               <div className="w-full max-w-md rounded-3xl border border-[#2a2a2a] bg-[#101010]/95 p-8 text-center shadow-[0_20px_60px_rgba(0,0,0,0.45)] backdrop-blur-sm">
                 <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-[#F5C518]/15 text-[#F5C518] shadow-[0_0_0_8px_rgba(245,197,24,0.04)]">
@@ -1391,10 +1672,22 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
                 <h3 className="text-2xl font-black tracking-tight text-slate-100">Hi! I'm your Loan Assistant</h3>
                 <p className="mt-3 text-sm leading-6 text-slate-300">{TRANSLATIONS.opening[language]}</p>
                 <div className="mt-6 grid gap-2 text-left text-sm text-slate-300 sm:grid-cols-2">
-                  <div className="rounded-xl border border-[#2a2a2a] bg-[#151515] px-3 py-3">✓ No paperwork</div>
-                  <div className="rounded-xl border border-[#2a2a2a] bg-[#151515] px-3 py-3">✓ Instant credit check</div>
-                  <div className="rounded-xl border border-[#2a2a2a] bg-[#151515] px-3 py-3">✓ AI-powered negotiation</div>
-                  <div className="rounded-xl border border-[#2a2a2a] bg-[#151515] px-3 py-3">✓ Blockchain-secured letter</div>
+                  <div className="rounded-xl border border-[#2a2a2a] bg-[#151515] px-3 py-3 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-green-400" />
+                    <span>No paperwork</span>
+                  </div>
+                  <div className="rounded-xl border border-[#2a2a2a] bg-[#151515] px-3 py-3 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-green-400" />
+                    <span>Instant credit check</span>
+                  </div>
+                  <div className="rounded-xl border border-[#2a2a2a] bg-[#151515] px-3 py-3 flex items-center gap-2">
+                    <Bot className="w-4 h-4 text-blue-400" />
+                    <span>AI-powered negotiation</span>
+                  </div>
+                  <div className="rounded-xl border border-[#2a2a2a] bg-[#151515] px-3 py-3 flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-purple-400" />
+                    <span>Blockchain-secured letter</span>
+                  </div>
                 </div>
                 <Button
                   variant="chat"
@@ -1448,7 +1741,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
                           </div>
                           <div className="flex items-center justify-between rounded-lg border border-[#2a2a2a] bg-[#151515] p-3">
                             <span className="text-xs font-medium text-slate-300">Get updates on WhatsApp?</span>
-                            <Button size="sm" variant={escalationData.whatsapp ? "accent" : "outline"} onClick={() => setEscalationData((prev) => ({ ...prev, whatsapp: !prev.whatsapp }))}>{escalationData.whatsapp ? "Yes ✓" : "No"}</Button>
+                            <Button size="sm" variant={escalationData.whatsapp ? "accent" : "outline"} onClick={() => setEscalationData((prev) => ({ ...prev, whatsapp: !prev.whatsapp }))}>{escalationData.whatsapp ? <>Yes <CheckCircle className="w-4 h-4 inline ml-1" /></> : "No"}</Button>
                           </div>
                           <Button className="w-full bg-[#F5C518] font-bold text-black hover:bg-[#e6b800]" disabled={!escalationData.preferredTime} onClick={() => handleEscalationSubmit(escalationData.preferredTime, escalationData.whatsapp)}>Confirm Preference</Button>
                        </div>
@@ -1675,8 +1968,59 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
             <Send className="w-4 h-4" />
           </Button>
         </div>
+
+          {/* Sidebar Tab - visible when sidebar is collapsed */}
+          <div className="sidebar-tab hidden" onClick={toggleAgentSidebar}>
+            AGENTS
+          </div>
+        </div>
+
+        {/* Agent Sidebar */}
+        <div className={`agent-sidebar ${isSidebarOpen ? '' : 'collapsed'}`}>
+          <div className="sidebar-header">
+            <div className="sidebar-title">
+              <Bot className="w-4 h-4" />
+              Agent Activity
+            </div>
+            <Button variant="ghost" size="icon" onClick={toggleAgentSidebar} className="sidebar-close-btn">
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto">
+            {agentTrace?.map((agent, index) => {
+                const isActive = index === agentTrace.length - 1 && pipelineStatus === 'ACTIVE';
+                const isCompleted = index < agentTrace.length - 1 || pipelineStatus === 'COMPLETED';
+                const status = isActive ? 'active' : isCompleted ? 'completed' : 'waiting';
+                
+                return (
+              <div key={agent.step} className={`agent-item ${status}`}>
+                <div className={`agent-status-dot ${status}`} />
+                <div className="agent-info">
+                  <div className="agent-name">{agent.agent}</div>
+                  <div className="agent-status-text">{agent.action}</div>
+                  <div className="agent-duration">{agent.duration_ms}ms</div>
+                  {isActive && (
+                    <div className="agent-progress">
+                      <div className="agent-progress-fill" />
+                    </div>
+                  )}
+                </div>
+              </div>
+                );
+              })}
+          </div>
+
+          <div className="sidebar-footer">
+            <div className="groq-status">
+              <div className="groq-dot" />
+              <span>Groq API Connected</span>
+            </div>
+            <div className="api-endpoint">api.groq.com/llama-3</div>
+          </div>
+        </div>
+        </div>
       </div>
-    </div>
     </>
   );
 };

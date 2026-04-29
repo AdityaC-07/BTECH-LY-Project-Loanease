@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "./ui/button";
-import { formatIndianCurrency } from "@/lib/languageUtils";
+import { formatIndianRupees } from "@/lib/languageUtils";
 import { Check, Star } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -73,7 +73,7 @@ export const LoanComparisonCards = ({ offers, onSelect }: LoanComparisonCardsPro
                     <h4 className="text-lg font-bold uppercase tracking-[0.24em] text-slate-100">{offer.name}</h4>
                     <p className="mt-1 text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">{offer.tenure} mo.</p>
                   </div>
-                  <p className="text-right text-2xl font-black text-[#F5C518]">{formatIndianCurrency(offer.amount)}</p>
+                  <p className="text-right text-2xl font-black text-[#F5C518]">{formatIndianRupees(offer.amount)}</p>
                 </div>
 
                 <div className="space-y-3 border-y border-[#2a2a2a] py-4 text-sm">
@@ -83,15 +83,15 @@ export const LoanComparisonCards = ({ offers, onSelect }: LoanComparisonCardsPro
                   </div>
                   <div className="flex items-center justify-between gap-4">
                     <span className="text-slate-400">Monthly EMI</span>
-                    <span className="text-xl font-bold text-[#F5C518]">{formatIndianCurrency(offer.emi)}</span>
+                    <span className="text-xl font-bold text-[#F5C518]">{formatIndianRupees(offer.emi)}</span>
                   </div>
                   <div className="flex items-center justify-between gap-4">
                     <span className="text-slate-400">Total Payable</span>
-                    <span className="font-semibold text-slate-100">{formatIndianCurrency(totalPayable)}</span>
+                    <span className="font-semibold text-slate-100">{formatIndianRupees(totalPayable)}</span>
                   </div>
                   <div className="group/interest relative flex items-center justify-between gap-4 pt-1 text-xs text-slate-400">
                     <span>Total Interest</span>
-                    <span className="font-semibold text-slate-100">{formatIndianCurrency(totalInterest)}</span>
+                    <span className="font-semibold text-slate-100">{formatIndianRupees(totalInterest)}</span>
                     <div className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 -translate-y-full opacity-0 transition-opacity duration-200 group-hover/interest:opacity-100">
                       <div className="max-w-[210px] rounded-lg border border-[#2a2a2a] bg-[#111111] px-3 py-2 text-[11px] text-slate-300 shadow-xl">
                         This is how much you pay to the bank above your principal amount
@@ -116,8 +116,8 @@ export const LoanComparisonCards = ({ offers, onSelect }: LoanComparisonCardsPro
                     />
                   </div>
                   <div className="flex items-center justify-between text-[11px] text-slate-400">
-                    <span>{formatIndianCurrency(offer.amount)}</span>
-                    <span>{formatIndianCurrency(totalInterest)}</span>
+                    <span>{formatIndianRupees(offer.amount)}</span>
+                    <span>{formatIndianRupees(totalInterest)}</span>
                   </div>
                 </div>
 
@@ -133,7 +133,7 @@ export const LoanComparisonCards = ({ offers, onSelect }: LoanComparisonCardsPro
                         : "border border-[#2a2a2a] bg-transparent text-slate-100 hover:bg-white/5"
                   )}
                 >
-                  {isSelected ? "Selected ✓" : offer.isRecommended ? "Select ★" : "Select"}
+                  {isSelected ? "Selected ✓" : offer.isRecommended ? "Select ⭐" : "Select"}
                 </Button>
               </div>
             </div>

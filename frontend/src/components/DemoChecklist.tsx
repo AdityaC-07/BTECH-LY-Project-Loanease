@@ -93,7 +93,7 @@ export const DemoChecklist = () => {
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-[hsl(0,0%,25%)] bg-[hsl(0,0%,18%)/0.6]">
           <div className="flex items-center gap-2">
-            <span className="text-lg">📋</span>
+            <CheckCircle2 className="w-5 h-5" />
             <span className="text-sm font-bold text-white tracking-tight">Demo Checklist</span>
             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[hsl(47,100%,50%)] text-[hsl(0,0%,13%)] font-semibold">
               {progress}/{total}

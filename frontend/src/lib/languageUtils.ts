@@ -66,7 +66,37 @@ export const detectLanguage = async (
 };
 
 /**
+ * Format Indian rupees with correct Indian number formatting
+ */
+export const formatIndianRupees = (amount: number | null | undefined): string => {
+  // Handle null/undefined
+  if (amount === null || amount === undefined || isNaN(amount)) {
+    return '₹0'
+  }
+  
+  amount = Math.round(Number(amount))
+  
+  // Indian format: 
+  // last 3 digits, then groups of 2
+  const str = amount.toString()
+  
+  if (str.length <= 3) {
+    return '₹' + str
+  }
+  
+  // Split into last 3 and rest
+  const last3 = str.slice(-3)
+  const rest = str.slice(0, -3)
+  
+  // Group rest in pairs from right
+  const grouped = rest.replace(/\B(?=(\d{2})+(?!\d))/g, ',')
+  
+  return '₹' + grouped + ',' + last3
+}
+
+/**
  * Format number in Indian style (e.g., 5,00,000 instead of 500,000)
+ * @deprecated Use formatIndianRupees instead
  */
 export const formatIndianNumber = (num: number): string => {
   const parts = num.toString().split(".");
@@ -76,6 +106,7 @@ export const formatIndianNumber = (num: number): string => {
 
 /**
  * Format currency in Indian style with rupee symbol
+ * @deprecated Use formatIndianRupees instead
  */
 export const formatIndianCurrency = (amount: number): string => {
   return `₹${formatIndianNumber(Math.floor(amount))}`;
@@ -85,7 +116,7 @@ export const formatIndianCurrency = (amount: number): string => {
  * Format EMI with proper currency styling
  */
 export const formatEMI = (amount: number, language: "en" | "hi"): string => {
-  const currency = formatIndianCurrency(amount);
+  const currency = formatIndianRupees(amount);
   const perMonth = language === "en" ? "per month" : "प्रति माह";
   return `${currency} ${perMonth}`;
 };

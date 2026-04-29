@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { ChevronLeft, Database, Activity, Lock, Layers, Info, X, ExternalLink, ShieldCheck } from "lucide-react";
+import { ChevronLeft, Database, Activity, Lock, Layers, Info, X, ExternalLink, ShieldCheck, Link as LinkIcon } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { BlockCard } from "@/components/blockchain/BlockCard";
 import { MerkleTree } from "@/components/blockchain/MerkleTree";
@@ -101,7 +101,7 @@ export default function BlockchainExplorer() {
             </Link>
             <div>
               <h1 className="text-2xl font-black flex items-center gap-3 uppercase tracking-tighter">
-                <span className="text-3xl">⛓️</span> LoanEase Audit Ledger
+                <span className="text-3xl"><LinkIcon className="w-8 h-8" /></span> LoanEase Audit Ledger
               </h1>
               <p className="text-[10px] text-muted-foreground uppercase tracking-[0.2em] font-bold">
                 Tamper-evident blockchain record of all sanctioned loans
@@ -288,19 +288,3 @@ export default function BlockchainExplorer() {
   );
 }
 
-const ShieldCheck = ({ size, className }: { size: number, className?: string }) => (
-  <svg 
-    width={size} 
-    height={size} 
-    viewBox="0 0 24 24" 
-    fill="none" 
-    stroke="currentColor" 
-    strokeWidth="2" 
-    strokeLinecap="round" 
-    strokeLinejoin="round" 
-    className={className}
-  >
-    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-    <path d="m9 12 2 2 4-4" />
-  </svg>
-);

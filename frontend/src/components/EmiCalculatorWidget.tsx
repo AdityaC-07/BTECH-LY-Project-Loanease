@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Slider } from "./ui/slider";
 import { Button } from "./ui/button";
-import { formatIndianCurrency } from "@/lib/languageUtils";
+import { formatIndianRupees } from "@/lib/languageUtils";
 import { DollarSign } from "lucide-react";
 
 interface EmiCalculatorWidgetProps {
@@ -44,7 +44,7 @@ export const EmiCalculatorWidget = ({
         <div className="space-y-2">
           <div className="flex justify-between text-sm">
             <span className="text-muted-foreground">Amount:</span>
-            <span className="font-mono text-yellow-400 font-bold">{formatIndianCurrency(amount)}</span>
+            <span className="font-mono text-yellow-400 font-bold">{formatIndianRupees(amount)}</span>
           </div>
           <Slider
             value={[amount]}
@@ -87,15 +87,15 @@ export const EmiCalculatorWidget = ({
       <div className="pt-4 border-t border-border/50 space-y-2">
         <div className="flex justify-between items-baseline">
           <span className="text-sm text-muted-foreground">Your EMI:</span>
-          <span className="text-xl font-bold text-yellow-400">{formatIndianCurrency(emi)}/month</span>
+          <span className="text-xl font-bold text-yellow-400">{formatIndianRupees(emi)}/month</span>
         </div>
         <div className="flex justify-between text-xs text-muted-foreground">
           <span>Total Interest:</span>
-          <span>{formatIndianCurrency(totalInterest)}</span>
+          <span>{formatIndianRupees(totalInterest)}</span>
         </div>
         <div className="flex justify-between text-xs text-muted-foreground">
           <span>Total Payable:</span>
-          <span>{formatIndianCurrency(totalPayable)}</span>
+          <span>{formatIndianRupees(totalPayable)}</span>
         </div>
       </div>
 

@@ -1,3 +1,5 @@
+import { Check, CheckCheck, Paperclip } from "lucide-react";
+
 interface Message {
   id: string;
   content: string;
@@ -26,11 +28,11 @@ export const WhatsAppMessage = ({ message }: WhatsAppMessageProps) => {
   const getStatusIcon = (status?: string) => {
     switch (status) {
       case 'sent':
-        return '✓';
+        return <Check className="w-4 h-4" />;
       case 'delivered':
-        return '✓✓';
+        return <CheckCheck className="w-4 h-4" />;
       case 'read':
-        return <span style={{ color: '#53bdeb' }}>✓✓</span>;
+        return <CheckCheck className="w-4 h-4 text-blue-400" />;
       default:
         return null;
     }
@@ -55,7 +57,7 @@ export const WhatsAppMessage = ({ message }: WhatsAppMessageProps) => {
           {message.attachment && (
             <div className="flex items-center gap-2 mb-1 pb-2 border-b border-white/20">
               <div className="w-8 h-8 bg-white/20 rounded flex items-center justify-center">
-                📎
+                <Paperclip className="w-4 h-4" />
               </div>
               <span className="text-sm">{message.attachment.name}</span>
             </div>
