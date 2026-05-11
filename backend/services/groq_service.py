@@ -31,18 +31,22 @@ class GroqService:
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None,
         primary_model: str = "llama-3.3-70b-versatile",
         fallback_model: str = "llama-3.1-8b-instant",
         timeout: int = 8,
     ) -> None:
-        try:
-            self._client = AsyncGroq(api_key=api_key)
-            self._connected = False
-        except Exception as e:
-            logger.warning(f"Failed to initialize Groq client: {e}")
+        if not api_key:
             self._client = None
             self._connected = False
+        else:
+            try:
+                self._client = AsyncGroq(api_key=api_key)
+                self._connected = False
+            except Exception as e:
+                logger.warning(f"Failed to initialize Groq client: {e}")
+                self._client = None
+                self._connected = False
         self._primary_model = primary_model
         self._fallback_model = fallback_model
         self._timeout = timeout

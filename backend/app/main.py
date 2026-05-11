@@ -202,6 +202,16 @@ def health() -> HealthResponse:
     )
 
 
+@app.get("/")
+def root() -> dict[str, str]:
+    return {
+        "service": "LoanEase Unified Backend API",
+        "status": "running",
+        "health": "/health",
+        "docs": "/docs",
+    }
+
+
 @app.get("/credit-score/{pan_number}", response_model=CreditScoreResponse)
 def credit_score(pan_number: str) -> CreditScoreResponse:
     """

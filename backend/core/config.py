@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # Groq
-    GROQ_API_KEY: str
+    GROQ_API_KEY: str = ""
     GROQ_MODEL_PRIMARY: str = "llama-3.3-70b-versatile"
     GROQ_MODEL_FALLBACK: str = "llama-3.1-8b-instant"
     GROQ_TIMEOUT: int = 8
