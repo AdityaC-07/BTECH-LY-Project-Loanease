@@ -184,11 +184,13 @@ async def get_analytics(session_id: str):
         session_data = {}
         
         if session:
-            session_data = session.get("data", {})
+            session_data = session.get("data") or {}
+            if not isinstance(session_data, dict):
+                session_data = {}
         elif session_id in app.state.saved_sessions:
-            session_data = app.state.saved_sessions[session_id].get("applicant_data", {})
-        else:
-            raise HTTPException(status_code=404, detail="Session not found")
+            session_data = app.state.saved_sessions[session_id].get("applicant_data") or {}
+            if not isinstance(session_data, dict):
+                session_data = {}
         
         # Extract loan data
         loan_amount = session_data.get("loan_amount", 500000)

@@ -435,31 +435,24 @@ def save_escalation_preference(payload: EscalationPreferenceRequest):
 async def get_analytics(session_id: str):
     """Get comprehensive analytics data for post-sanction dashboard"""
     try:
-        # 1. Try persistent store
-        session_data = store.get(session_id)
-        
-        # 2. Try in-memory sessions dictionary
+        # Collect the best available session payload, but never fail hard if it is missing.
+        session_data: dict[str, Any] = {}
+
+        session = session_store.get(session_id)
+        if isinstance(session, dict):
+            payload = session.get("data")
+            if isinstance(payload, dict):
+                session_data = payload
+            elif any(key in session for key in ("loan_amount", "offered_rate", "loan_term", "credit_score", "risk_score")):
+                session_data = session
+
+        if not session_data and session_id in app.state.saved_sessions:
+            payload = app.state.saved_sessions[session_id].get("applicant_data")
+            if isinstance(payload, dict):
+                session_data = payload
+
         if not session_data:
-            session_data = sessions.get(session_id)
-            
-        # 3. Try global session_store (from core.session)
-        if not session_data:
-            session = session_store.get(session_id)
-            if session:
-                session_data = session.get("data", {})
-                # If data is empty but we have top-level fields, use those
-                if not session_data and any(k in session for k in ["loan_amount", "offered_rate"]):
-                    session_data = session
-        
-        # 4. Try negotiation_store
-        if not session_data:
-            try:
-                from negotiation_app_store import negotiation_store
-                neg_session = negotiation_store.get(session_id)
-                if neg_session:
-                    session_data = neg_session
-            except ImportError:
-                pass
+            session_data = {}
 
         # Extract loan data with robust fallbacks and string cleaning
         def clean_float(val, default):

@@ -29,6 +29,8 @@ class ApplicationStore:
                     if not line:
                         continue
                     record = json.loads(line)
+                    if not isinstance(record, dict):
+                        continue
                     if record.get("application_id") == application_id:
                         return record
         return None
