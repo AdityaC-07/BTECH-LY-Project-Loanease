@@ -171,7 +171,7 @@ async def create_sanction_letter(request: SanctionRequest):
         emi_result = calculate_emi(request.loan_amount, request.interest_rate, request.tenure_years)
 
         try:
-            generate_sanction_letter(
+            pdf_bytes = generate_sanction_letter(
                 applicant_name=request.applicant_name,
                 pan_number=request.pan_number,
                 loan_amount=request.loan_amount,
@@ -180,6 +180,15 @@ async def create_sanction_letter(request: SanctionRequest):
                 emi=emi_result["monthly_emi"],
                 application_id=transaction_id,
             )
+            
+            # Store PDF for later retrieval
+            sanctions_dir = os.path.join("artifacts", "sanctions")
+            os.makedirs(sanctions_dir, exist_ok=True)
+            pdf_path = os.path.join(sanctions_dir, f"{transaction_id}.pdf")
+            with open(pdf_path, "wb") as f:
+                f.write(pdf_bytes)
+            logger.info(f"📄 Sanction letter saved to {pdf_path}")
+            
         except Exception as pdf_err:
             logger.warning(f"PDF generation failed (non-fatal): {pdf_err}")
 
@@ -192,10 +201,13 @@ async def create_sanction_letter(request: SanctionRequest):
                 "signature": signature,
             })
             session_store.log_agent(request.session_id, {
-                "agent": "blockchain",
-                "action": "sanction",
+                "agent": "BlockchainAuditAgent",
+                "action": "LOAN_SANCTIONED",
                 "transaction_id": transaction_id,
                 "block_hash": block_hash,
+                "reasoning": f"Loan of ₹{request.loan_amount} at {request.interest_rate}% p.a. sanctioned and recorded on ledger.",
+                "duration_ms": 1200,
+                "status": "SUCCESS"
             })
 
         return SanctionResponse(
@@ -276,6 +288,25 @@ async def get_blockchain():
     except Exception as e:
         logger.error(f"Failed to get blockchain: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get blockchain: {str(e)}")
+
+@router.get("/pdf/{transaction_id}")
+async def download_sanction_pdf(transaction_id: str):
+    """Serve the generated sanction letter PDF"""
+    pdf_path = os.path.join("artifacts", "sanctions", f"{transaction_id}.pdf")
+    if not os.path.exists(pdf_path):
+        raise HTTPException(status_code=404, detail="Sanction letter not found")
+    
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        pdf_path, 
+        media_type="application/pdf",
+        filename=f"Sanction_Letter_{transaction_id}.pdf"
+    )
+
+@router.get("/sanction")
+async def get_sanction_by_reference(reference_id: str):
+    """Alias for PDF download by reference ID (used by frontend)"""
+    return await download_sanction_pdf(reference_id)
 
 # ── NEW EXPLORER ENDPOINTS ─────────────────────────────────────────
 

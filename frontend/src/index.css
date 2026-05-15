@@ -60,6 +60,16 @@
     --sidebar-accent-foreground: 0 0% 100%;
     --sidebar-border: 0 0% 25%;
     --sidebar-ring: 47 100% 50%;
+
+    /* Redesign variables */
+    --y: #F5C518;
+    --black: #000000;
+    --card-custom: #0d0d0d;
+    --border-custom: #1a1a1a;
+    --muted-custom: #444444;
+    --dim: #222222;
+    --green: #22c55e;
+    --red: #ef4444;
   }
 
   .dark {

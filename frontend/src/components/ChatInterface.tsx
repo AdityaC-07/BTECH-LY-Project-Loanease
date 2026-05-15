@@ -161,6 +161,10 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
+  const handleViewAnalytics = () => {
+    setShowAnalytics(true);
+  };
+
   const toggleAgentSidebar = () => {
     setIsSidebarOpen(!isSidebarOpen);
   };
@@ -358,6 +362,17 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const isValidPan = (value: string) => /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(value);
 
   const kycText = (en: string, hi: string) => (language === "hi" ? hi : en);
+  useEffect(() => {
+    // Initialize session in the backend to start orchestration logs
+    const initSession = async () => {
+      try {
+        await fetch(`/session/init/${userData.sessionId}`, { method: "POST" });
+      } catch (e) {
+        console.warn("Failed to initialize session logging", e);
+      }
+    };
+    initSession();
+  }, [userData.sessionId]);
 
   const addBotMessage = (text: string) => {
     setMessages((prev) => [
@@ -381,6 +396,16 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   useEffect(() => {
     scrollToBottom();
   }, [messages, showCreditScore, showLoanOffers, showSanction, showAnalytics, showPanUploadCard, showAadhaarUploadCard, showPanConfirmCard, showKycVerifiedCard, isKycProcessing]);
+
+  useEffect(() => {
+    if (!showAnalytics) return;
+
+    const analyticsSection = document.getElementById("analytics-section");
+    analyticsSection?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, [showAnalytics]);
 
   useEffect(() => {
     const TERMINAL_STATES = ["SANCTIONED", "REJECTED", "ESCALATED", "FAILED"];
@@ -1906,7 +1931,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
               sanctionDate={new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
               referenceId={userData.blockchainData?.transaction_id || `LOAN${Date.now().toString().slice(-8)}`}
               blockchainHash={userData.blockchainData?.block_hash || "0x..."}
-              onViewAnalytics={() => setShowAnalytics(true)}
+              onViewAnalytics={handleViewAnalytics}
             />
           </div>
         )}
@@ -1927,7 +1952,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         </div>
 
         <div className="lg:w-[340px] lg:ml-4 min-h-0 overflow-y-auto chat-messages-container">
-          <AgentActivityPanel trace={agentTrace} pipelineStatus={pipelineStatus} />
+        {/* Removed redundant floating AgentActivityPanel */}
         </div>
       </div>
 
@@ -1976,47 +2001,36 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         </div>
 
         {/* Agent Sidebar */}
-        <div className={`agent-sidebar ${isSidebarOpen ? '' : 'collapsed'}`}>
-          <div className="sidebar-header">
-            <div className="sidebar-title">
-              <Bot className="w-4 h-4" />
-              Agent Activity
-            </div>
-            <Button variant="ghost" size="icon" onClick={toggleAgentSidebar} className="sidebar-close-btn">
-              <X className="w-4 h-4" />
-            </Button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto">
-            {agentTrace?.map((agent, index) => {
-                const isActive = index === agentTrace.length - 1 && pipelineStatus === 'ACTIVE';
-                const isCompleted = index < agentTrace.length - 1 || pipelineStatus === 'COMPLETED';
-                const status = isActive ? 'active' : isCompleted ? 'completed' : 'waiting';
-                
-                return (
-              <div key={agent.step} className={`agent-item ${status}`}>
-                <div className={`agent-status-dot ${status}`} />
-                <div className="agent-info">
-                  <div className="agent-name">{agent.agent}</div>
-                  <div className="agent-status-text">{agent.action}</div>
-                  <div className="agent-duration">{agent.duration_ms}ms</div>
-                  {isActive && (
-                    <div className="agent-progress">
-                      <div className="agent-progress-fill" />
-                    </div>
-                  )}
-                </div>
+        <div className={`agent-sidebar border-l border-border bg-card/80 backdrop-blur-md transition-all duration-300 ${isSidebarOpen ? 'w-[320px]' : 'w-0 overflow-hidden opacity-0'}`}>
+          <div className="flex flex-col h-full">
+            <div className="flex items-center justify-between p-4 border-b border-border/50">
+              <div className="flex items-center gap-2 font-bold text-sm">
+                <Bot className="w-4 h-4 text-yellow-400" />
+                AGENT ORCHESTRATION
               </div>
-                );
-              })}
-          </div>
-
-          <div className="sidebar-footer">
-            <div className="groq-status">
-              <div className="groq-dot" />
-              <span>Groq API Connected</span>
+              <Button variant="ghost" size="icon" onClick={toggleAgentSidebar} className="h-8 w-8">
+                <X className="w-4 h-4" />
+              </Button>
             </div>
-            <div className="api-endpoint">api.groq.com/llama-3</div>
+            
+            <div className="flex-1 overflow-hidden">
+              <AgentActivityPanel 
+                trace={agentTrace} 
+                pipelineStatus={pipelineStatus} 
+                activeAgentLabel={activeAgent}
+              />
+            </div>
+
+            <div className="p-4 border-t border-border/50 bg-muted/20">
+              <div className="flex items-center justify-between text-[10px] text-muted-foreground uppercase tracking-widest font-bold mb-2">
+                <span>System Status</span>
+                <span className="text-green-500">Online</span>
+              </div>
+              <div className="flex items-center gap-2 text-[10px] font-mono bg-black/40 p-2 rounded border border-border/50 overflow-hidden whitespace-nowrap">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                api.groq.com/llama-3-70b-versatile
+              </div>
+            </div>
           </div>
         </div>
         </div>

@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Link } from "react-router-dom";
 import { Download, Shield, FileCheck, TrendingUp, CheckCircle2, Lock, QrCode, BarChart3 } from "lucide-react";
 import { useState } from "react";
+import { ENDPOINTS } from "@/config";
 
 interface SanctionLetterProps {
   customerName: string;
@@ -39,7 +40,7 @@ export const SanctionLetter = ({
       setIsDownloading(true);
       
       // Fetch PDF from backend
-      const response = await fetch(`/api/blockchain/sanction?reference_id=${referenceId}`, {
+      const response = await fetch(`${ENDPOINTS.blockchain_sanction}?reference_id=${encodeURIComponent(referenceId)}`, {
         method: "GET",
         headers: {
           "Accept": "application/pdf",
@@ -178,6 +179,7 @@ export const SanctionLetter = ({
             variant="accent" 
             className="w-full h-12 text-sm font-bold tracking-wide" 
             size="lg"
+            type="button"
             onClick={handleDownloadPDF}
             disabled={isDownloading}
           >
@@ -190,6 +192,7 @@ export const SanctionLetter = ({
               variant="outline"
               className="w-full h-12 text-sm font-bold tracking-wide border-border hover:bg-muted"
               size="lg"
+              type="button"
               onClick={onViewAnalytics}
             >
               <BarChart3 className="w-4 h-4 mr-2" />
@@ -202,6 +205,7 @@ export const SanctionLetter = ({
               variant="outline"
               className="w-full h-12 text-sm font-bold tracking-wide border-border hover:bg-muted"
               size="lg"
+              type="button"
             >
               <Shield className="w-4 h-4 mr-2" />
               Verify on Ledger

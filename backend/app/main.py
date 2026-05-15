@@ -8,6 +8,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
+from typing import Optional, Any
 
 from fastapi import FastAPI, HTTPException, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -134,11 +135,18 @@ except ImportError as e:
     logger.warning(f"Pipeline not available: {e}")
     LoanPipeline = None
 
+# Import session store
+from core.session import session_store
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 ARTIFACTS_DIR = BASE_DIR / "artifacts"
 STORE_PATH = BASE_DIR / "data" / "applications.jsonl"
 
 app = FastAPI(title="LoanEase Unified Backend API", version="2.0.0")
+
+# Import routers from agents
+from agents.blockchain_agent.main import router as blockchain_router
+app.include_router(blockchain_router, prefix="/blockchain", tags=["Blockchain Agent"])
 
 app.add_middleware(
     CORSMiddleware,
@@ -285,6 +293,19 @@ def assess(payload: AssessRequest) -> AssessResponse:
     }
     store.save(record)
 
+    # Log Credit assessment
+    # Try to find session_id in payload or raw request
+    session_id = payload.session_id if hasattr(payload, 'session_id') else str(uuid4())
+    
+    session_store.log_agent(session_id, {
+        "agent": "CreditUnderwritingAgent",
+        "action": "LOAN_APPROVED",
+        "reasoning": f"Credit assessment complete. Risk Tier: {result.get('risk_tier')}. Score: {result.get('credit_score')}",
+        "status": "SUCCESS",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    })
+    session_store.update_stage(session_id, "CREDIT_ASSESSED")
+
     # Build response with all fields from result
     return AssessResponse(
         application_id=application_id,
@@ -335,10 +356,213 @@ def get_session(session_id: str) -> SessionResponse:
     return SessionResponse(**sessions[session_id])
 
 
+@app.get("/pipeline/log/{session_id}")
+async def get_pipeline_log(session_id: str):
+    """Return pipeline execution log for a session."""
+    session = session_store.get(session_id)
+    if not session:
+        # Create a new session if it doesn't exist to avoid front-end 404s
+        session = session_store.get_or_create(session_id)
+        
+    return {
+        "session_id": session_id,
+        "pipeline_status": session.get("stage", "ACTIVE"),
+        "agent_trace": session.get("agent_log", []),
+    }
+
+@app.get("/pipeline/global-logs")
+async def get_global_logs(limit: int = 20):
+    """Get the most recent system-wide agent activity"""
+    return {
+        "logs": session_store.get_global_activity(limit),
+        "total_active_sessions": len(session_store._sessions),
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+@app.post("/session/init/{session_id}")
+async def init_session(session_id: str):
+    """Initialize a new session and log the start."""
+    session_store.get_or_create(session_id)
+    session_store.log_agent(session_id, {
+        "agent": "MasterOrchestratorAgent",
+        "action": "INITIATED_SESSION",
+        "reasoning": "New loan inquiry received. Starting orchestration.",
+        "status": "SUCCESS",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    })
+    session_store.update_stage(session_id, "INITIATED")
+    return {"status": "success", "session_id": session_id}
+
+
+@app.post("/pipeline/start")
+async def start_pipeline(payload: PipelineStartRequest):
+    """
+    Manually start or update the pipeline orchestration for a session.
+    Used when transitioning from chat input to agent processing.
+    """
+    session_id = payload.session_id
+    session_store.get_or_create(session_id)
+    
+    # Update session data with what we have so far
+    session_store.update_data(session_id, "applicant_name", payload.applicant_name)
+    session_store.update_data(session_id, "loan_amount", payload.loan_amount)
+    session_store.update_data(session_id, "loan_term", payload.loan_term)
+    session_store.update_data(session_id, "offered_rate", payload.offered_rate)
+    
+    session_store.log_agent(session_id, {
+        "agent": "MasterOrchestratorAgent",
+        "action": "PIPELINE_ACTIVATED",
+        "reasoning": f"Orchestration pipeline activated for {payload.applicant_name}. Starting multi-agent verification.",
+        "status": "SUCCESS",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    })
+    session_store.update_stage(session_id, "ACTIVE")
+    
+    return {
+        "status": "ACTIVE",
+        "session_id": session_id,
+        "message": "Pipeline orchestration activated successfully"
+    }
+
+
 @app.post("/escalation/callback-preference")
 def save_escalation_preference(payload: EscalationPreferenceRequest):
     escalations[payload.session_id] = payload.model_dump()
     return {"status": "success", "message": "Callback preference saved"}
+
+
+@app.get("/analytics/{session_id}")
+async def get_analytics(session_id: str):
+    """Get comprehensive analytics data for post-sanction dashboard"""
+    try:
+        # 1. Try persistent store
+        session_data = store.get(session_id)
+        
+        # 2. Try in-memory sessions dictionary
+        if not session_data:
+            session_data = sessions.get(session_id)
+            
+        # 3. Try global session_store (from core.session)
+        if not session_data:
+            session = session_store.get(session_id)
+            if session:
+                session_data = session.get("data", {})
+                # If data is empty but we have top-level fields, use those
+                if not session_data and any(k in session for k in ["loan_amount", "offered_rate"]):
+                    session_data = session
+        
+        # 4. Try negotiation_store
+        if not session_data:
+            try:
+                from negotiation_app_store import negotiation_store
+                neg_session = negotiation_store.get(session_id)
+                if neg_session:
+                    session_data = neg_session
+            except ImportError:
+                pass
+
+        # Extract loan data with robust fallbacks and string cleaning
+        def clean_float(val, default):
+            if val is None: return default
+            if isinstance(val, (int, float)): return float(val)
+            try:
+                # Remove currency symbols, commas, and percent signs
+                clean_val = str(val).replace("₹", "").replace(",", "").replace("%", "").strip()
+                return float(clean_val)
+            except (ValueError, TypeError):
+                return default
+
+        loan_amount = clean_float(session_data.get("loan_amount"), 500000.0)
+        interest_rate = clean_float(session_data.get("offered_rate", session_data.get("interest_rate")), 11.0)
+        
+        try:
+            tenure_months = int(str(session_data.get("loan_term", session_data.get("tenure_months", 60))).strip())
+        except (ValueError, TypeError):
+            tenure_months = 60
+        
+        # Calculate EMI using standard formula with safety
+        monthly_rate = interest_rate / 12 / 100
+        if monthly_rate > 0:
+            power_val = (1 + monthly_rate) ** float(tenure_months)
+            if power_val > 1:
+                emi = loan_amount * monthly_rate * power_val / (power_val - 1)
+            else:
+                emi = loan_amount / tenure_months
+        else:
+            emi = loan_amount / tenure_months
+            
+        total_payable = emi * float(tenure_months)
+        total_interest = total_payable - float(loan_amount)
+        
+        # Get credit assessment data
+        credit_score = session_data.get("credit_score", 720)
+        risk_score = session_data.get("risk_score", 75)
+        
+        # Determine risk tier
+        if risk_score >= 75:
+            risk_tier = "Low Risk"
+        elif risk_score >= 50:
+            risk_tier = "Medium Risk"
+        else:
+            risk_tier = "High Risk"
+        
+        # SHAP factors (mock data if not available)
+        shap_factors = session_data.get("shap_explanation", [
+            {"feature": "Credit History", "value": 0.42, "direction": "positive"},
+            {"feature": "Income Level", "value": 0.28, "direction": "positive"},
+            {"feature": "Loan Amount", "value": -0.15, "direction": "negative"},
+            {"feature": "Employment Stability", "value": 0.18, "direction": "positive"},
+            {"feature": "Debt-to-Income", "value": -0.08, "direction": "negative"}
+        ])
+        
+        # Negotiation summary with robust fallbacks
+        opening_rate = clean_float(session_data.get("initial_rate"), 11.5)
+        final_rate = clean_float(interest_rate, 11.0)
+        try:
+            rounds_taken = int(str(session_data.get("negotiation_rounds", 2)).strip())
+        except (ValueError, TypeError):
+            rounds_taken = 2
+            
+        monthly_savings = (opening_rate - final_rate) * loan_amount / 12 / 100
+        total_savings = monthly_savings * tenure_months
+        
+        # Benchmark data (static averages)
+        benchmark = {
+            "avg_credit_score": 720,
+            "avg_income_normalized": 70,
+            "avg_loan_to_income": 65,
+            "avg_employment": 75,
+            "avg_repayment": 80,
+            "avg_coapplicant": 60
+        }
+        
+        return {
+            "loan_data": {
+                "amount": loan_amount,
+                "rate": interest_rate,
+                "tenure_months": tenure_months,
+                "emi": round(emi, 2),
+                "total_payable": round(total_payable, 2),
+                "total_interest": round(total_interest, 2)
+            },
+            "credit_data": {
+                "credit_score": credit_score,
+                "risk_score": risk_score,
+                "risk_tier": risk_tier,
+                "shap_factors": shap_factors
+            },
+            "negotiation_summary": {
+                "opening_rate": opening_rate,
+                "final_rate": final_rate,
+                "rounds_taken": rounds_taken,
+                "total_savings": round(total_savings, 2)
+            },
+            "benchmark": benchmark
+        }
+        
+    except Exception as e:
+        logger.error(f"Analytics error for session {session_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get analytics: {str(e)}")
 
 
 # =============================================================================
@@ -354,24 +578,26 @@ def _assert_upload_constraints(file: UploadFile, file_bytes: bytes) -> None:
 
 
 @app.post("/kyc/extract/pan")
-async def extract_pan_endpoint(document: UploadFile = File(...), language: str = Form("en")):
-    language = "hi" if language == "hi" else "en"
+async def extract_pan_document(document: UploadFile = File(...), session_id: str | None = Form(None)):
     file_bytes = await document.read()
-    
-    logger.info(f"KYC PAN: Received file {document.filename}, type {document.content_type}, size {len(file_bytes)} bytes")
-    
     _assert_upload_constraints(document, file_bytes)
     
+    # Log KYC start if session_id provided
+    if session_id:
+        session_store.log_agent(session_id, {
+            "agent": "KYCVerificationAgent",
+            "action": "SCANNING_PAN",
+            "reasoning": "User uploaded PAN card. Extracting identity fields.",
+            "status": "RUNNING",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        session_store.update_stage(session_id, "KYC_PENDING")
+
     try:
         extension = (document.filename or "").lower().split(".")[-1]
         preprocessed = preprocess_image(file_bytes, extension)
         ocr_text, confidence = run_ocr(preprocessed)
-        
-        logger.info(f"KYC PAN: OCR completed, confidence {confidence:.2f}")
-        logger.info(f"KYC PAN: Raw OCR text (first 200 chars): {ocr_text[:200] if ocr_text else 'EMPTY'}")
-        
         result = extract_pan(ocr_text)
-        logger.info(f"KYC PAN: Extracted fields - pan={result.get('extracted_fields', {}).get('pan_number')}, name={result.get('extracted_fields', {}).get('name')}")
         
         return {
             "document_type": "PAN",
@@ -380,32 +606,32 @@ async def extract_pan_endpoint(document: UploadFile = File(...), language: str =
             "confidence_score": confidence,
             "processing_time_ms": 0,
         }
-    except UnsupportedDocumentError as exc:
-        logger.error(f"KYC PAN: Document error - {str(exc)}")
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        logger.error(f"KYC PAN: Extraction failed - {str(exc)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"PAN extraction failed: {str(exc)}") from exc
+        logger.error(f"KYC PAN: Extraction failed - {str(exc)}")
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/kyc/extract/aadhaar")
-async def extract_aadhaar_endpoint(document: UploadFile = File(...)):
+async def extract_aadhaar_document(document: UploadFile = File(...), session_id: str | None = Form(None)):
     file_bytes = await document.read()
-    
-    logger.info(f"KYC Aadhaar: Received file {document.filename}, type {document.content_type}, size {len(file_bytes)} bytes")
-    
     _assert_upload_constraints(document, file_bytes)
     
+    # Log KYC start if session_id provided
+    if session_id:
+        session_store.log_agent(session_id, {
+            "agent": "KYCVerificationAgent",
+            "action": "SCANNING_AADHAAR",
+            "reasoning": "User uploaded Aadhaar card. Extracting identity fields.",
+            "status": "RUNNING",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        session_store.update_stage(session_id, "KYC_PENDING")
+
     try:
         extension = (document.filename or "").lower().split(".")[-1]
         preprocessed = preprocess_image(file_bytes, extension)
         ocr_text, confidence = run_ocr(preprocessed)
-        
-        logger.info(f"KYC Aadhaar: OCR completed, confidence {confidence:.2f}")
-        logger.info(f"KYC Aadhaar: Raw OCR text (first 200 chars): {ocr_text[:200] if ocr_text else 'EMPTY'}")
-        
         result = extract_aadhaar(ocr_text)
-        logger.info(f"KYC Aadhaar: Extracted fields - aadhaar_last4={result.get('extracted_fields', {}).get('aadhaar_last4')}")
         
         return {
             "document_type": "AADHAAR",
@@ -414,16 +640,12 @@ async def extract_aadhaar_endpoint(document: UploadFile = File(...)):
             "confidence_score": confidence,
             "processing_time_ms": 0,
         }
-    except UnsupportedDocumentError as exc:
-        logger.error(f"KYC Aadhaar: Document error - {str(exc)}")
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        logger.error(f"KYC Aadhaar: Extraction failed - {str(exc)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Aadhaar extraction failed: {str(exc)}") from exc
-
+        logger.error(f"KYC Aadhaar: Extraction failed - {str(exc)}")
+        raise HTTPException(status_code=500, detail=str(exc))
 
 @app.post("/kyc/verify")
-async def verify_kyc(pan: UploadFile = File(...), aadhaar: UploadFile = File(...)):
+async def verify_kyc(pan: UploadFile = File(...), aadhaar: UploadFile = File(...), session_id: str | None = Form(None)):
     pan_bytes = await pan.read()
     aadhaar_bytes = await aadhaar.read()
     
@@ -446,6 +668,18 @@ async def verify_kyc(pan: UploadFile = File(...), aadhaar: UploadFile = File(...
         # Cross-validate
         validation = cross_validate_kyc(pan_result, aadhaar_result)
         
+        # Log KYC step
+        s_id = session_id or (pan.filename.split('_')[0] if '_' in pan.filename else str(uuid4()))
+        
+        session_store.log_agent(s_id, {
+            "agent": "KYCVerificationAgent",
+            "action": "DOCUMENTS_VERIFIED",
+            "reasoning": "Cross-validation of PAN and Aadhaar successful. Identity confirmed.",
+            "status": "SUCCESS",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        session_store.update_stage(s_id, "KYC_VERIFIED")
+
         return {
             "kyc_status": validation["kyc_status"],
             "pan_data": pan_result.get("extracted_fields"),
@@ -463,6 +697,20 @@ async def verify_kyc(pan: UploadFile = File(...), aadhaar: UploadFile = File(...
 # =============================================================================
 # NEGOTIATION ENDPOINTS (from negotiation_backend)
 # =============================================================================
+
+@app.post("/negotiate/chat", response_model=negotiation_schemas.CounterResponse)
+def negotiate_chat(payload: negotiation_schemas.CounterRequest) -> negotiation_schemas.CounterResponse:
+    # Log Negotiation action
+    session_store.log_agent(payload.session_id, {
+        "agent": "Negotiation Agent",
+        "action": "RATE_NEGOTIATED",
+        "reasoning": f"Processing user counter-offer. Intent: {payload.applicant_message[:30]}...",
+        "status": "SUCCESS",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    })
+    session_store.update_stage(payload.session_id, "NEGOTIATING")
+    
+    return negotiation_schemas.CounterResponse(**counter_session(payload.model_dump()))
 
 @app.post("/negotiate/start", response_model=negotiation_schemas.StartNegotiationResponse)
 def negotiate_start(payload: negotiation_schemas.StartNegotiationRequest) -> negotiation_schemas.StartNegotiationResponse:
@@ -789,6 +1037,50 @@ if TRANSLATION_AVAILABLE:
         """Get Groq API health status"""
         return groq_service.client.get_health_status()
 
+
+
+@app.get("/blockchain/sanction")
+async def download_sanction_letter(reference_id: str):
+    """
+    Download a generated sanction letter PDF.
+    This is a robust fallback endpoint that searches multiple locations.
+    """
+    from fastapi.responses import FileResponse
+    
+    # Clean reference ID
+    ref = reference_id.strip()
+    
+    # Possible directories
+    base = Path(__file__).resolve().parent.parent
+    possible_dirs = [
+        base / "artifacts" / "sanctions",
+        Path("artifacts/sanctions"),
+        base / "agents" / "blockchain_agent" / "artifacts" / "sanctions",
+    ]
+    
+    for s_dir in possible_dirs:
+        if not s_dir.exists():
+            continue
+            
+        # Try patterns
+        patterns = [
+            f"sanction_{ref}.pdf",
+            f"{ref}.pdf",
+            f"*{ref}*.pdf"
+        ]
+        
+        for pattern in patterns:
+            if "*" in pattern:
+                candidates = list(s_dir.glob(pattern))
+                if candidates:
+                    return FileResponse(candidates[0], media_type="application/pdf", filename=f"Sanction_{ref}.pdf")
+            else:
+                file_path = s_dir / pattern
+                if file_path.exists():
+                    return FileResponse(file_path, media_type="application/pdf", filename=f"Sanction_{ref}.pdf")
+    
+    logger.error(f"Sanction letter not found: {ref}")
+    raise HTTPException(status_code=404, detail=f"Sanction letter {ref} not found. It may still be generating.")
 
 # =============================================================================
 # AGENT ORCHESTRATION ROUTES

@@ -14,6 +14,7 @@ export interface AgentTraceItem {
 interface AgentActivityPanelProps {
   trace: AgentTraceItem[];
   pipelineStatus: string;
+  activeAgentLabel?: string | null;
 }
 
 const AGENT_ORDER = [
@@ -32,17 +33,53 @@ const LABELS: Record<string, string> = {
   BlockchainAuditAgent: "Blockchain Agent",
 };
 
-export const AgentActivityPanel = ({ trace, pipelineStatus }: AgentActivityPanelProps) => {
+const STATUS_TO_AGENT: Record<string, string> = {
+  "INITIATED": "MasterOrchestratorAgent",
+  "KYC_PENDING": "KYCVerificationAgent",
+  "KYC_VERIFIED": "CreditUnderwritingAgent",
+  "CREDIT_ASSESSED": "CreditUnderwritingAgent",
+  "OFFER_GENERATED": "Negotiation Agent",
+  "NEGOTIATING": "Negotiation Agent",
+  "ACCEPTED": "BlockchainAuditAgent",
+  "SANCTIONED": "BlockchainAuditAgent",
+  "FAILED": "MasterOrchestratorAgent"
+};
+
+export const AgentActivityPanel = ({ trace, pipelineStatus, activeAgentLabel }: AgentActivityPanelProps) => {
   const [collapsed, setCollapsed] = useState(true);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [isInView, setIsInView] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
-  const doneSet = useMemo(() => new Set(trace.map((item) => item.agent)), [trace]);
+  const doneSet = useMemo(() => new Set((trace || []).map((item) => item.agent)), [trace]);
+
+  const labelToAgent = useMemo<Record<string, string>>(
+    () => ({
+      "Master Agent": "MasterOrchestratorAgent",
+      "KYC Verification Agent": "KYCVerificationAgent",
+      "Credit Underwriting Agent": "CreditUnderwritingAgent",
+      "Loan Recommendation Engine": "CreditUnderwritingAgent",
+      "Dynamic Negotiation Agent": "Negotiation Agent",
+      "Blockchain Audit Agent": "BlockchainAuditAgent",
+    }),
+    []
+  );
   
   const activeAgent = useMemo(() => {
+    const overrideAgent = activeAgentLabel ? labelToAgent[activeAgentLabel] : null;
+
+    if (overrideAgent) {
+      return overrideAgent;
+    }
+
+    // If status gives us a clear hint, use it
+    if (pipelineStatus && STATUS_TO_AGENT[pipelineStatus]) {
+      return STATUS_TO_AGENT[pipelineStatus];
+    }
+    
+    // Fallback to trace-based detection
     const next = AGENT_ORDER.find((agent) => !doneSet.has(agent));
     return pipelineStatus === "SANCTIONED" || pipelineStatus === "FAILED" ? null : next ?? null;
-  }, [doneSet, pipelineStatus]);
+  }, [activeAgentLabel, doneSet, labelToAgent, pipelineStatus]);
 
   // Detect demo mode from URL param
   useEffect(() => {
@@ -115,9 +152,9 @@ export const AgentActivityPanel = ({ trace, pipelineStatus }: AgentActivityPanel
   }
 
   return (
-    <div ref={panelRef} className="fixed bottom-6 right-6 z-50 w-80 animate-in slide-in-from-bottom-5 duration-300">
-      <div className="rounded-xl border border-border bg-card shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
-        <div className="flex items-center justify-between p-3 border-b border-border/50 bg-muted/30">
+    <div ref={panelRef} className={cn("flex flex-col h-full w-full")}>
+      <div className="flex-1 overflow-hidden flex flex-col">
+        <div className="flex items-center justify-between p-3 border-b border-border/50 bg-muted/30 lg:hidden">
           <div className="flex items-center gap-2">
             <Bot className="w-5 h-5" />
             <div className="text-sm font-bold tracking-tight">Agent Activity</div>

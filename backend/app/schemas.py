@@ -102,3 +102,24 @@ class EscalationPreferenceRequest(BaseModel):
     session_id: str
     preferred_time: str  # "Morning", "Afternoon", "Evening"
     whatsapp_opt_in: bool
+
+
+class ChatRequest(BaseModel):
+    message: str
+    session_id: str | None = None
+    language: str = "en"
+
+
+class ChatResponse(BaseModel):
+    response: str
+    session_id: str
+    language: str
+
+
+class PipelineStartRequest(BaseModel):
+    session_id: str
+    applicant_name: str
+    pan_number: str
+    loan_amount: float
+    loan_term: int
+    offered_rate: float

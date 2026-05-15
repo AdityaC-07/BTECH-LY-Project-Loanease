@@ -32,6 +32,8 @@ class LoanPipeline:
         self.agent_log: list[dict[str, Any]] = []
         self._session_logs: dict[str, list[dict[str, Any]]] = {}
         self._session_status: dict[str, str] = {}
+        self._global_logs: list[dict[str, Any]] = []
+        self._MAX_GLOBAL_LOGS = 100
 
     async def run_stage(self, stage: str, payload: dict) -> dict:
         """
@@ -163,6 +165,10 @@ class LoanPipeline:
             "total_duration_ms": total_duration,
         }
 
+    def get_global_activity(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Return the most recent agent actions across all sessions"""
+        return self._global_logs[:limit]
+
     def _resolve_stage_agent(self, stage: str, payload: dict, session_id: str):
         stage_key = (stage or "").strip().lower()
         if stage_key in {"kyc", "kyc_verification", "kyc_pending"}:
@@ -268,3 +274,15 @@ class LoanPipeline:
         }
         self.agent_log.append(entry)
         self._session_logs.setdefault(session_id, []).append(entry)
+        
+        # Update global logs for landing page
+        global_entry = {
+            "session_id": session_id,
+            "timestamp": entry["timestamp"],
+            "agent": entry["agent"],
+            "action": entry["action"],
+            "status": entry["status"]
+        }
+        self._global_logs.insert(0, global_entry)
+        if len(self._global_logs) > self._MAX_GLOBAL_LOGS:
+            self._global_logs.pop()

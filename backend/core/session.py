@@ -6,6 +6,8 @@ import uuid
 class SessionStore:
     def __init__(self):
         self._sessions = {}
+        self._global_logs = []
+        self._MAX_GLOBAL_LOGS = 100
         self._lock = Lock()
     
     def create(self, initial_data: dict) -> str:
@@ -60,6 +62,18 @@ class SessionStore:
         with self._lock:
             if session_id in self._sessions:
                 self._sessions[session_id]["agent_log"].append(agent_result)
+                
+                # Add to global logs
+                global_entry = {
+                    "session_id": session_id,
+                    "timestamp": agent_result.get("timestamp", datetime.utcnow().isoformat()),
+                    "agent": agent_result.get("agent", "Unknown"),
+                    "action": agent_result.get("action", "Processed"),
+                    "status": agent_result.get("status", "SUCCESS")
+                }
+                self._global_logs.insert(0, global_entry)
+                if len(self._global_logs) > self._MAX_GLOBAL_LOGS:
+                    self._global_logs.pop()
     
     def update_data(self, session_id: str, key: str, value):
         with self._lock:
@@ -82,7 +96,13 @@ class SessionStore:
         with self._lock:
             count = len(self._sessions)
             self._sessions.clear()
+            self._global_logs.clear()
         return count
+
+    def get_global_activity(self, limit: int = 20) -> list:
+        """Get the most recent system-wide agent activity"""
+        with self._lock:
+            return self._global_logs[:limit]
 
 # Single global instance
 session_store = SessionStore()

@@ -181,10 +181,14 @@ async def get_analytics(session_id: str):
     try:
         # Get session data
         session = session_store.get(session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
+        session_data = {}
         
-        session_data = session.get("data", {})
+        if session:
+            session_data = session.get("data", {})
+        elif session_id in app.state.saved_sessions:
+            session_data = app.state.saved_sessions[session_id].get("applicant_data", {})
+        else:
+            raise HTTPException(status_code=404, detail="Session not found")
         
         # Extract loan data
         loan_amount = session_data.get("loan_amount", 500000)
@@ -303,6 +307,16 @@ async def pipeline_log(session_id: str):
         "session_id": session_id,
         "pipeline_status": session.get("stage", "ACTIVE"),
         "agent_trace": session.get("agent_log", []),
+    }
+
+
+@app.get("/pipeline/global-logs")
+async def get_global_logs(limit: int = 20):
+    """Get the most recent system-wide agent activity"""
+    return {
+        "logs": session_store.get_global_activity(limit),
+        "total_active_sessions": len(session_store._sessions),
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
 
