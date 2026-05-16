@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 from core.config import settings
 
+from services.aadhaar_utils import extract_mobile_from_aadhaar
 logger = logging.getLogger("loanease.ocr")
 
 # Memory guardrails for OCR preprocessing
@@ -547,9 +548,14 @@ def extract_aadhaar(ocr_text: str) -> Dict:
     
     # If DOB can't be read from OCR, don't block — assume eligible
     age_eligible = True
+
+    mobile_number = extract_mobile_from_aadhaar(ocr_text)
+    mobile_last4 = mobile_number[-4:] if mobile_number else None
     if age is not None:
         age_eligible = 18 <= age <= 75
 
+        "mobile_number": mobile_number,
+        "mobile_last4": mobile_last4,
     return {
         "aadhaar_number": aadhaar_number,
         "aadhaar_last4": aadhaar_last4,

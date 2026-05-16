@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, KeyboardEvent, ClipboardEvent } from "react";
 import { ENDPOINTS } from "@/config";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -7,7 +7,7 @@ import { CreditScoreCard } from "./CreditScoreCard";
 import { SanctionLetter } from "./SanctionLetter";
 import { AnalyticsDashboard } from "./AnalyticsDashboard";
 import { LanguageSwitcher } from "./LanguageSwitcher";
-import { Send, ArrowLeft, MessageCircle, Upload, CheckCircle2, FileText, Pencil, Check, X, Smartphone, Zap, Bot, MessageSquare, Clock, AlertTriangle, CheckCircle, Shield } from "lucide-react";
+import { Send, ArrowLeft, MessageCircle, Upload, CheckCircle2, FileText, Pencil, Check, X, Smartphone, Zap, Bot, MessageSquare, Clock, AlertTriangle, CheckCircle, Shield, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { QuickReplies } from "./QuickReplies";
 import { EmiCalculatorWidget } from "./EmiCalculatorWidget";
@@ -61,6 +61,8 @@ interface PanKycFields {
 
 interface AadhaarKycFields {
   aadhaar_last4?: string;
+  mobile_last4?: string;
+  mobile_number?: string;
   name?: string;
   date_of_birth?: string;
   age?: number;
@@ -71,6 +73,41 @@ interface AadhaarKycFields {
 interface CreditScoreData {
   credit_score: number;
   [key: string]: unknown;
+}
+
+interface UnderwritingResultData {
+  decision?: string;
+  approval_probability?: number;
+  confidence_lower?: number;
+  confidence_upper?: number;
+  confidence_width?: number;
+  model_certainty?: string;
+  income_reasonability?: {
+    flag?: string;
+    foir?: number;
+    message?: string;
+    suggested_amount?: number;
+    required_monthly_income?: number;
+    emi?: number;
+  };
+  soft_reject_guidance?: {
+    message?: string;
+    income_delta_monthly?: number;
+    repayment_history_months?: number;
+    repayment_history_impact?: string;
+    suggested_approved_amount?: number;
+    threshold_gap_points?: number;
+  } | null;
+  model_drift_warning?: boolean;
+  drifted_features?: string[];
+  recommendation?: string | null;
+  structured_shap_narration?: string | null;
+  xgboost_probability?: number;
+  risk_tier?: string;
+  risk_score?: number;
+  max_negotiation_rounds?: number;
+  message?: string;
+  threshold_used?: number;
 }
 
 interface UserData {
@@ -120,6 +157,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [activeAgent, setActiveAgent] = useState("Master Agent");
   const [showCreditScoreCard, setShowCreditScoreCard] = useState(false);
   const [creditScoreData, setCreditScoreData] = useState<CreditScoreData | null>(null);
+  const [underwritingResult, setUnderwritingResult] = useState<UnderwritingResultData | null>(null);
   const [showPanUploadCard, setShowPanUploadCard] = useState(false);
   const [showAadhaarUploadCard, setShowAadhaarUploadCard] = useState(false);
   const [isKycProcessing, setIsKycProcessing] = useState(false);
@@ -127,10 +165,21 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [kycProgress, setKycProgress] = useState(0);
   const [showPanConfirmCard, setShowPanConfirmCard] = useState(false);
   const [showKycVerifiedCard, setShowKycVerifiedCard] = useState(false);
+  const [showOtpCard, setShowOtpCard] = useState(false);
   const [panKycData, setPanKycData] = useState<PanKycFields | null>(null);
   const [aadhaarKycData, setAadhaarKycData] = useState<AadhaarKycFields | null>(null);
   const [kycMatchScore, setKycMatchScore] = useState<number | null>(null);
   const [kycReferenceId, setKycReferenceId] = useState<string>("");
+  const [otpDigits, setOtpDigits] = useState<string[]>(Array(6).fill(""));
+  const [otpSentToLast4, setOtpSentToLast4] = useState("");
+  const [otpAttemptsRemaining, setOtpAttemptsRemaining] = useState<number | null>(null);
+  const [otpSecondsRemaining, setOtpSecondsRemaining] = useState(0);
+  const [otpResendCooldown, setOtpResendCooldown] = useState(0);
+  const [otpStatusMessage, setOtpStatusMessage] = useState("");
+  const [otpError, setOtpError] = useState("");
+  const [otpSubmitting, setOtpSubmitting] = useState(false);
+  const [otpLocked, setOtpLocked] = useState(false);
+  const [pendingCreditPan, setPendingCreditPan] = useState("");
   const [panFile, setPanFile] = useState<File | null>(null);
   const [aadhaarFile, setAadhaarFile] = useState<File | null>(null);
   const [userData, setUserData] = useState<UserData>({
@@ -225,7 +274,29 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const activeAgentIndex = AGENT_PIPELINE.indexOf(activeAgent);
   const panInputRef = useRef<HTMLInputElement>(null);
   const aadhaarInputRef = useRef<HTMLInputElement>(null);
+  const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const [processingLog, setProcessingLog] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!showOtpCard) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setOtpSecondsRemaining((value) => {
+        if (value <= 1) {
+          setOtpLocked(true);
+          return 0;
+        }
+        return value - 1;
+      });
+
+      setOtpResendCooldown((value) => (value > 0 ? value - 1 : 0));
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [showOtpCard]);
+
   const showWelcomeState = messages.length === 0 && !showSessionBanner && !hasStartedConversation;
   const isInputLocked =
     isEscalated ||
@@ -236,6 +307,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     showPanUploadCard ||
     showAadhaarUploadCard ||
     showPanConfirmCard ||
+    showOtpCard ||
+    otpLocked ||
     isTyping ||
     isBackendBusy;
   const isProcessing = isBackendBusy || isKycProcessing || isTyping;
@@ -243,6 +316,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const getInputPlaceholder = () => {
     if (isEscalated) return "Chat disabled pending human review";
     if (!hasStartedConversation) return "Click 'Apply for a Loan' to start";
+    if (otpLocked) return "OTP verification failed. Redirecting...";
+    if (showOtpCard) return "Verify the OTP sent to your Aadhaar-linked mobile";
     if (showSanction) return "Your sanction letter is ready. Ask a question or download it.";
     if (showLoanOffers) return "Type 'accept' or ask to negotiate the rate...";
     if (userData.stage === "credit") return "Your score is ready. How would you like to proceed?";
@@ -487,7 +562,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, showCreditScore, showLoanOffers, showSanction, showAnalytics, showPanUploadCard, showAadhaarUploadCard, showPanConfirmCard, showKycVerifiedCard, isKycProcessing]);
+  }, [messages, showCreditScore, showLoanOffers, showSanction, showAnalytics, showPanUploadCard, showAadhaarUploadCard, showPanConfirmCard, showKycVerifiedCard, showOtpCard, isKycProcessing]);
 
   useEffect(() => {
     if (!showAnalytics) return;
@@ -645,6 +720,223 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       setIsBackendBusy(false);
     }
   };
+
+  const callKycSendOtpAPI = async () => {
+    setIsBackendBusy(true);
+    try {
+      const response = await fetch(ENDPOINTS.kyc_send_otp, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: userData.sessionId }),
+      });
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => null);
+        throw new Error(errBody?.detail || "OTP send failed");
+      }
+
+      return response.json();
+    } finally {
+      setIsBackendBusy(false);
+    }
+  };
+
+  const callKycVerifyOtpAPI = async (otp: string) => {
+    setIsBackendBusy(true);
+    try {
+      const response = await fetch(ENDPOINTS.kyc_verify_otp, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: userData.sessionId, otp }),
+      });
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => null);
+        throw new Error(errBody?.detail || "OTP verification failed");
+      }
+
+      return response.json();
+    } finally {
+      setIsBackendBusy(false);
+    }
+  };
+
+  const callKycResendOtpAPI = async () => {
+    setIsBackendBusy(true);
+    try {
+      const response = await fetch(ENDPOINTS.kyc_resend_otp, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: userData.sessionId }),
+      });
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => null);
+        throw new Error(errBody?.detail || "OTP resend failed");
+      }
+
+      return response.json();
+    } finally {
+      setIsBackendBusy(false);
+    }
+  };
+
+  const resetOtpFlow = () => {
+    setShowOtpCard(false);
+    setOtpDigits(Array(6).fill(""));
+    setOtpSentToLast4("");
+    setOtpAttemptsRemaining(null);
+    setOtpSecondsRemaining(0);
+    setOtpResendCooldown(0);
+    setOtpStatusMessage("");
+    setOtpError("");
+    setOtpSubmitting(false);
+    setOtpLocked(false);
+    setPendingCreditPan("");
+  };
+
+  const terminateAfterOtpFailure = (message: string) => {
+    setOtpError(message);
+    setOtpLocked(true);
+    setShowOtpCard(false);
+    addBotMessage(message);
+    setTimeout(() => {
+      setMessages([]);
+      setUserData((prev) => ({ ...prev, stage: "kyc" }));
+      localStorage.removeItem("loanease_session_id");
+      navigate("/");
+    }, 5000);
+  };
+
+  const updateOtpDigit = (index: number, value: string) => {
+    const nextValue = value.replace(/\D/g, "").slice(-1);
+    setOtpDigits((current) => {
+      const nextDigits = [...current];
+      nextDigits[index] = nextValue;
+      return nextDigits;
+    });
+
+    if (nextValue && index < otpInputRefs.current.length - 1) {
+      otpInputRefs.current[index + 1]?.focus();
+    }
+  };
+
+  const handleOtpKeyDown = (index: number, event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Backspace" && !otpDigits[index] && index > 0) {
+      otpInputRefs.current[index - 1]?.focus();
+      setOtpDigits((current) => {
+        const nextDigits = [...current];
+        nextDigits[index - 1] = "";
+        return nextDigits;
+      });
+    }
+  };
+
+  const handleOtpPaste = (event: ClipboardEvent<HTMLDivElement>) => {
+    const pasted = event.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+    if (!pasted) return;
+    event.preventDefault();
+    const nextDigits = Array(6).fill("");
+    pasted.split("").forEach((digit, index) => {
+      nextDigits[index] = digit;
+    });
+    setOtpDigits(nextDigits);
+    otpInputRefs.current[Math.min(pasted.length, 5)]?.focus();
+  };
+
+  const submitOtp = async () => {
+    if (otpLocked || otpSubmitting) return;
+
+    const otpValue = otpDigits.join("");
+    if (otpValue.length !== 6) {
+      setOtpError(kycText("Enter the 6-digit OTP sent to your mobile.", "अपने मोबाइल पर भेजा गया 6-digit OTP दर्ज करें।"));
+      return;
+    }
+
+    setOtpSubmitting(true);
+    setOtpError("");
+    try {
+      const result = await callKycVerifyOtpAPI(otpValue);
+      setOtpAttemptsRemaining(result.attempts_remaining ?? 0);
+
+      if (result.verified) {
+        resetOtpFlow();
+        addBotMessage(
+          kycText(
+            "OTP verified successfully. Continuing to your credit profile.",
+            "OTP सफलतापूर्वक सत्यापित हो गया है। अब आपकी credit profile खोली जा रही है।"
+          )
+        );
+        const extractedPan = pendingCreditPan || panKycData?.pan_number || verifyResultPanFromState();
+        if (extractedPan) {
+          await proceedToCreditFlow(extractedPan);
+        }
+        return;
+      }
+
+      if (result.terminated) {
+        terminateAfterOtpFailure(
+          kycText(
+            "OTP verification failed too many times. Your application has been closed.",
+            "OTP सत्यापन कई बार विफल रहा। आपका आवेदन बंद कर दिया गया है।"
+          )
+        );
+        return;
+      }
+
+      setOtpError(
+        kycText(
+          `Incorrect OTP. ${result.attempts_remaining} attempt(s) remaining.`,
+          `OTP गलत है। ${result.attempts_remaining} attempt(s) शेष हैं।`
+        )
+      );
+      setOtpDigits(Array(6).fill(""));
+      otpInputRefs.current[0]?.focus();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : kycText("OTP verification failed.", "OTP सत्यापन विफल।");
+      setOtpError(msg);
+    } finally {
+      setOtpSubmitting(false);
+    }
+  };
+
+  const resendOtp = async () => {
+    if (otpResendCooldown > 0 || otpSubmitting) return;
+    try {
+      const result = await callKycResendOtpAPI();
+      setOtpDigits(Array(6).fill(""));
+      setOtpSecondsRemaining(Number(result.expires_in_seconds || 300));
+      setOtpResendCooldown(60);
+      setOtpLocked(false);
+      setOtpError("");
+      setOtpStatusMessage(
+        kycText(
+          `A new OTP was sent to the mobile ending ${result.mobile_last4}.`,
+          `एक नया OTP मोबाइल नंबर के अंतिम ${result.mobile_last4} अंकों पर भेजा गया है।`
+        )
+      );
+      addBotMessage(
+        kycText(
+          `OTP resent to mobile ending ${result.mobile_last4}.`,
+          `OTP मोबाइल नंबर के अंतिम ${result.mobile_last4} अंकों पर फिर से भेजा गया है।`
+        )
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : kycText("OTP resend failed.", "OTP दोबारा भेजना विफल रहा।");
+      if (msg.toLowerCase().includes("limit")) {
+        terminateAfterOtpFailure(
+          kycText(
+            "OTP resend limit reached. Your application has been closed.",
+            "OTP पुनः भेजने की सीमा पूरी हो गई है। आपका आवेदन बंद कर दिया गया है।"
+          )
+        );
+        return;
+      }
+      setOtpError(msg);
+    }
+  };
+
+  const verifyResultPanFromState = () => panKycData?.pan_number || userData.pan || "";
 
   const proceedToCreditFlow = async (panNumber: string) => {
     const normalizedPan = normalizePan(panNumber);
@@ -825,9 +1117,39 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
       setTimeout(async () => {
         setShowKycVerifiedCard(false);
-        const extractedPan = verifyResult.pan_data?.pan_number || panKycData?.pan_number;
-        if (extractedPan) {
-          await proceedToCreditFlow(extractedPan);
+        try {
+          resetOtpFlow();
+          const otpResult = await callKycSendOtpAPI();
+          const extractedPan = verifyResult.pan_data?.pan_number || panKycData?.pan_number || "";
+          const mobileLast4 = otpResult.mobile_last4 || aadhaarResult.extracted_fields?.mobile_last4 || "";
+
+          setPendingCreditPan(extractedPan);
+          setOtpSentToLast4(mobileLast4);
+          setOtpAttemptsRemaining(3);
+          setOtpSecondsRemaining(Number(otpResult.expires_in_seconds || 300));
+          setOtpResendCooldown(60);
+          setOtpDigits(Array(6).fill(""));
+          setShowOtpCard(true);
+          setOtpStatusMessage(
+            kycText(
+              `OTP sent to mobile ending ${mobileLast4}. Enter the 6-digit code to continue.`,
+              `OTP मोबाइल नंबर के अंतिम ${mobileLast4} अंक पर भेजा गया है। आगे बढ़ने के लिए 6-digit code दर्ज करें।`
+            )
+          );
+          if (otpResult.demo_otp) {
+            addBotMessage(
+              kycText(
+                `Demo OTP: ${otpResult.demo_otp}`,
+                `Demo OTP: ${otpResult.demo_otp}`
+              )
+            );
+          }
+        } catch (otpError) {
+          const msg = otpError instanceof Error ? otpError.message : kycText("OTP could not be sent. Please upload a clearer Aadhaar card.", "OTP भेजा नहीं जा सका। कृपया अधिक स्पष्ट Aadhaar कार्ड अपलोड करें।");
+          addBotMessage(msg.toLowerCase().includes("mobile number not found")
+            ? kycText("We couldn't find the Aadhaar-linked mobile number. Please upload the full Aadhaar card and try again.", "Aadhaar से जुड़ा मोबाइल नंबर नहीं मिला। कृपया पूरा Aadhaar कार्ड अपलोड करें और फिर प्रयास करें।")
+            : msg);
+          setShowAadhaarUploadCard(true);
         }
       }, 1300);
     } catch (error) {
@@ -878,6 +1200,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         creditScore: data.credit_score,
         maxNegotiationRounds: data.max_negotiation_rounds || 0,
       }));
+      setUnderwritingResult(data);
 
       return data;
     } catch (error) {
@@ -1142,20 +1465,44 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           preferred_language: language,
         });
 
+        const decision = assessmentResult?.decision;
         const isApproved = assessmentResult && (
-          assessmentResult.decision === "APPROVED" ||
-          assessmentResult.decision === "APPROVED_WITH_CONDITIONS"
+          decision === "APPROVED" ||
+          decision === "APPROVED_WITH_CONDITIONS"
         );
+        const isSoftReject = decision === "CONDITIONAL_REJECT";
 
         if (!isApproved) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: prev.length + 1,
-              text: assessmentResult?.message || TRANSLATIONS.rejected[language],
-              isBot: true,
-            },
-          ]);
+          let handledReject = false;
+          if (isSoftReject && assessmentResult?.soft_reject_guidance) {
+            const guidance = assessmentResult.soft_reject_guidance;
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: prev.length + 1,
+                text: `${guidance.message || TRANSLATIONS.rejected[language]}
+
+${guidance.income_delta_monthly ? `Increase monthly income by about ${formatIndianRupees(guidance.income_delta_monthly)}.` : ""}
+${guidance.repayment_history_impact || ""}`.trim(),
+                isBot: true,
+                quickReplies: [
+                  { label: language === "hi" ? "पुनः प्रयास करें" : "Try Again", value: "try_again" },
+                  { label: language === "hi" ? "EMI कैलकुलेट करें" : "Recalculate EMI", value: "emi" },
+                ],
+              },
+            ]);
+            handledReject = true;
+          }
+          if (!handledReject) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: prev.length + 1,
+                text: assessmentResult?.message || TRANSLATIONS.rejected[language],
+                isBot: true,
+              },
+            ]);
+          }
           return;
         }
 
@@ -1820,6 +2167,10 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
                 <span className="font-bold">{userData.creditScore || 820}/900</span>
               </div>
               <div className="flex justify-between">
+                <span className="text-muted-foreground">Decision</span>
+                <span className="font-bold">{underwritingResult?.decision || "APPROVED"}</span>
+              </div>
+              <div className="flex justify-between">
                 <span className="text-muted-foreground">Risk Score</span>
                 <span className="font-bold">{userData.riskScore || 87}/100</span>
               </div>
@@ -1829,8 +2180,36 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">XGBoost</span>
-                <span className="font-bold">87% confidence</span>
+                <span className="font-bold">
+                  {underwritingResult?.confidence_width != null
+                    ? `${Math.round((underwritingResult.approval_probability || 0) * 100)}% ± ${Math.round((underwritingResult.confidence_width || 0) * 50)}%`
+                    : "87% confidence"}
+                </span>
               </div>
+              {underwritingResult?.income_reasonability && (
+                <div className="rounded-lg border border-border/70 bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
+                  <div className="font-semibold text-foreground">FOIR check</div>
+                  <div className="mt-1">
+                    {underwritingResult.income_reasonability.message || "Income support looks acceptable."}
+                  </div>
+                </div>
+              )}
+              {underwritingResult?.soft_reject_guidance && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
+                  <div className="font-semibold text-amber-100">Soft reject guidance</div>
+                  <div className="mt-1">
+                    {underwritingResult.soft_reject_guidance.message}
+                  </div>
+                </div>
+              )}
+              {underwritingResult?.model_drift_warning && (
+                <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-200">
+                  <div className="font-semibold text-rose-100">Model drift detected</div>
+                  <div className="mt-1">
+                    {underwritingResult.recommendation || "Retrain model with recent data."}
+                  </div>
+                </div>
+              )}
               <div className="flex justify-between pt-2 border-t border-border/50 text-muted-foreground text-[10px]">
                 <span>Time taken</span>
                 <span>0.9s</span>
@@ -2031,7 +2410,9 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
               <FileText className="h-4 w-4 text-yellow-400" />
               {kycText("Upload Aadhaar Card", "Aadhaar कार्ड अपलोड करें")}
             </div>
-            <div className="mb-3 text-xs text-muted-foreground">JPG, PNG or PDF • Max 5MB</div>
+            <div className="mb-3 text-xs text-muted-foreground">
+              {kycText("Upload the full Aadhaar card so the mobile number is visible. JPG, PNG or PDF • Max 5MB", "मोबाइल नंबर दिखे ऐसा पूरा Aadhaar कार्ड अपलोड करें। JPG, PNG or PDF • Max 5MB")}
+            </div>
             <input
               ref={aadhaarInputRef}
               type="file"
@@ -2060,9 +2441,92 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           </div>
         )}
 
+        {showOtpCard && (
+          <div className="max-w-md rounded-xl border border-primary/50 bg-gradient-to-br from-card to-card/90 p-4 shadow-lg shadow-primary/10" onPaste={handleOtpPaste}>
+            <div className="mb-2 flex items-center gap-2 text-base font-semibold text-primary">
+              <ShieldCheck className="h-4 w-4" />
+              {kycText("Verify Mobile OTP", "मोबाइल OTP सत्यापित करें")}
+            </div>
+            <div className="text-sm text-muted-foreground">
+              {otpStatusMessage || kycText("Enter the 6-digit code sent to your Aadhaar-linked mobile number.", "अपने Aadhaar-linked mobile number पर भेजा गया 6-digit code दर्ज करें।")}
+            </div>
+            {otpSentToLast4 ? (
+              <div className="mt-1 text-xs text-muted-foreground">
+                {kycText("Sent to ending", "अंतिम अंक")}: {otpSentToLast4}
+              </div>
+            ) : null}
+            <div className="mt-4 flex items-center justify-between gap-2">
+              <div className="flex flex-1 gap-2">
+                {otpDigits.map((digit, index) => (
+                  <input
+                    key={index}
+                    ref={(element) => {
+                      otpInputRefs.current[index] = element;
+                    }}
+                    inputMode="numeric"
+                    maxLength={1}
+                    value={digit}
+                    onChange={(event) => updateOtpDigit(index, event.target.value)}
+                    onKeyDown={(event) => handleOtpKeyDown(index, event)}
+                    className="h-11 w-11 rounded-lg border border-border bg-background text-center text-lg font-semibold tracking-[0.25em] text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/25"
+                  />
+                ))}
+              </div>
+            </div>
+            <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+              <span>
+                {otpSecondsRemaining > 0
+                  ? kycText(`OTP expires in ${Math.floor(otpSecondsRemaining / 60)}:${String(otpSecondsRemaining % 60).padStart(2, "0")}`, `OTP ${Math.floor(otpSecondsRemaining / 60)}:${String(otpSecondsRemaining % 60).padStart(2, "0")} में समाप्त होगा`)
+                  : kycText("OTP expired", "OTP समाप्त हो गया है")}
+              </span>
+              <span>
+                {otpAttemptsRemaining !== null
+                  ? kycText(`${otpAttemptsRemaining} attempts remaining`, `${otpAttemptsRemaining} प्रयास शेष हैं`)
+                  : null}
+              </span>
+            </div>
+            {otpError ? <div className="mt-2 text-sm text-red-400">{otpError}</div> : null}
+            <div className="mt-4 flex gap-2">
+              <Button
+                variant="accent"
+                className="flex-1"
+                disabled={otpSubmitting || otpLocked}
+                onClick={submitOtp}
+              >
+                {otpSubmitting ? kycText("Verifying...", "सत्यापन हो रहा है...") : kycText("Verify OTP", "OTP सत्यापित करें")}
+              </Button>
+              <Button
+                variant="outline"
+                className="flex-1"
+                disabled={otpSubmitting || otpResendCooldown > 0}
+                onClick={resendOtp}
+              >
+                {otpResendCooldown > 0
+                  ? kycText(`Resend in ${otpResendCooldown}s`, `${otpResendCooldown}s में फिर भेजें`)
+                  : kycText("Resend OTP", "OTP फिर भेजें")}
+              </Button>
+            </div>
+          </div>
+        )}
+
         {showCreditScoreCard && creditScoreData && (
           <div className="py-4">
-            <CreditScoreCard score={creditScoreData.credit_score} maxScore={900} />
+            <CreditScoreCard
+              score={creditScoreData.credit_score}
+              maxScore={900}
+              decision={underwritingResult?.decision}
+              approvalProbability={underwritingResult?.approval_probability}
+              confidenceLower={underwritingResult?.confidence_lower}
+              confidenceUpper={underwritingResult?.confidence_upper}
+              confidenceWidth={underwritingResult?.confidence_width}
+              modelCertainty={underwritingResult?.model_certainty}
+              riskTier={underwritingResult?.risk_tier}
+              incomeReasonability={underwritingResult?.income_reasonability}
+              softRejectGuidance={underwritingResult?.soft_reject_guidance}
+              modelDriftWarning={underwritingResult?.model_drift_warning}
+              driftedFeatures={underwritingResult?.drifted_features}
+              recommendation={underwritingResult?.recommendation}
+            />
           </div>
         )}
 

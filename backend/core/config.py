@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     
     # OCR
     MAX_UPLOAD_BYTES: int = 5 * 1024 * 1024  # 5MB
+
+    # OTP verification
+    OTP_EXPIRY_MINUTES: int = 5
+    SMS_PROVIDER: str = "fast2sms"
+    FAST2SMS_API_KEY: str = ""
+    TWILIO_ACCOUNT_SID: str = ""
+    TWILIO_AUTH_TOKEN: str = ""
+    TWILIO_FROM_NUMBER: str = ""
     
     # Blockchain
     BLOCKCHAIN_DIFFICULTY: int = 4

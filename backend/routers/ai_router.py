@@ -11,6 +11,13 @@ from pydantic import BaseModel, Field
 from agents.prompts import get_system_prompt
 from services.conversation_memory import ConversationMemory, get_memory
 from services.groq_service import GroqService, get_groq_service
+from services.conversation_context import (
+    build_context_updates,
+    build_error_recovery,
+    build_memory_prompt_block,
+    build_nudge,
+    low_confidence_clarification,
+)
 
 router = APIRouter(prefix="/ai", tags=["AI"])
 
@@ -44,14 +51,24 @@ class ChatResponse(BaseModel):
     stage: str
     response: str
     xai_trace: Dict[str, Any]
+    quick_replies: list[Dict[str, str]] = Field(default_factory=list)
 
 
 class IntentResponse(BaseModel):
     intent: str
+    confidence: float
     language: str
     loan_type: str
     urgency: str
     summary: str
+
+
+class NudgeResponse(BaseModel):
+    session_id: str
+    should_nudge: bool
+    stage: str
+    message: str | None = None
+    quick_replies: list[Dict[str, str]] = Field(default_factory=list)
 
 
 class IntentRequest(BaseModel):
@@ -101,6 +118,34 @@ def _get_pipeline_stage_key(router_stage: str) -> str:
     return STAGE_TO_PIPELINE_KEY.get(_coerce_stage(router_stage), "INITIATED")
 
 
+def _normalize_question_list(values: Any) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    return [str(value).strip() for value in values if str(value).strip()]
+
+
+async def _classify_user_intent(groq: GroqService, message: str, context: Dict[str, Any]) -> Dict[str, Any]:
+    intent_prompt = (
+        "Classify the user's loan-chat intent and return JSON only with keys: "
+        "intent, confidence, language, loan_type, urgency, summary. "
+        "Confidence must be a number from 0 to 1. Be conservative if the message is vague."
+    )
+    result = await groq.route_intent(
+        system_prompt=intent_prompt,
+        messages=[{"role": "user", "content": json.dumps({"message": message, "context": context}, ensure_ascii=False)}],
+        temperature=0.0,
+        max_tokens=256,
+    )
+    return result if isinstance(result, dict) else {}
+
+
+def _safe_confidence(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 @router.post("/chat")
 async def chat_stream(
     payload: ChatRequest,
@@ -116,6 +161,7 @@ async def chat_stream(
         full_text = ""
         xai_trace: Dict[str, Any] = {}
         next_stage = requested_stage
+        quick_replies: list[Dict[str, str]] = []
 
         try:
             # Keep all operational logic inside the generator so we can emit SSE error
@@ -127,6 +173,42 @@ async def chat_stream(
 
             state = memory.get_state(session_id) or {}
             prompt_context = {**state.get("context", {}), **payload.context}
+            derived_updates = build_context_updates(payload.message, prompt_context, requested_stage)
+            prompt_context.update(derived_updates)
+            prompt_context["questions_asked"] = _normalize_question_list(prompt_context.get("questions_asked"))
+            prompt_context["conversation_memory_block"] = build_memory_prompt_block(prompt_context)
+            await memory.update_context(session_id, prompt_context)
+
+            intent_result = await _classify_user_intent(groq, payload.message, prompt_context)
+            intent_name = str(intent_result.get("intent", prompt_context.get("intent", "UNKNOWN")) or "UNKNOWN")
+            intent_confidence = _safe_confidence(intent_result.get("confidence", prompt_context.get("intent_confidence", 0.0)))
+            prompt_context["intent"] = intent_name
+            prompt_context["intent_confidence"] = intent_confidence
+            prompt_context["previous_intent"] = prompt_context.get("previous_intent") or intent_name
+            await memory.update_context(session_id, {
+                "intent": intent_name,
+                "intent_confidence": intent_confidence,
+                "previous_intent": prompt_context["previous_intent"],
+            })
+
+            if intent_confidence < 0.65:
+                clarification = low_confidence_clarification(prompt_context, intent_name, intent_confidence)
+                quick_replies = clarification.get("quick_replies", [])
+                full_text = clarification["message"]
+                xai_trace = {
+                    "stage": requested_stage,
+                    "intent": intent_name,
+                    "intent_confidence": intent_confidence,
+                    "needs_clarification": True,
+                    "quick_replies": quick_replies,
+                }
+                yield _sse({"type": "token", "content": full_text})
+                yield _sse({"type": "xai", "trace": xai_trace})
+                memory.set_stage(session_id, requested_stage)
+                memory.append_message(session_id, "assistant", full_text)
+                yield _sse({"type": "done", "session_id": session_id, "stage": requested_stage, "quick_replies": quick_replies, "meta": {"needs_clarification": True, "intent": intent_name, "intent_confidence": intent_confidence}})
+                return
+
             system_prompt = get_system_prompt(
                 requested_stage,
                 prompt_context,
@@ -151,9 +233,13 @@ async def chat_stream(
             next_stage = _forward_stage_only(requested_stage, full_text)
             memory.set_stage(session_id, next_stage)
             memory.append_message(session_id, "assistant", full_text)
-            yield _sse({"type": "done", "session_id": session_id, "stage": next_stage})
+            yield _sse({"type": "done", "session_id": session_id, "stage": next_stage, "quick_replies": quick_replies, "meta": {"intent": intent_name, "intent_confidence": intent_confidence}})
         except Exception as exc:
-            yield _sse({"type": "error", "message": str(exc)})
+            recovery = build_error_recovery(str(exc), payload.context)
+            yield _sse({"type": "token", "content": recovery["message"]})
+            yield _sse({"type": "xai", "trace": {"recovery_type": recovery.get("recovery_type"), "quick_replies": recovery.get("quick_replies", [])}})
+            memory.append_message(session_id, "assistant", recovery["message"])
+            yield _sse({"type": "done", "session_id": session_id, "stage": requested_stage, "quick_replies": recovery.get("quick_replies", []), "meta": {"recovery_type": recovery.get("recovery_type")}})
 
     return StreamingResponse(
         event_generator(),
@@ -185,6 +271,42 @@ async def chat_sync(
 
     state = memory.get_state(session_id) or {}
     prompt_context = {**state.get("context", {}), **payload.context}
+    derived_updates = build_context_updates(payload.message, prompt_context, stage)
+    prompt_context.update(derived_updates)
+    prompt_context["questions_asked"] = _normalize_question_list(prompt_context.get("questions_asked"))
+    prompt_context["conversation_memory_block"] = build_memory_prompt_block(prompt_context)
+    await memory.update_context(session_id, prompt_context)
+
+    intent_result = await _classify_user_intent(groq, payload.message, prompt_context)
+    intent_name = str(intent_result.get("intent", prompt_context.get("intent", "UNKNOWN")) or "UNKNOWN")
+    intent_confidence = _safe_confidence(intent_result.get("confidence", prompt_context.get("intent_confidence", 0.0)))
+    prompt_context["intent"] = intent_name
+    prompt_context["intent_confidence"] = intent_confidence
+    prompt_context["previous_intent"] = prompt_context.get("previous_intent") or intent_name
+    await memory.update_context(session_id, {
+        "intent": intent_name,
+        "intent_confidence": intent_confidence,
+        "previous_intent": prompt_context["previous_intent"],
+    })
+
+    if intent_confidence < 0.65:
+        clarification = low_confidence_clarification(prompt_context, intent_name, intent_confidence)
+        memory.set_stage(session_id, stage)
+        memory.append_message(session_id, "assistant", clarification["message"])
+        return ChatResponse(
+            session_id=session_id,
+            stage=stage,
+            response=clarification["message"],
+            xai_trace={
+                "stage": stage,
+                "intent": intent_name,
+                "intent_confidence": intent_confidence,
+                "needs_clarification": True,
+                "quick_replies": clarification.get("quick_replies", []),
+            },
+            quick_replies=clarification.get("quick_replies", []),
+        )
+
     system_prompt = get_system_prompt(
         stage,
         prompt_context,
@@ -203,7 +325,7 @@ async def chat_sync(
         session_id=session_id,
         stage=next_stage,
         response=response_text,
-        xai_trace=xai_trace,
+        xai_trace={**xai_trace, "intent": intent_name, "intent_confidence": intent_confidence},
     )
 
 
@@ -215,7 +337,7 @@ async def classify_intent(
     """Fast intent classification route using lightweight Groq model."""
     system_prompt = (
         "Classify the user message and return JSON only with keys: "
-        "intent, language, loan_type, urgency, summary."
+        "intent, confidence, language, loan_type, urgency, summary."
     )
     result = await groq.route_intent(
         system_prompt=system_prompt,
@@ -226,10 +348,51 @@ async def classify_intent(
 
     return IntentResponse(
         intent=str(result.get("intent", "UNKNOWN")),
+        confidence=_safe_confidence(result.get("confidence", 0.5)),
         language=str(result.get("language", "unknown")),
         loan_type=str(result.get("loan_type", "unknown")),
         urgency=str(result.get("urgency", "normal")),
         summary=str(result.get("summary", payload.message[:120])),
+    )
+
+
+@router.get("/session/{session_id}/nudge", response_model=NudgeResponse)
+async def get_session_nudge(
+    session_id: str,
+    memory: ConversationMemory = Depends(get_memory),
+) -> NudgeResponse:
+    state = memory.get_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    context = state.get("context", {}) if isinstance(state, dict) else {}
+    stage = str(state.get("stage", context.get("stage", "kyc")))
+    nudge = build_nudge(stage, context)
+    if not nudge:
+        return NudgeResponse(session_id=session_id, should_nudge=False, stage=stage)
+
+    if stage.lower() == "kyc":
+        quick_replies = [
+            {"label": "Upload documents", "value": "I'm ready to upload my documents"},
+            {"label": "Need help", "value": "Can you help me with the KYC steps?"},
+        ]
+    elif stage.lower() == "credit":
+        quick_replies = [
+            {"label": "Explain offer", "value": "Explain the offer again"},
+            {"label": "Continue", "value": "Let's continue"},
+        ]
+    else:
+        quick_replies = [
+            {"label": "Continue", "value": "Please continue"},
+            {"label": "Explain", "value": "Explain the next step"},
+        ]
+
+    return NudgeResponse(
+        session_id=session_id,
+        should_nudge=True,
+        stage=stage,
+        message=nudge.get("message"),
+        quick_replies=quick_replies,
     )
 
 

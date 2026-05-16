@@ -216,6 +216,14 @@ _PROMPTS_BY_STAGE: Dict[str, str] = {
 
 _DEFAULT_CONTEXT: Dict[str, Any] = {
     "applicant_name": "Applicant",
+    "loan_amount": "unknown",
+    "loan_purpose": "unknown",
+    "language": "en",
+    "stage": "kyc",
+    "previous_intent": "UNKNOWN",
+    "hesitation_count": 0,
+    "negotiation_tone": "moderate",
+    "questions_asked": [],
     "doc_list": "PAN, Aadhaar, income proof",
     "received_docs": "none",
     "verification_status": "pending",
@@ -236,6 +244,7 @@ _DEFAULT_CONTEXT: Dict[str, Any] = {
     "emi": "N/A",
     "tx_hash": "N/A",
     "letter_url": "N/A",
+    "conversation_memory_block": "",
 }
 
 
@@ -293,8 +302,19 @@ Web Channel Instructions:
     template = _PROMPTS_BY_STAGE[normalized_stage]
     base_prompt = template.format(**merged_context)
 
+    memory_block = str(merged_context.get("conversation_memory_block") or "").strip()
+    if not memory_block:
+        memory_lines = [
+            "Conversation memory:",
+            f"Applicant: {merged_context.get('applicant_name', 'Applicant')}",
+            f"Purpose: {merged_context.get('loan_purpose', 'unknown')}",
+            f"Tone: {merged_context.get('negotiation_tone', 'moderate')}",
+            f"Previously asked about: {', '.join((merged_context.get('questions_asked') or [])[-3:]) or 'none'}",
+        ]
+        memory_block = "\n".join(memory_lines)
+
     # Compose with base system prompt and optional stage addendum
-    parts = [BASE_SYSTEM_PROMPT, base_prompt]
+    parts = [BASE_SYSTEM_PROMPT, base_prompt, memory_block]
 
     if current_stage:
         stage_addendum = STAGE_PROMPTS.get(current_stage.upper())

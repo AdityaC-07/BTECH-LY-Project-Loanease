@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 
 from rapidfuzz import fuzz
 
+from services.aadhaar_utils import extract_mobile_from_aadhaar
+
 
 PAN_PATTERN = re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b")
 AADHAAR_PATTERN = re.compile(r"\b\d{4}\s?\d{4}\s?\d{4}\b")
@@ -261,11 +263,14 @@ def extract_aadhaar(raw_text: str) -> dict:
     gender = "Male" if "MALE" in text_upper else ("Female" if "FEMALE" in text_upper else "Other")
 
     name = _extract_name_from_aadhaar(raw_text)
+    mobile_number = extract_mobile_from_aadhaar(raw_text)
 
     return {
         "document_type": "AADHAAR",
         "extracted_fields": {
             "aadhaar_last4": aadhaar_last4,
+            "mobile_number": mobile_number,
+            "mobile_last4": mobile_number[-4:] if mobile_number else None,
             "name": name,
             "date_of_birth": dob,
             "age": age,
@@ -274,6 +279,7 @@ def extract_aadhaar(raw_text: str) -> dict:
         },
         "validation": {
             "aadhaar_format_valid": aadhaar_ok,
+            "mobile_found": bool(mobile_number),
             "overall_valid": aadhaar_ok and age_ok,
         },
     }

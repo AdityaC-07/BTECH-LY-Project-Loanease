@@ -5,6 +5,32 @@ import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 interface CreditScoreCardProps {
   score: number;
   maxScore?: number;
+  decision?: string;
+  approvalProbability?: number | null;
+  confidenceLower?: number | null;
+  confidenceUpper?: number | null;
+  confidenceWidth?: number | null;
+  modelCertainty?: string | null;
+  riskTier?: string | null;
+  incomeReasonability?: {
+    flag?: string;
+    foir?: number;
+    message?: string;
+    suggested_amount?: number;
+    required_monthly_income?: number;
+    emi?: number;
+  } | null;
+  softRejectGuidance?: {
+    message?: string;
+    income_delta_monthly?: number;
+    repayment_history_months?: number;
+    repayment_history_impact?: string;
+    suggested_approved_amount?: number;
+    threshold_gap_points?: number;
+  } | null;
+  modelDriftWarning?: boolean;
+  driftedFeatures?: string[];
+  recommendation?: string | null;
 }
 
 interface ShapFactor {
@@ -13,7 +39,22 @@ interface ShapFactor {
   positive: boolean;
 }
 
-export const CreditScoreCard = ({ score, maxScore = 900 }: CreditScoreCardProps) => {
+export const CreditScoreCard = ({
+  score,
+  maxScore = 900,
+  decision,
+  approvalProbability,
+  confidenceLower,
+  confidenceUpper,
+  confidenceWidth,
+  modelCertainty,
+  riskTier,
+  incomeReasonability,
+  softRejectGuidance,
+  modelDriftWarning,
+  driftedFeatures,
+  recommendation,
+}: CreditScoreCardProps) => {
   const [step, setStep] = useState(1);
   const [displayScore, setDisplayScore] = useState(300);
   const [arcReady, setArcReady] = useState(false);
@@ -225,6 +266,29 @@ export const CreditScoreCard = ({ score, maxScore = 900 }: CreditScoreCardProps)
       </div>
 
       <div className={cn("relative mt-6 space-y-4 transition-all duration-500", detailsReady ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0") }>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-2xl border border-[#2a2a2a] bg-[#101010] px-4 py-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">Decision</p>
+            <p className="mt-2 text-sm font-semibold text-slate-100">{decision || (score >= 700 ? "APPROVED" : "APPROVED_WITH_CONDITIONS")}</p>
+            <p className="mt-1 text-xs text-slate-400">
+              {riskTier || getTierLabel().replace(" TIER", "")}
+            </p>
+          </div>
+          <div className="rounded-2xl border border-[#2a2a2a] bg-[#101010] px-4 py-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">Confidence</p>
+            <p className="mt-2 text-sm font-semibold text-slate-100">
+              {approvalProbability != null ? `${Math.round(approvalProbability * 100)}% approval probability` : "Model-backed estimate"}
+            </p>
+            <p className="mt-1 text-xs text-slate-400">
+              {confidenceLower != null && confidenceUpper != null
+                ? `Range ${Math.round(confidenceLower * 100)}% - ${Math.round(confidenceUpper * 100)}%`
+                : confidenceWidth != null
+                  ? `Width ${Math.round(confidenceWidth * 100)} pts`
+                  : modelCertainty || "Confidence bounds unavailable"}
+            </p>
+          </div>
+        </div>
+
         <div>
           <p className="mb-3 text-xs font-semibold uppercase tracking-[0.32em] text-slate-400">Why you were approved</p>
           <div className="space-y-3">
@@ -264,6 +328,36 @@ export const CreditScoreCard = ({ score, maxScore = 900 }: CreditScoreCardProps)
           <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-[#F5C518]">What this means for your rate</p>
           <p className="mt-2 text-sm text-slate-200">{getRateBand()}</p>
         </div>
+
+        {incomeReasonability && (
+          <div className="rounded-2xl border border-[#2a2a2a] bg-[#101010] px-4 py-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">FOIR check</p>
+            <p className="mt-2 text-sm text-slate-200">{incomeReasonability.message || "Income support is acceptable."}</p>
+            {incomeReasonability.foir != null && (
+              <p className="mt-1 text-xs text-slate-400">FOIR: {Math.round(incomeReasonability.foir * 100)}%</p>
+            )}
+          </div>
+        )}
+
+        {softRejectGuidance && (
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-amber-200">Soft reject guidance</p>
+            <p className="mt-2 text-sm text-amber-50">{softRejectGuidance.message}</p>
+            {softRejectGuidance.repayment_history_impact && (
+              <p className="mt-1 text-xs text-amber-100/80">{softRejectGuidance.repayment_history_impact}</p>
+            )}
+          </div>
+        )}
+
+        {modelDriftWarning && (
+          <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-rose-200">Model drift warning</p>
+            <p className="mt-2 text-sm text-rose-50">{recommendation || "Recent applicant patterns differ from training data."}</p>
+            {driftedFeatures && driftedFeatures.length > 0 && (
+              <p className="mt-1 text-xs text-rose-100/80">Affected features: {driftedFeatures.join(", ")}</p>
+            )}
+          </div>
+        )}
 
         <div className="rounded-2xl border border-[#2a2a2a] bg-[#101010] px-4 py-4">
           <div className="flex items-start gap-2 text-xs text-slate-300">

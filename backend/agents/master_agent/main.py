@@ -10,6 +10,7 @@ from core.session import session_store
 from services.groq_service import GroqService, get_groq_service
 from core.config import settings
 from agents.prompts import get_system_prompt
+from services.conversation_context import build_context_updates, build_memory_prompt_block
 
 logger = logging.getLogger("loanease.master")
 
@@ -76,6 +77,7 @@ def _build_prompt_context(
     underwriting_result = session_data.get("underwriting_result", {})
     negotiation_data = session_data.get("negotiation_data", {})
     blockchain_data = session_data.get("blockchain_data", {})
+    conversation_context = session_data.get("conversation_context", {}) if isinstance(session_data.get("conversation_context", {}), dict) else {}
 
     received_docs = []
     if pan_data:
@@ -85,8 +87,22 @@ def _build_prompt_context(
     if session_data.get("income_proof"):
         received_docs.append("income proof")
 
-    return {
+    merged_context: Dict[str, Any] = {
         "applicant_name": session_data.get("customer_name", "Applicant"),
+        "loan_purpose": conversation_context.get("loan_purpose") or session_data.get("loan_purpose") or "unknown",
+        "language": conversation_context.get("language") or session_data.get("language") or "en",
+        "stage": current_stage,
+        "previous_intent": conversation_context.get("previous_intent") or "UNKNOWN",
+        "hesitation_count": conversation_context.get("hesitation_count", 0),
+        "negotiation_tone": conversation_context.get("negotiation_tone", "moderate"),
+        "questions_asked": conversation_context.get("questions_asked", []),
+        "loan_amount": conversation_context.get("loan_amount") or session_data.get("loan_amount") or underwriting_result.get("max_loan", "unknown"),
+    }
+
+    merged_context["conversation_memory_block"] = build_memory_prompt_block(merged_context)
+
+    return {
+        **merged_context,
         "doc_list": "PAN, Aadhaar, income proof",
         "received_docs": ", ".join(received_docs) if received_docs else "none",
         "verification_status": next_stage or current_stage or "pending",
@@ -187,6 +203,8 @@ async def start_pipeline(
             "initial_message": request.initial_message,
             "language": request.language
         })
+        initial_context = build_context_updates(request.initial_message, {"applicant_name": request.customer_name, "language": request.language}, "INITIATED")
+        session_store.update_data(session_id, "conversation_context", initial_context)
         
         # Get next actions
         next_actions = get_session_stage_actions("INITIATED")
@@ -205,9 +223,14 @@ async def start_pipeline(
             stage="kyc",
             context={
                 "applicant_name": request.customer_name,
+                "loan_purpose": initial_context.get("loan_purpose", "unknown"),
+                "language": initial_context.get("language", request.language),
+                "questions_asked": initial_context.get("questions_asked", []),
+                "negotiation_tone": initial_context.get("negotiation_tone", "moderate"),
                 "doc_list": "PAN, Aadhaar, income proof",
                 "received_docs": "none",
                 "verification_status": "INITIATED",
+                "conversation_memory_block": build_memory_prompt_block(initial_context),
             },
         )
 
@@ -353,6 +376,17 @@ async def process_pipeline_action(
             next_stage,
             action_result,
         )
+
+        session_context = refreshed_session.get("data", {}).get("conversation_context", {})
+        if not isinstance(session_context, dict):
+            session_context = {}
+        user_message = request.data.get("user_message", "").strip() if request.data else ""
+        if user_message:
+            derived = build_context_updates(user_message, {**session_context, **prompt_context}, current_stage)
+            session_context.update(derived)
+            session_context["conversation_memory_block"] = build_memory_prompt_block(session_context)
+            session_store.update_data(request.session_id, "conversation_context", session_context)
+            prompt_context.update(session_context)
 
         message = await generate_chat_message(
             groq,

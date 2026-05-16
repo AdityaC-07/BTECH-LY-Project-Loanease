@@ -12,6 +12,7 @@ from typing import Optional, Any
 
 from fastapi import FastAPI, HTTPException, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import httpx
 
 from app.model_service import ModelService
@@ -29,6 +30,8 @@ from app.storage import ApplicationStore
 from app.credit_score import get_credit_score, get_credit_band, mask_pan
 from app.kyc_extractors import extract_pan, extract_aadhaar, cross_validate_kyc
 from app.kyc_preprocess import preprocess_image, run_ocr, MAX_UPLOAD_BYTES, UnsupportedDocumentError
+from services.otp_service import otp_store
+from core.config import settings
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -184,6 +187,33 @@ sessions: dict[str, dict] = {}
 escalations: dict[str, dict] = {}
 
 
+class OtpSendRequest(BaseModel):
+    session_id: str
+
+
+class OtpVerifyRequest(BaseModel):
+    session_id: str
+    otp: str
+
+
+class OtpResponse(BaseModel):
+    session_id: str
+    mobile_last4: str
+    expires_in_seconds: int
+    resend_count: int | None = None
+    sent: bool | None = None
+    demo_otp: str | None = None
+
+
+class OtpVerifyResponse(BaseModel):
+    verified: bool
+    terminated: bool
+    attempts_remaining: int
+    mobile_last4: str
+    expires_in_seconds: int
+    reason: str | None = None
+
+
 @app.on_event("startup")
 def startup_event() -> None:
     global service
@@ -202,11 +232,15 @@ def health() -> HealthResponse:
 
     uptime_seconds = int((datetime.now(timezone.utc) - boot_time).total_seconds())
     accuracy = float(service.metrics.get("accuracy", 0.0))
+    drift_status = service.drift_status()
     return HealthResponse(
         status="ok",
         model_version=service.model_version,
         accuracy=round(accuracy, 4),
         uptime_seconds=uptime_seconds,
+        model_drift_warning=bool(drift_status.get("model_drift_warning", False)),
+        drifted_features=list(drift_status.get("drifted_features", [])),
+        recommendation=drift_status.get("recommendation"),
     )
 
 
@@ -340,6 +374,14 @@ def explain(application_id: str) -> ExplainResponse:
         raw_input=record["raw_input"],
         top_explanations=record["shap_explanation"],
         shap_waterfall=record["shap_waterfall"],
+        structured_shap_narration=record.get("structured_shap_narration"),
+        confidence_lower=record.get("confidence_lower"),
+        confidence_upper=record.get("confidence_upper"),
+        confidence_width=record.get("confidence_width"),
+        model_certainty=record.get("model_certainty"),
+        income_reasonability=record.get("income_reasonability"),
+        soft_reject_guidance=record.get("soft_reject_guidance"),
+        confidence_message=record.get("confidence_message"),
     )
 
 
@@ -668,10 +710,17 @@ async def extract_aadhaar_document(document: UploadFile = File(...), session_id:
         preprocessed = preprocess_image(file_bytes, extension)
         ocr_text, confidence = run_ocr(preprocessed)
         result = extract_aadhaar(ocr_text)
+        mobile_number = result.get("extracted_fields", {}).get("mobile_number")
+        if session_id and mobile_number:
+            session_store.update_data(session_id, "aadhaar_mobile", mobile_number)
+            session_store.update_data(session_id, "aadhaar_mobile_last4", mobile_number[-4:])
         
         return {
             "document_type": "AADHAAR",
-            "extracted_fields": result["extracted_fields"],
+            "extracted_fields": {
+                **result["extracted_fields"],
+                "mobile_number": None,
+            },
             "validation": result["validation"],
             "confidence_score": confidence,
             "processing_time_ms": 0,
@@ -700,6 +749,10 @@ async def verify_kyc(pan: UploadFile = File(...), aadhaar: UploadFile = File(...
         aadhaar_preprocessed = preprocess_image(aadhaar_bytes, aadhaar_ext)
         aadhaar_ocr_text, _ = run_ocr(aadhaar_preprocessed)
         aadhaar_result = extract_aadhaar(aadhaar_ocr_text)
+        mobile_number = aadhaar_result.get("extracted_fields", {}).get("mobile_number")
+        if session_id and mobile_number:
+            session_store.update_data(session_id, "aadhaar_mobile", mobile_number)
+            session_store.update_data(session_id, "aadhaar_mobile_last4", mobile_number[-4:])
         
         # Cross-validate
         validation = cross_validate_kyc(pan_result, aadhaar_result)
@@ -714,12 +767,15 @@ async def verify_kyc(pan: UploadFile = File(...), aadhaar: UploadFile = File(...
             "status": "SUCCESS",
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
-        session_store.update_stage(s_id, "KYC_VERIFIED")
+        session_store.update_stage(s_id, "KYC_OTP_PENDING")
 
         return {
             "kyc_status": validation["kyc_status"],
             "pan_data": pan_result.get("extracted_fields"),
-            "aadhaar_data": aadhaar_result.get("extracted_fields"),
+            "aadhaar_data": {
+                **aadhaar_result.get("extracted_fields"),
+                "mobile_number": None,
+            },
             "cross_validation": validation["cross_validation"],
             "overall_kyc_passed": validation["overall_kyc_passed"],
             "kyc_reference_id": str(uuid4()),
@@ -728,6 +784,63 @@ async def verify_kyc(pan: UploadFile = File(...), aadhaar: UploadFile = File(...
     except Exception as exc:
         logger.error(f"KYC Verify: Failed - {str(exc)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"KYC verification failed: {str(exc)}") from exc
+
+
+@app.post("/kyc/send-otp", response_model=OtpResponse)
+async def send_otp(payload: OtpSendRequest):
+    session = session_store.get(payload.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    mobile_number = session.get("data", {}).get("aadhaar_mobile")
+    if not mobile_number:
+        aadhaar_data = session.get("data", {}).get("aadhaar_data", {})
+        mobile_number = aadhaar_data.get("mobile_number")
+
+    if not mobile_number:
+        raise HTTPException(
+            status_code=400,
+            detail="Aadhaar mobile number not found. Please upload the full Aadhaar card with the mobile number visible.",
+        )
+
+    result = otp_store.send_otp(payload.session_id, mobile_number)
+    session_store.update_stage(payload.session_id, "KYC_OTP_PENDING")
+    session_store.update_data(payload.session_id, "aadhaar_mobile", mobile_number)
+    session_store.update_data(payload.session_id, "aadhaar_otp_pending", True)
+
+    if not result["sent"] and not getattr(settings, "DEMO_MODE", False):
+        raise HTTPException(status_code=502, detail="Unable to send OTP right now. Please try again.")
+
+    return OtpResponse(**result)
+
+
+@app.post("/kyc/resend-otp", response_model=OtpResponse)
+async def resend_otp(payload: OtpSendRequest):
+    try:
+        result = otp_store.resend_otp(payload.session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="OTP session not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+    return OtpResponse(**result)
+
+
+@app.post("/kyc/verify-otp", response_model=OtpVerifyResponse)
+async def verify_otp(payload: OtpVerifyRequest):
+    try:
+        result = otp_store.verify_otp(payload.session_id, payload.otp)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="OTP session not found") from None
+
+    if result["verified"]:
+        session_store.update_stage(payload.session_id, "KYC_VERIFIED")
+        session_store.update_data(payload.session_id, "aadhaar_otp_verified", True)
+    elif result["terminated"]:
+        session_store.update_stage(payload.session_id, "KYC_TERMINATED")
+        session_store.update_data(payload.session_id, "aadhaar_otp_failed", True)
+
+    return OtpVerifyResponse(**result)
 
 
 # =============================================================================

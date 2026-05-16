@@ -8,6 +8,7 @@ from PIL import UnidentifiedImageError
 
 from core.session import session_store
 from services.ocr import preprocess_image, run_ocr, extract_pan, extract_aadhaar, cross_validate_kyc, ocr_ready, init_ocr
+from services.otp_service import otp_store
 from core.config import settings
 
 logger = logging.getLogger("loanease.kyc")
@@ -28,6 +29,33 @@ class AadhaarExtractResponse(BaseModel):
     validation: Dict[str, Any]
     confidence_score: float
     processing_time_ms: int
+
+
+class OtpSendRequest(BaseModel):
+    session_id: str
+
+
+class OtpVerifyRequest(BaseModel):
+    session_id: str
+    otp: str
+
+
+class OtpResponse(BaseModel):
+    session_id: str
+    mobile_last4: str
+    expires_in_seconds: int
+    resend_count: int | None = None
+    sent: bool | None = None
+    demo_otp: str | None = None
+
+
+class OtpVerifyResponse(BaseModel):
+    verified: bool
+    terminated: bool
+    attempts_remaining: int
+    mobile_last4: str
+    expires_in_seconds: int
+    reason: str | None = None
 
 class VerifyRequest(BaseModel):
     session_id: str
@@ -277,6 +305,10 @@ async def extract_aadhaar_endpoint(
         
         # Extract Aadhaar information
         aadhaar_data = extract_aadhaar(ocr_text)
+        mobile_number = aadhaar_data.get("mobile_number")
+        if session_id and mobile_number:
+            session_store.update_data(session_id, "aadhaar_mobile", mobile_number)
+            session_store.update_data(session_id, "aadhaar_mobile_last4", mobile_number[-4:])
         
         # Relaxed Validation
         issues = []
@@ -302,7 +334,11 @@ async def extract_aadhaar_endpoint(
         })
         
         return AadhaarExtractResponse(
-            extracted_fields=aadhaar_data,
+            extracted_fields={
+                **aadhaar_data,
+                "mobile_number": None,
+                "mobile_last4": aadhaar_data.get("mobile_last4"),
+            },
             validation={
                 "aadhaar_format_valid": aadhaar_valid,
                 "age_check_passed": age_ok,
@@ -360,6 +396,10 @@ async def verify_kyc(
             aadhaar_preprocessed = preprocess_image(aadhaar_bytes, aadhaar_ext)
             aadhaar_ocr_text, _ = run_ocr(aadhaar_preprocessed)
             aadhaar_data = extract_aadhaar(aadhaar_ocr_text)
+            mobile_number = aadhaar_data.get("mobile_number")
+            if resolved_session_id and mobile_number:
+                session_store.update_data(resolved_session_id, "aadhaar_mobile", mobile_number)
+                session_store.update_data(resolved_session_id, "aadhaar_mobile_last4", mobile_number[-4:])
 
             if resolved_session_id:
                 session_store.get_or_create(resolved_session_id)
@@ -395,7 +435,7 @@ async def verify_kyc(
         
         # Update session
         if resolved_session_id:
-            session_store.update_stage(resolved_session_id, "KYC_VERIFIED")
+            session_store.update_stage(resolved_session_id, "KYC_OTP_PENDING")
             session_store.log_agent(resolved_session_id, {
                 "agent": "kyc",
                 "action": "verification",
@@ -407,7 +447,10 @@ async def verify_kyc(
         return VerifyResponse(
             kyc_status=cross_validation["kyc_status"],
             pan_data=pan_data,
-            aadhaar_data=aadhaar_data,
+            aadhaar_data={
+                **aadhaar_data,
+                "mobile_number": None,
+            },
             cross_validation=cross_validation,
             overall_kyc_passed=cross_validation["overall_kyc_passed"],
             kyc_reference_id=ref,
@@ -419,6 +462,85 @@ async def verify_kyc(
     except Exception as e:
         logger.error(f"KYC verification error: {e}")
         raise HTTPException(status_code=500, detail=f"KYC verification failed: {str(e)}")
+
+
+@router.post("/send-otp", response_model=OtpResponse)
+async def send_otp(request: OtpSendRequest):
+    session = session_store.get(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    mobile_number = session.get("data", {}).get("aadhaar_mobile")
+    if not mobile_number:
+        aadhaar_data = session.get("data", {}).get("aadhaar_data", {})
+        mobile_number = aadhaar_data.get("mobile_number")
+
+    if not mobile_number:
+        raise HTTPException(
+            status_code=400,
+            detail="Aadhaar mobile number not found. Please upload the full Aadhaar card with the mobile number visible.",
+        )
+
+    result = otp_store.send_otp(request.session_id, mobile_number)
+    session_store.update_stage(request.session_id, "KYC_OTP_PENDING")
+    session_store.update_data(request.session_id, "aadhaar_mobile", mobile_number)
+    session_store.update_data(request.session_id, "aadhaar_otp_pending", True)
+
+    session_store.log_agent(request.session_id, {
+        "agent": "KYCVerificationAgent",
+        "action": "OTP_SENT",
+        "reasoning": f"Sending verification OTP to Aadhaar-linked mobile ending in {mobile_number[-4:]}",
+        "status": "SUCCESS" if result["sent"] else "FAILED",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+
+    if not result["sent"] and not settings.DEMO_MODE:
+        raise HTTPException(status_code=502, detail="Unable to send OTP right now. Please try again.")
+
+    return OtpResponse(**result)
+
+
+@router.post("/resend-otp", response_model=OtpResponse)
+async def resend_otp(request: OtpSendRequest):
+    try:
+        result = otp_store.resend_otp(request.session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="OTP session not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+    return OtpResponse(**result)
+
+
+@router.post("/verify-otp", response_model=OtpVerifyResponse)
+async def verify_otp(request: OtpVerifyRequest):
+    try:
+        result = otp_store.verify_otp(request.session_id, request.otp)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="OTP session not found") from None
+
+    if result["verified"]:
+            session_store.update_stage(request.session_id, "KYC_VERIFIED")
+        session_store.update_data(request.session_id, "aadhaar_otp_verified", True)
+        session_store.log_agent(request.session_id, {
+            "agent": "KYCVerificationAgent",
+            "action": "OTP_VERIFIED",
+            "reasoning": "Aadhaar-linked mobile OTP verified successfully.",
+            "status": "SUCCESS",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+    elif result["terminated"]:
+        session_store.update_stage(request.session_id, "KYC_TERMINATED")
+        session_store.update_data(request.session_id, "aadhaar_otp_failed", True)
+        session_store.log_agent(request.session_id, {
+            "agent": "KYCVerificationAgent",
+            "action": "OTP_FAILED",
+            "reasoning": result.get("reason") or "OTP verification failed too many times.",
+            "status": "FAILED",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+
+    return OtpVerifyResponse(**result)
 
 @router.get("/health")
 async def kyc_health():
