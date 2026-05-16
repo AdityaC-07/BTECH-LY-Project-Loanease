@@ -213,7 +213,7 @@ class Blockchain:
             if block.transaction_data.get("sanction_reference") == reference:
                 return block
             # Handle possible alternate field names
-            if block.data.get("transaction_id") == reference:
+            if block.transaction_data.get("transaction_id") == reference:
                 return block
         return None
     
@@ -261,7 +261,7 @@ class CryptoManager:
     
     def _generate_keys(self) -> Tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey]:
         """Generate new RSA 2048-bit key pair"""
-        print("🔐 Generating new RSA key pair for LoanEase...")
+        print("Generating new RSA key pair for LoanEase...")
         
         private_key = rsa.generate_private_key(
             public_exponent=65537,
@@ -312,7 +312,7 @@ class CryptoManager:
                 f.read()
             )
         
-        print("🔑 Loaded existing RSA keys from keys/ directory")
+        print("Loaded existing RSA keys from keys/ directory")
         return private_key, public_key
     
     @staticmethod

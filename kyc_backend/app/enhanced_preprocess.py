@@ -39,6 +39,75 @@ class UnsupportedDocumentError(ValueError):
     pass
 
 
+def assess_image_quality(image: np.ndarray) -> dict:
+    """
+    Assess image quality before running OCR.
+    Checks resolution, blur, brightness, contrast, and aspect ratio.
+    """
+    h, w = image.shape[:2]
+    
+    issues = []
+    score = 100
+    
+    # Check 1: Resolution
+    if w < 600 or h < 400:
+        issues.append("Image too small — minimum 600px width recommended")
+        score -= 30
+    
+    # Check 2: Blur detection (Laplacian variance)
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = image
+        
+    blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
+    
+    if blur_score < 50:
+        issues.append("Image is blurry — hold camera steady and ensure good lighting")
+        score -= 35
+    elif blur_score < 100:
+        issues.append("Image slightly blurry — results may vary")
+        score -= 15
+    
+    # Check 3: Brightness
+    mean_brightness = gray.mean()
+    if mean_brightness < 50:
+        issues.append("Image too dark — improve lighting")
+        score -= 20
+    elif mean_brightness > 220:
+        issues.append("Image overexposed — reduce glare or flash")
+        score -= 15
+    
+    # Check 4: Contrast
+    contrast = gray.std()
+    if contrast < 20:
+        issues.append("Low contrast — document text may not extract clearly")
+        score -= 20
+    
+    # Check 5: Aspect ratio (PAN card is ~3.375:2.125, approx 1.58)
+    # Aadhaar is also rectangular.
+    aspect = w / h
+    if not (1.2 < aspect < 2.0):
+        issues.append("Unusual dimensions — ensure full document is visible")
+        score -= 10
+    
+    quality = (
+        "EXCELLENT" if score >= 85 else
+        "GOOD" if score >= 65 else
+        "ACCEPTABLE" if score >= 45 else
+        "POOR"
+    )
+    
+    return {
+        "quality_score": max(score, 0),
+        "quality_label": quality,
+        "issues": issues,
+        "proceed": score >= 40,
+        "blur_score": round(blur_score, 1),
+        "brightness": round(mean_brightness, 1),
+    }
+
+
 def _load_optional_module(module_name: str):
     try:
         return importlib.import_module(module_name)

@@ -594,6 +594,76 @@ def extract_vid(raw_text: str) -> Optional[str]:
     return vid_match.group(0) if vid_match else None
 
 
+def score_field_confidence(raw_text: str, field_value: str, field_type: str) -> float:
+    """Score how confident OCR was for a specific field"""
+    if not field_value:
+        return 0.0
+    
+    if field_type == "pan":
+        # PAN has strict format
+        if re.match(r"^[A-Z]{5}[0-9]{4}[A-Z]$", field_value):
+            return 1.0
+        return 0.5
+    
+    if field_type == "name":
+        # Check if name appears clearly in raw text
+        name_words = field_value.split()
+        if not name_words:
+            return 0.0
+        found = sum(1 for w in name_words if w.upper() in raw_text.upper())
+        return found / len(name_words)
+    
+    if field_type == "dob":
+        # Valid date check
+        try:
+            datetime.strptime(field_value, "%d/%m/%Y")
+            return 1.0
+        except Exception:
+            return 0.4
+    
+    return 0.7  # default
+
+
+def basic_authenticity_check(extracted: dict, document_type: str) -> dict:
+    """Basic checks that flag likely invalid documents"""
+    flags = []
+    
+    if document_type == "PAN":
+        fields = extracted.get("extracted_fields", {})
+        pan = fields.get("pan_number", "")
+        
+        # PAN type check
+        if pan and len(pan) == 10:
+            pan_type = pan[3]
+            if pan_type not in "PCHABGJLTF":
+                flags.append("Unusual PAN type character")
+            
+            # Individual PAN check
+            if pan_type != "P":
+                flags.append(
+                    f"PAN type is '{pan_type}' (not individual). "
+                    f"Personal loans require individual PAN."
+                )
+        
+        # Name consistency
+        name = fields.get("name", "")
+        if name and len(name.split()) < 2:
+            flags.append("Name appears incomplete — PAN cards typically show full name")
+        
+        # DOB reasonability
+        dob = fields.get("date_of_birth")
+        if dob:
+            age = fields.get("age", 0)
+            if age and (age < 18 or age > 80):
+                flags.append(f"Age {age} seems unusual")
+    
+    return {
+        "flags": flags,
+        "suspicious": len(flags) > 0,
+        "auto_terminate": any("individual PAN" in f for f in flags)
+    }
+
+
 def detect_document_type(raw_text: str) -> str:
     upper = raw_text.upper()
     

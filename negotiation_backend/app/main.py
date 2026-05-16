@@ -68,6 +68,7 @@ def negotiate_start(payload: StartNegotiationRequest) -> StartNegotiationRespons
         rounds_remaining=rounds_remaining,
         negotiation_hint="You may request a rate reduction. Our system will evaluate your profile and respond.",
         detected_intent="START",
+        offer_valid_until=session.get("offer_valid_until"),
     )
 
 
@@ -115,11 +116,12 @@ def negotiate_start_from_underwriting(payload: StartFromUnderwritingRequest) -> 
         rounds_remaining=rounds_remaining,
         negotiation_hint="You may request a rate reduction. Our system will evaluate your profile and respond.",
         detected_intent="START",
+        offer_valid_until=session.get("offer_valid_until"),
     )
 
 
 @app.post("/negotiate/counter", response_model=CounterResponse)
-def negotiate_counter(payload: CounterRequest) -> CounterResponse:
+async def negotiate_counter(payload: CounterRequest) -> CounterResponse:
     session = store.get(payload.session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -127,7 +129,7 @@ def negotiate_counter(payload: CounterRequest) -> CounterResponse:
     if store.mark_expired_if_needed(session):
         raise HTTPException(status_code=410, detail="Session expired")
 
-    result = counter_session(session, payload.applicant_message, payload.requested_rate)
+    result = await counter_session(session, payload.applicant_message, payload.requested_rate)
     append_history(session, "counter", result["reasoning"], result["intent"])
     store.update(payload.session_id, session)
 
@@ -141,6 +143,14 @@ def negotiate_counter(payload: CounterRequest) -> CounterResponse:
         can_negotiate_further=result["can_negotiate_further"],
         status=session["status"],
         detected_intent=result["intent"],
+        tone=result.get("tone"),
+        tone_confidence=result.get("tone_confidence"),
+        competitor_mentioned=result.get("competitors", []),
+        negotiation_memory=result.get("memory_reference"),
+        offer_valid_until=session.get("offer_valid_until"),
+        minutes_remaining=result.get("minutes_remaining"),
+        urgency_signal=result.get("urgency_signal"),
+        relationship_manager_note=result.get("relationship_manager_note"),
     )
 
 

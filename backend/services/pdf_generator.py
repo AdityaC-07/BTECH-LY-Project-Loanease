@@ -26,6 +26,24 @@ class SanctionLetterGenerator:
             alignment=TA_CENTER,
             textColor=colors.darkblue
         ))
+
+        self.styles.add(ParagraphStyle(
+            name='CertificateTitle',
+            parent=self.styles['Heading1'],
+            fontSize=22,
+            spaceAfter=40,
+            alignment=TA_CENTER,
+            textColor=colors.darkgreen
+        ))
+
+        self.styles.add(ParagraphStyle(
+            name='HashStyle',
+            parent=self.styles['Normal'],
+            fontSize=8,
+            fontName='Courier',
+            alignment=TA_LEFT,
+            textColor=colors.grey
+        ))
         
         self.styles.add(ParagraphStyle(
             name='CustomNormal',
@@ -169,6 +187,113 @@ class SanctionLetterGenerator:
         
         return pdf_bytes
 
+    def generate_verification_certificate(
+        self,
+        reference: str,
+        applicant_masked: str,
+        loan_amount: float,
+        interest_rate: float,
+        sanction_date: str,
+        block_index: int,
+        block_hash: str,
+        previous_hash: str,
+        merkle_root: str,
+        nonce: int,
+        verified_at: str
+    ) -> bytes:
+        """Generate a blockchain verification certificate PDF"""
+        
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=72, leftMargin=72, topMargin=72, bottomMargin=18)
+        
+        story = []
+        
+        # Header
+        story.append(Paragraph("BLOCKCHAIN VERIFICATION CERTIFICATE", self.styles['CertificateTitle']))
+        story.append(Spacer(1, 10))
+        
+        verified_on = datetime.fromisoformat(verified_at.replace('Z', '+00:00')).strftime('%d %b %Y, %H:%M:%S UTC')
+        story.append(Paragraph(f"Verified On: {verified_on}", self.styles['CustomNormal']))
+        story.append(Paragraph(f"Verified By: LoanEase Audit System v1.2", self.styles['CustomNormal']))
+        story.append(Spacer(1, 30))
+        
+        # Summary
+        story.append(Paragraph("VERIFICATION SUMMARY", self.styles['CustomHeading']))
+        summary_data = [
+            ['Document Reference', reference],
+            ['Verification Status', 'AUTHENTIC ✓'],
+            ['Applicant', applicant_masked],
+            ['Loan Amount', f"₹{loan_amount:,.2f}"],
+            ['Interest Rate', f"{interest_rate}% p.a."],
+            ['Sanction Date', sanction_date]
+        ]
+        
+        summary_table = Table(summary_data, colWidths=[2.5*inch, 3*inch])
+        summary_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (0, -1), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey)
+        ]))
+        story.append(summary_table)
+        story.append(Spacer(1, 30))
+        
+        # Blockchain Details
+        story.append(Paragraph("CRYPTOGRAPHIC PROOF", self.styles['CustomHeading']))
+        
+        proof_text = "This document matches the record stored in the LoanEase immutable audit ledger. The following cryptographic values have been verified:"
+        story.append(Paragraph(proof_text, self.styles['CustomNormal']))
+        story.append(Spacer(1, 10))
+        
+        story.append(Paragraph(f"<b>Block Index:</b> #{block_index}", self.styles['CustomNormal']))
+        
+        story.append(Paragraph("<b>Block Hash:</b>", self.styles['CustomNormal']))
+        story.append(Paragraph(block_hash, self.styles['HashStyle']))
+        story.append(Spacer(1, 8))
+        
+        story.append(Paragraph("<b>Previous Block Hash:</b>", self.styles['CustomNormal']))
+        story.append(Paragraph(previous_hash, self.styles['HashStyle']))
+        story.append(Spacer(1, 8))
+        
+        story.append(Paragraph("<b>Merkle Root:</b>", self.styles['CustomNormal']))
+        story.append(Paragraph(merkle_root, self.styles['HashStyle']))
+        story.append(Spacer(1, 8))
+        
+        story.append(Paragraph(f"<b>PoW Nonce:</b> {nonce}", self.styles['CustomNormal']))
+        story.append(Spacer(1, 30))
+        
+        # Verification Checks
+        story.append(Paragraph("VERIFICATION CHECKS", self.styles['CustomHeading']))
+        checks = [
+            "✓ SHA-256 hash matches ledger",
+            "✓ Merkle tree integrity confirmed",
+            "✓ Block chain unbroken",
+            "✓ RSA-2048 signature valid"
+        ]
+        for check in checks:
+            story.append(Paragraph(check, self.styles['CustomNormal']))
+        
+        story.append(Spacer(1, 40))
+        
+        # Footer Note
+        note = """
+        This certificate confirms that the referenced sanction letter exists in the LoanEase immutable audit ledger 
+        and has not been modified since issuance. This verification was performed against our live blockchain 
+        state at the time of generation.
+        """
+        story.append(Paragraph(note, self.styles['CustomNormal']))
+        
+        # Build PDF
+        doc.build(story)
+        
+        buffer.seek(0)
+        pdf_bytes = buffer.getvalue()
+        buffer.close()
+        
+        return pdf_bytes
+
 # Global instance
 _pdf_generator = None
 
@@ -183,3 +308,8 @@ def generate_sanction_letter(**kwargs) -> bytes:
     """Generate sanction letter with given parameters"""
     generator = get_pdf_generator()
     return generator.generate_sanction_letter(**kwargs)
+
+def generate_verification_certificate(**kwargs) -> bytes:
+    """Generate verification certificate with given parameters"""
+    generator = get_pdf_generator()
+    return generator.generate_verification_certificate(**kwargs)

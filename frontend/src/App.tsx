@@ -7,6 +7,7 @@ import Index from "./pages/Index";
 import LandingPage from "./pages/LandingPage";
 import BlockchainExplorer from "./pages/BlockchainExplorer";
 import WhatsAppPage from "./pages/WhatsAppPage";
+import BlockchainVerificationPortal from "./pages/BlockchainVerificationPortal";
 import NotFound from "./pages/NotFound";
 import { DemoChecklist } from "./components/DemoChecklist";
 
@@ -22,6 +23,7 @@ const App = () => (
           <Route path="/" element={<LandingPage />} />
           <Route path="/whatsapp" element={<WhatsAppPage />} />
           <Route path="/blockchain/explorer" element={<BlockchainExplorer />} />
+          <Route path="/blockchain/verify" element={<BlockchainVerificationPortal />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

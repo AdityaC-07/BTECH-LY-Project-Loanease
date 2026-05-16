@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.preprocess import MAX_UPLOAD_BYTES, UnsupportedDocumentError, get_ocr_engine_info
+from app.enhanced_preprocess import MAX_UPLOAD_BYTES, UnsupportedDocumentError, get_ocr_engine_info
 from app.schemas import (
     AadhaarExtractResponse,
     AutoExtractResponse,
@@ -15,7 +15,7 @@ from app.schemas import (
     PanExtractResponse,
     VerifyResponse,
 )
-from app.service import KYCService
+from app.enhanced_service import EnhancedKYCService as KYCService
 
 # Configure logging
 logging.basicConfig(
@@ -86,10 +86,9 @@ async def extract_pan(
     _assert_upload_constraints(document, file_bytes)
 
     try:
-        result, conf, elapsed, ocr_text = service.extract_pan(file_bytes, document.filename or "upload.jpg")
-        logger.info(f"KYC PAN: OCR completed in {elapsed}ms, confidence {conf:.2f}")
+        result, ocr_text = service.extract_pan(file_bytes, document.filename or "upload.jpg")
+        logger.info(f"KYC PAN: Completed in {result['processing_time_ms']}ms, confidence {result['confidence_score']:.2f}")
         logger.info(f"KYC PAN: Raw OCR text (first 200 chars): {ocr_text[:200] if ocr_text else 'EMPTY'}")
-        logger.info(f"KYC PAN: Extracted fields - pan={result.get('extracted_fields', {}).get('pan_number')}, name={result.get('extracted_fields', {}).get('name')}")
     except UnsupportedDocumentError as exc:
         logger.error(f"KYC PAN: Document error - {str(exc)}")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -97,32 +96,12 @@ async def extract_pan(
         logger.error(f"KYC PAN: Extraction failed - {str(exc)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"PAN extraction failed: {str(exc)}") from exc
 
-    result["validation"]["issues"].extend(_confidence_issues(conf, language))
-    if result["extracted_fields"].get("age_eligible") is False:
-        result["validation"]["issues"].append(
-            HI_MESSAGES["age_ineligible"] if language == "hi" else EN_MESSAGES["age_ineligible"]
-        )
+    # Language support for issues
+    if language == "hi":
+        # Translate issues if needed (simplified for now)
+        pass
 
-    # Permit low-confidence reads when critical PAN fields are correctly extracted.
-    core_pan_fields_ok = bool(
-        result["validation"].get("pan_format_valid")
-        and result["validation"].get("dob_found")
-        and result["validation"].get("name_found")
-    )
-    result["validation"]["overall_valid"] = bool(
-        result["validation"].get("overall_valid")
-        or (core_pan_fields_ok and conf >= 0.35)
-    )
-    
-    logger.info(f"KYC PAN: Validation complete - overall_valid={result['validation']['overall_valid']}, confidence={conf:.2f}")
-
-    return PanExtractResponse(
-        document_type="PAN",
-        extracted_fields=result["extracted_fields"],
-        validation=result["validation"],
-        confidence_score=conf,
-        processing_time_ms=elapsed,
-    )
+    return PanExtractResponse(**result)
 
 
 @app.post("/kyc/extract/aadhaar", response_model=AadhaarExtractResponse)
@@ -134,10 +113,9 @@ async def extract_aadhaar(document: UploadFile = File(...)) -> AadhaarExtractRes
     _assert_upload_constraints(document, file_bytes)
 
     try:
-        result, conf, elapsed, ocr_text = service.extract_aadhaar(file_bytes, document.filename or "upload.jpg")
-        logger.info(f"KYC Aadhaar: OCR completed in {elapsed}ms, confidence {conf:.2f}")
+        result, ocr_text = service.extract_aadhaar(file_bytes, document.filename or "upload.jpg")
+        logger.info(f"KYC Aadhaar: Completed in {result['processing_time_ms']}ms, confidence {result['confidence_score']:.2f}")
         logger.info(f"KYC Aadhaar: Raw OCR text (first 200 chars): {ocr_text[:200] if ocr_text else 'EMPTY'}")
-        logger.info(f"KYC Aadhaar: Extracted fields - aadhaar_last4={result.get('extracted_fields', {}).get('aadhaar_last4')}, name={result.get('extracted_fields', {}).get('name')}")
     except UnsupportedDocumentError as exc:
         logger.error(f"KYC Aadhaar: Document error - {str(exc)}")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -145,23 +123,7 @@ async def extract_aadhaar(document: UploadFile = File(...)) -> AadhaarExtractRes
         logger.error(f"KYC Aadhaar: Extraction failed - {str(exc)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Aadhaar extraction failed: {str(exc)}") from exc
 
-    result["validation"]["issues"].extend(_confidence_issues(conf, "en"))
-    if result["extracted_fields"].get("age_eligible") is False:
-        result["validation"]["issues"].append(EN_MESSAGES["age_ineligible"])
-
-    core_aadhaar_fields_ok = bool(result["validation"].get("aadhaar_format_valid"))
-    result["validation"]["overall_valid"] = bool(
-        result["validation"].get("overall_valid")
-        or (core_aadhaar_fields_ok and conf >= 0.35)
-    )
-
-    return AadhaarExtractResponse(
-        document_type="AADHAAR",
-        extracted_fields=result["extracted_fields"],
-        validation=result["validation"],
-        confidence_score=conf,
-        processing_time_ms=elapsed,
-    )
+    return AadhaarExtractResponse(**result)
 
 
 @app.post("/kyc/verify", response_model=VerifyResponse)
@@ -205,45 +167,13 @@ async def extract_auto(document: UploadFile = File(...)) -> AutoExtractResponse:
     _assert_upload_constraints(document, file_bytes)
 
     try:
-        doc_type, pan_result, aadhaar_result, conf, elapsed = service.extract_auto(
-            file_bytes,
-            document.filename or "upload.jpg",
-        )
+        result = service.extract_auto(file_bytes, document.filename or "upload.jpg")
     except UnsupportedDocumentError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Auto extraction failed: {str(exc)}") from exc
 
-    if doc_type == "PAN" and pan_result is not None:
-        return AutoExtractResponse(
-            detected_document_type="PAN",
-            pan_result=PanExtractResponse(
-                document_type="PAN",
-                extracted_fields=pan_result["extracted_fields"],
-                validation=pan_result["validation"],
-                confidence_score=conf,
-                processing_time_ms=elapsed,
-            ),
-            message="PAN document detected and extracted",
-        )
-
-    if doc_type == "AADHAAR" and aadhaar_result is not None:
-        return AutoExtractResponse(
-            detected_document_type="AADHAAR",
-            aadhaar_result=AadhaarExtractResponse(
-                document_type="AADHAAR",
-                extracted_fields=aadhaar_result["extracted_fields"],
-                validation=aadhaar_result["validation"],
-                confidence_score=conf,
-                processing_time_ms=elapsed,
-            ),
-            message="Aadhaar document detected and extracted",
-        )
-
-    return AutoExtractResponse(
-        detected_document_type="UNKNOWN",
-        message="Unable to detect document type confidently",
-    )
+    return AutoExtractResponse(**result)
 
 
 @app.get("/health", response_model=HealthResponse)

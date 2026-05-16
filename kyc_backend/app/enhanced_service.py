@@ -5,15 +5,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 import re
 import logging
+import numpy as np
 
 from app.enhanced_extractors import (
     enhanced_extract_pan,
     enhanced_extract_aadhaar,
     enhanced_cross_validate_kyc,
     detect_document_type,
+    score_field_confidence,
+    basic_authenticity_check,
 )
-from app.enhanced_preprocess import enhanced_preprocess_image, run_enhanced_ocr
+from app.enhanced_preprocess import (
+    enhanced_preprocess_image, 
+    run_enhanced_ocr,
+    load_image_from_bytes,
+    assess_image_quality,
+)
 from app.roboflow_mapper import extract_pan_hints_with_roboflow
+from app.schemas import PanExtractedFields, AadhaarExtractedFields
 
 logger = logging.getLogger(__name__)
 
@@ -116,107 +125,222 @@ class EnhancedKYCService:
     def uptime_seconds(self) -> int:
         return int((datetime.now(timezone.utc) - self.boot_time).total_seconds())
     
-    def extract_pan(self, file_bytes: bytes, filename: str) -> tuple[dict, float, int, str]:
-        """Enhanced PAN extraction with better OCR"""
+    def extract_pan(self, file_bytes: bytes, filename: str) -> dict:
+        """Enhanced PAN extraction with quality check, confidence and authenticity"""
         started = time.perf_counter()
         extension = Path(filename).suffix
         
         try:
-            # Use enhanced preprocessing
+            # 1. Load and assess quality
+            pil_img = load_image_from_bytes(file_bytes, extension)
+            img_np = np.array(pil_img)
+            quality_data = assess_image_quality(img_np)
+            
+            # Rejection logic
+            if not quality_data["proceed"]:
+                elapsed_ms = int((time.perf_counter() - started) * 1000)
+                return {
+                    "document_type": "PAN",
+                    "extracted_fields": PanExtractedFields().dict(),
+                    "validation": {
+                        "overall_valid": False,
+                        "issues": ["REJECTED: " + issue for issue in quality_data["issues"]],
+                    },
+                    "confidence_score": 0.0,
+                    "processing_time_ms": elapsed_ms,
+                    "image_quality": quality_data,
+                }, ""
+            
+            # 2. Preprocess and OCR
             preprocessed = enhanced_preprocess_image(file_bytes, extension)
             ocr_text, confidence = run_enhanced_ocr(preprocessed)
             
-            # Use enhanced extraction
+            # 3. Extract and validate
             result = enhanced_extract_pan(ocr_text)
             
-            # Optional Roboflow enrichment
+            # 4. Optional Roboflow enrichment
             hints = extract_pan_hints_with_roboflow(file_bytes, filename)
             if hints:
                 result = self._merge_pan_hints(result, hints)
                 confidence = max(confidence, float(hints.get("avg_confidence") or 0.0))
             
-            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            # 5. Field Confidence Scoring
+            fields = result.get("extracted_fields", {})
+            field_conf = {
+                "pan_number": score_field_confidence(ocr_text, fields.get("pan_number"), "pan"),
+                "name": score_field_confidence(ocr_text, fields.get("name"), "name"),
+                "date_of_birth": score_field_confidence(ocr_text, fields.get("date_of_birth"), "dob"),
+                "fathers_name": score_field_confidence(ocr_text, fields.get("fathers_name"), "name"),
+            }
             
+            # Overall confidence update
+            overall_conf = sum(field_conf.values()) / len(field_conf)
+            
+            # 6. Authenticity Check
+            authenticity = basic_authenticity_check(result, "PAN")
+            
+            # Quality warning
+            if 40 <= quality_data["quality_score"] < 65:
+                result["validation"]["issues"].append(
+                    "Image quality is low — some fields may not extract correctly. "
+                    "We'll try, but a clearer photo works better."
+                )
+            
+            # Critical field confidence check
+            critical_fields = ["pan_number", "name", "date_of_birth"]
+            low_conf_fields = [f for f in critical_fields if field_conf.get(f, 0) < 0.7]
+            if low_conf_fields:
+                result["validation"]["issues"].append(
+                    f"Low confidence in fields: {', '.join(low_conf_fields)}. Please ensure they are clear."
+                )
+            
+            # Auto-terminate on authenticity
+            if authenticity["auto_terminate"]:
+                elapsed_ms = int((time.perf_counter() - started) * 1000)
+                return {
+                    "document_type": "PAN",
+                    "extracted_fields": fields,
+                    "validation": {
+                        "overall_valid": False,
+                        "issues": ["Only individual (personal) PAN cards are accepted for personal loan applications."],
+                    },
+                    "confidence_score": confidence,
+                    "processing_time_ms": elapsed_ms,
+                    "image_quality": quality_data,
+                    "authenticity": authenticity,
+                }, ocr_text
+            
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
             self._register_processed_doc()
             
-            logger.info(f"PAN extraction completed in {elapsed_ms}ms with confidence {confidence}")
-            return result, confidence, elapsed_ms, ocr_text
+            final_result = {
+                "document_type": "PAN",
+                "extracted_fields": fields,
+                "validation": result["validation"],
+                "confidence_score": round(confidence, 2),
+                "processing_time_ms": elapsed_ms,
+                "image_quality": quality_data,
+                "field_confidence": field_conf,
+                "authenticity": authenticity,
+            }
+            return final_result, ocr_text
             
         except Exception as e:
             logger.error(f"PAN extraction failed: {e}")
-            # Return empty result on failure
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             return {
                 "document_type": "PAN",
                 "extracted_fields": {
-                    "pan_number": None,
-                    "name": None,
-                    "fathers_name": None,
-                    "date_of_birth": None,
-                    "age": None,
-                    "age_eligible": False,
+                    "pan_number": None, "name": None, "fathers_name": None,
+                    "date_of_birth": None, "age": None, "age_eligible": False,
                 },
                 "validation": {
-                    "pan_format_valid": False,
-                    "age_check_passed": False,
-                    "name_found": False,
-                    "dob_found": False,
                     "overall_valid": False,
                     "issues": ["Extraction failed: " + str(e)],
                 },
-            }, 0.0, elapsed_ms, ""
+                "confidence_score": 0.0,
+                "processing_time_ms": elapsed_ms,
+            }, ""
     
-    def extract_aadhaar(self, file_bytes: bytes, filename: str) -> tuple[dict, float, int, str]:
-        """Enhanced Aadhaar extraction with better OCR"""
+    def extract_aadhaar(self, file_bytes: bytes, filename: str) -> dict:
+        """Enhanced Aadhaar extraction with quality check and confidence"""
         started = time.perf_counter()
         extension = Path(filename).suffix
         
         try:
-            # Use enhanced preprocessing
+            # 1. Load and assess quality
+            pil_img = load_image_from_bytes(file_bytes, extension)
+            img_np = np.array(pil_img)
+            quality_data = assess_image_quality(img_np)
+            
+            # Rejection logic
+            if not quality_data["proceed"]:
+                elapsed_ms = int((time.perf_counter() - started) * 1000)
+                return {
+                    "document_type": "AADHAAR",
+                    "extracted_fields": AadhaarExtractedFields().dict(),
+                    "validation": {
+                        "overall_valid": False,
+                        "issues": ["REJECTED: " + issue for issue in quality_data["issues"]],
+                    },
+                    "confidence_score": 0.0,
+                    "processing_time_ms": elapsed_ms,
+                    "image_quality": quality_data,
+                }, ""
+                
+            # 2. Preprocess and OCR
             preprocessed = enhanced_preprocess_image(file_bytes, extension)
             ocr_text, confidence = run_enhanced_ocr(preprocessed)
             
-            # Use enhanced extraction
+            # 3. Extract and validate
             result = enhanced_extract_aadhaar(ocr_text)
             
-            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            # 4. Field Confidence Scoring
+            fields = result.get("extracted_fields", {})
+            field_conf = {
+                "name": score_field_confidence(ocr_text, fields.get("name"), "name"),
+                "date_of_birth": score_field_confidence(ocr_text, fields.get("date_of_birth"), "dob"),
+            }
             
+            # Quality warning
+            if 40 <= quality_data["quality_score"] < 65:
+                result["validation"]["issues"].append(
+                    "Image quality is low — some fields may not extract correctly. "
+                    "We'll try, but a clearer photo works better."
+                )
+            
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
             self._register_processed_doc()
             
-            logger.info(f"Aadhaar extraction completed in {elapsed_ms}ms with confidence {confidence}")
-            return result, confidence, elapsed_ms, ocr_text
+            final_result = {
+                "document_type": "AADHAAR",
+                "extracted_fields": fields,
+                "validation": result["validation"],
+                "confidence_score": round(confidence, 2),
+                "processing_time_ms": elapsed_ms,
+                "image_quality": quality_data,
+                "field_confidence": field_conf,
+            }
+            return final_result, ocr_text
             
         except Exception as e:
             logger.error(f"Aadhaar extraction failed: {e}")
-            # Return empty result on failure
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             return {
                 "document_type": "AADHAAR",
                 "extracted_fields": {
-                    "aadhaar_last4": None,
-                    "name": None,
-                    "date_of_birth": None,
-                    "age": None,
-                    "gender": "Unknown",
-                    "address": None,
-                    "vid": None,
-                    "age_eligible": False,
+                    "aadhaar_last4": None, "name": None, "date_of_birth": None,
+                    "age": None, "gender": "Unknown", "address": None,
+                    "vid": None, "age_eligible": False,
                 },
                 "validation": {
-                    "aadhaar_format_valid": False,
-                    "age_check_passed": False,
                     "overall_valid": False,
                     "issues": ["Extraction failed: " + str(e)],
                 },
-            }, 0.0, elapsed_ms, ""
+                "confidence_score": 0.0,
+                "processing_time_ms": elapsed_ms,
+            }, ""
     
-    def extract_auto(self, file_bytes: bytes, filename: str) -> tuple[str, dict | None, dict | None, float, int]:
-        """Enhanced auto-detection and extraction"""
+    def extract_auto(self, file_bytes: bytes, filename: str) -> dict:
+        """Enhanced auto-detection and extraction with new checks"""
         started = time.perf_counter()
         extension = Path(filename).suffix
         
         try:
-            # Use enhanced preprocessing
+            # 1. Quality check first
+            pil_img = load_image_from_bytes(file_bytes, extension)
+            img_np = np.array(pil_img)
+            quality_data = assess_image_quality(img_np)
+            
+            if not quality_data["proceed"]:
+                elapsed_ms = int((time.perf_counter() - started) * 1000)
+                return {
+                    "detected_document_type": "UNKNOWN",
+                    "message": "REJECTED: " + quality_data["issues"][0] if quality_data["issues"] else "Low quality",
+                    "image_quality": quality_data
+                }
+
+            # 2. Proceed with extraction
             preprocessed = enhanced_preprocess_image(file_bytes, extension)
             ocr_text, confidence = run_enhanced_ocr(preprocessed)
             
@@ -227,55 +351,61 @@ class EnhancedKYCService:
             aadhaar_result = None
             
             if doc_type == "PAN":
-                pan_result = enhanced_extract_pan(ocr_text)
+                pan_result, _ = self.extract_pan(file_bytes, filename)
             elif doc_type == "AADHAAR":
-                aadhaar_result = enhanced_extract_aadhaar(ocr_text)
+                aadhaar_result, _ = self.extract_aadhaar(file_bytes, filename)
             
             elapsed_ms = int((time.perf_counter() - started) * 1000)
-            
             self._register_processed_doc()
             
-            logger.info(f"Auto extraction completed: {doc_type} in {elapsed_ms}ms")
-            return doc_type, pan_result, aadhaar_result, confidence, elapsed_ms
+            return {
+                "detected_document_type": doc_type,
+                "pan_result": pan_result,
+                "aadhaar_result": aadhaar_result,
+                "message": f"{doc_type} document detected and extracted",
+                "processing_time_ms": elapsed_ms,
+            }
             
         except Exception as e:
             logger.error(f"Auto extraction failed: {e}")
             elapsed_ms = int((time.perf_counter() - started) * 1000)
-            return "UNKNOWN", None, None, 0.0, elapsed_ms
+            return {
+                "detected_document_type": "UNKNOWN",
+                "message": f"Auto extraction failed: {str(e)}",
+                "processing_time_ms": elapsed_ms,
+            }
     
     def verify(self, pan_file_bytes: bytes, pan_filename: str, 
               aadhaar_file_bytes: bytes, aadhaar_filename: str) -> dict:
-        """Enhanced KYC verification with better matching"""
+        """Enhanced KYC verification with new checks"""
         try:
             # Extract PAN and Aadhaar data
-            pan_result, pan_conf, pan_ms, _ = self.extract_pan(pan_file_bytes, pan_filename)
-            aadhaar_result, aadhaar_conf, aadhaar_ms, _ = self.extract_aadhaar(aadhaar_file_bytes, aadhaar_filename)
+            pan_full, _ = self.extract_pan(pan_file_bytes, pan_filename)
+            aadhaar_full, _ = self.extract_aadhaar(aadhaar_file_bytes, aadhaar_filename)
             
             # Enhanced cross-validation
-            cross = enhanced_cross_validate_kyc(pan_result, aadhaar_result)
+            cross = enhanced_cross_validate_kyc(pan_full, aadhaar_full)
             
             # Generate reference
             timestamp = datetime.now(timezone.utc)
             ref = f"KYC-{timestamp.year}-{self._today_processed():05d}"
             
-            # Log verification results
-            logger.info(f"KYC verification completed: {cross['kyc_status']} "
-                        f"(Name score: {cross['cross_validation']['name_match_score']})")
-            
             return {
                 "kyc_status": cross["kyc_status"],
-                "pan_data": pan_result["extracted_fields"],
-                "aadhaar_data": aadhaar_result["extracted_fields"],
+                "pan_data": pan_full["extracted_fields"],
+                "aadhaar_data": aadhaar_full["extracted_fields"],
                 "cross_validation": cross["cross_validation"],
                 "overall_kyc_passed": cross["overall_kyc_passed"],
                 "kyc_reference_id": ref,
                 "timestamp": timestamp,
                 "_metrics": {
-                    "pan_confidence": pan_conf,
-                    "aadhaar_confidence": aadhaar_conf,
-                    "pan_ms": pan_ms,
-                    "aadhaar_ms": aadhaar_ms,
+                    "pan_confidence": pan_full["confidence_score"],
+                    "aadhaar_confidence": aadhaar_full["confidence_score"],
+                    "pan_ms": pan_full["processing_time_ms"],
+                    "aadhaar_ms": aadhaar_full["processing_time_ms"],
                 },
+                "pan_quality": pan_full.get("image_quality"),
+                "aadhaar_quality": aadhaar_full.get("image_quality"),
             }
             
         except Exception as e:

@@ -19,8 +19,10 @@ from startup_selftest import run_startup_selftest
 from services.groq_service import GroqService
 from services.memory import ConversationMemory
 from services.ocr import init_ocr, ocr_ready
-from core.config import settings
-from core.session import session_store
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from core.limiter import limiter
 
 logger = logging.getLogger("loanease")
 
@@ -96,12 +98,19 @@ async def lifespan(app: FastAPI):
         await redis_client.aclose()
     logger.info("LoanEase backend shutting down")
 
+limiter_instance = limiter # Rename to avoid conflict with imported name if needed
 app = FastAPI(
     title="LoanEase API",
     description="Agentic AI Personal Loan System",
     version="1.0.0",
     lifespan=lifespan
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # CORS
 app.add_middleware(

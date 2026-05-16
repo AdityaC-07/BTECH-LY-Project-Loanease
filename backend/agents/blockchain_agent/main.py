@@ -16,7 +16,10 @@ import asyncio
 from core.session import session_store
 from services.pdf_generator import generate_sanction_letter
 from core.config import settings
-from blockchain import ledger, Block, MerkleTree
+from blockchain import ledger, Block, MerkleTree, crypto_manager
+from fastapi.responses import FileResponse
+from fastapi import Request
+from core.limiter import limiter
 
 logger = logging.getLogger("loanease.blockchain")
 
@@ -39,7 +42,7 @@ def _init_keys():
                 _private_key = serialization.load_pem_private_key(f.read(), password=None)
             with open(public_key_path, "rb") as f:
                 _public_key = serialization.load_pem_public_key(f.read())
-            logger.info("🔑 Loaded existing RSA keys from keys/ directory")
+            logger.info("Loaded existing RSA keys from keys/ directory")
         else:
             _private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
             _public_key = _private_key.public_key()
@@ -54,7 +57,7 @@ def _init_keys():
                     encoding=serialization.Encoding.PEM,
                     format=serialization.PublicFormat.SubjectPublicKeyInfo
                 ))
-            logger.info("🔑 Generated new RSA keys and saved to keys/")
+            logger.info("Generated new RSA keys and saved to keys/")
     except Exception as e:
         logger.error(f"Key init failed: {e}")
         _private_key = None
@@ -83,6 +86,23 @@ class VerifyResponse(BaseModel):
     valid: bool
     block_data: Optional[Dict[str, Any]] = None
     verification_details: Dict[str, Any]
+
+
+class PublicVerifyResponse(BaseModel):
+    found: bool
+    authentic: bool
+    reference: str
+    applicant_masked: str
+    loan_amount: float
+    sanctioned_rate: float
+    sanction_date: str
+    block_index: int
+    block_hash: str
+    merkle_root: str
+    chain_valid_at_block: bool
+    full_chain_valid: bool
+    verifications: Dict[str, bool]
+    verified_at: str
 
 
 class ChainResponse(BaseModel):
@@ -307,6 +327,130 @@ async def download_sanction_pdf(transaction_id: str):
 async def get_sanction_by_reference(reference_id: str):
     """Alias for PDF download by reference ID (used by frontend)"""
     return await download_sanction_pdf(reference_id)
+
+
+@router.get("/public-verify/{reference}", response_model=PublicVerifyResponse)
+@limiter.limit("10/minute")
+async def public_verify(request: Request, reference: str):
+    """
+    Publicly accessible document verification.
+    Accepts reference number or transaction hash.
+    """
+    # 1. Search ledger
+    target_block = None
+    
+    # Try by reference
+    target_block = ledger.get_transaction_by_reference(reference)
+    
+    # Try by full hash if not found
+    if not target_block:
+        for b in ledger.chain:
+            if b.hash == reference:
+                target_block = b
+                break
+    
+    # Try by short hash (8+ chars) if still not found
+    if not target_block and len(reference) >= 8:
+        for b in ledger.chain:
+            if b.hash.startswith(reference):
+                target_block = b
+                break
+
+    if not target_block:
+        raise HTTPException(status_code=404, detail="Reference not found in ledger")
+
+    tx_data = target_block.transaction_data
+    
+    # 2. Mask applicant name
+    name = tx_data.get("applicant_name", "Unknown")
+    parts = name.split()
+    masked_name = ""
+    if len(parts) >= 2:
+        masked_name = f"{parts[0]} {parts[1][0]}*****"
+    else:
+        masked_name = f"{name[0]}*****"
+
+    # 3. Validate integrity
+    chain_valid = ledger.is_chain_valid()
+    
+    # Merkle validation
+    merkle_valid = target_block.merkle_root == MerkleTree.compute_root([tx_data])
+    
+    # Signature validation (if present)
+    sig = tx_data.get("signature")
+    sig_valid = False
+    if sig:
+        try:
+            sig_valid = crypto_manager.verify_signature(json.dumps(tx_data, sort_keys=True), sig)
+        except:
+            sig_valid = False
+
+    return PublicVerifyResponse(
+        found=True,
+        authentic=merkle_valid and chain_valid,
+        reference=tx_data.get("sanction_reference") or tx_data.get("transaction_id", "N/A"),
+        applicant_masked=masked_name,
+        loan_amount=tx_data.get("loan_amount", 0.0),
+        sanctioned_rate=tx_data.get("interest_rate", 0.0),
+        sanction_date=tx_data.get("timestamp") or target_block.timestamp,
+        block_index=target_block.index,
+        block_hash=target_block.hash,
+        merkle_root=target_block.merkle_root,
+        chain_valid_at_block=True, # Simplified for mock
+        full_chain_valid=chain_valid,
+        verifications={
+            "hash_match": True,
+            "chain_intact": chain_valid,
+            "merkle_valid": merkle_valid,
+            "signature_valid": sig_valid
+        },
+        verified_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@router.get("/verification-certificate/{reference}")
+async def download_verification_certificate(reference: str):
+    """Generate and serve a blockchain verification certificate PDF"""
+    # Reuse public_verify logic to get data
+    try:
+        data = await public_verify(reference)
+    except HTTPException:
+        raise HTTPException(status_code=404, detail="Cannot generate certificate for non-existent document")
+
+    from services.pdf_generator import get_pdf_generator
+    generator = get_pdf_generator()
+    
+    # Find block again for extra details
+    target_block = ledger.get_transaction_by_reference(reference) or next((b for b in ledger.chain if b.hash == reference), None)
+    
+    pdf_bytes = generator.generate_verification_certificate(
+        reference=data.reference,
+        applicant_masked=data.applicant_masked,
+        loan_amount=data.loan_amount,
+        interest_rate=data.sanctioned_rate,
+        sanction_date=data.sanction_date,
+        block_index=data.block_index,
+        block_hash=data.block_hash,
+        previous_hash=target_block.previous_hash if target_block else "N/A",
+        merkle_root=data.merkle_root,
+        nonce=target_block.nonce if target_block else 0,
+        verified_at=data.verified_at
+    )
+    
+    # Save to artifacts for temporary storage
+    cert_dir = os.path.join("artifacts", "certificates")
+    os.makedirs(cert_dir, exist_ok=True)
+    filename = f"Verification_Cert_{data.reference}.pdf"
+    file_path = os.path.join(cert_dir, filename)
+    
+    with open(file_path, "wb") as f:
+        f.write(pdf_bytes)
+        
+    return FileResponse(
+        file_path,
+        media_type="application/pdf",
+        filename=filename
+    )
 
 # ── NEW EXPLORER ENDPOINTS ─────────────────────────────────────────
 

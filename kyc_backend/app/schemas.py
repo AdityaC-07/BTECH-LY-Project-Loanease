@@ -11,6 +11,21 @@ class ValidationBlock(BaseModel):
     issues: list[str] = Field(default_factory=list)
 
 
+class ImageQuality(BaseModel):
+    score: int
+    label: str
+    issues: list[str] = Field(default_factory=list)
+    proceed: bool
+    blur_score: float | None = None
+    brightness: float | None = None
+
+
+class Authenticity(BaseModel):
+    flags: list[str] = Field(default_factory=list)
+    suspicious: bool
+    auto_terminate: bool
+
+
 class PanExtractedFields(BaseModel):
     pan_number: str | None = None
     name: str | None = None
@@ -33,6 +48,9 @@ class PanExtractResponse(BaseModel):
     validation: PanValidation
     confidence_score: float
     processing_time_ms: int
+    image_quality: ImageQuality | None = None
+    field_confidence: dict[str, float] = Field(default_factory=dict)
+    authenticity: Authenticity | None = None
 
 
 class AadhaarAddress(BaseModel):
@@ -66,6 +84,9 @@ class AadhaarExtractResponse(BaseModel):
     validation: AadhaarValidation
     confidence_score: float
     processing_time_ms: int
+    image_quality: ImageQuality | None = None
+    field_confidence: dict[str, float] = Field(default_factory=dict)
+    authenticity: Authenticity | None = None
 
 
 class CrossValidationResult(BaseModel):

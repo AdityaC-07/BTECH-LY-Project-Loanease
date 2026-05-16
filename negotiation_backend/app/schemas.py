@@ -46,6 +46,10 @@ class StartFromUnderwritingResponse(BaseModel):
     rounds_remaining: int
     negotiation_hint: str
     detected_intent: Literal["START"]
+    negotiation_memory: str | None = None
+    offer_valid_until: str | None = None
+    tone: str | None = None
+    tone_confidence: float | None = None
 
 
 class OfferPayload(BaseModel):
@@ -71,6 +75,10 @@ class StartNegotiationResponse(BaseModel):
     rounds_remaining: int
     negotiation_hint: str
     detected_intent: Literal["START"]
+    negotiation_memory: str | None = None
+    offer_valid_until: str | None = None
+    tone: str | None = None
+    tone_confidence: float | None = None
 
 
 class CounterRequest(BaseModel):
@@ -87,6 +95,14 @@ class CounterResponse(BaseModel):
     can_negotiate_further: bool
     status: str
     detected_intent: str
+    tone: str | None = None
+    tone_confidence: float | None = None
+    competitor_mentioned: list[str] = Field(default_factory=list)
+    negotiation_memory: str | None = None
+    offer_valid_until: str | None = None
+    minutes_remaining: int | None = None
+    urgency_signal: str | None = None
+    relationship_manager_note: str | None = None
 
 
 class AcceptRequest(BaseModel):
