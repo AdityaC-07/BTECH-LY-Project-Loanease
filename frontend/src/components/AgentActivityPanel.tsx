@@ -15,6 +15,8 @@ interface AgentActivityPanelProps {
   trace: AgentTraceItem[];
   pipelineStatus: string;
   activeAgentLabel?: string | null;
+  liveProcessing?: boolean;
+  liveLogLines?: string[];
 }
 
 const AGENT_ORDER = [
@@ -45,7 +47,7 @@ const STATUS_TO_AGENT: Record<string, string> = {
   "FAILED": "MasterOrchestratorAgent"
 };
 
-export const AgentActivityPanel = ({ trace, pipelineStatus, activeAgentLabel }: AgentActivityPanelProps) => {
+export const AgentActivityPanel = ({ trace, pipelineStatus, activeAgentLabel, liveProcessing = false, liveLogLines = [] }: AgentActivityPanelProps) => {
   const [collapsed, setCollapsed] = useState(true);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [isInView, setIsInView] = useState(false);
@@ -126,6 +128,30 @@ export const AgentActivityPanel = ({ trace, pipelineStatus, activeAgentLabel }: 
       <div 
         ref={panelRef}
         className="fixed bottom-6 right-6 z-50 w-1 h-1"
+
+        {liveProcessing && (
+          <div className="border-t border-[#1a1a1a] bg-[#0a0a0a] px-4 py-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="font-display text-[10px] font-semibold uppercase tracking-[2px] text-[#444444]">Live Output</div>
+              <span className="text-[10px] font-mono text-yellow-400/60">processing...</span>
+            </div>
+            <div className="max-h-32 overflow-hidden space-y-1 font-mono text-[11px] text-[rgba(245,197,24,0.6)]">
+              {liveLogLines.length > 0 ? liveLogLines.slice(-8).map((line, index) => (
+                <div
+                  key={`${line}-${index}`}
+                  className="animate-in fade-in slide-in-from-bottom-2 duration-300"
+                  style={{ animationDelay: `${index * 70}ms` }}
+                >
+                  {line}
+                </div>
+              )) : (
+                <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  &gt; SYSTEM: Awaiting output...
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         aria-hidden="true"
       />
     );

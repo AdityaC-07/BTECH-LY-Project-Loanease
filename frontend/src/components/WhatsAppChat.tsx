@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Smile, Paperclip, Mic, Send, FileText, CheckCircle, HelpCircle, Check, CheckCheck } from "lucide-react";
+import { ENDPOINTS } from "@/config";
 
 interface Message {
   id: string;
@@ -224,6 +225,24 @@ export const WhatsAppChat = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
+  const toAsciiDigits = (value: string) =>
+    value.replace(/[०-९]/g, (digit) => ({
+      "०": "0",
+      "१": "1",
+      "२": "2",
+      "३": "3",
+      "४": "4",
+      "५": "5",
+      "६": "6",
+      "७": "7",
+      "८": "8",
+      "९": "9",
+    }[digit] ?? digit));
+
+  const normalizePan = (value: string) => toAsciiDigits(value).replace(/\s+/g, "").toUpperCase();
+
+  const isValidPan = (value: string) => /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(value);
+
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
@@ -250,6 +269,39 @@ export const WhatsAppChat = () => {
     setIsTyping(true);
 
     try {
+      if (attachment) {
+        const formData = new FormData();
+        formData.append("document", attachment);
+        formData.append("session_id", sessionId);
+        formData.append("language", "en");
+
+        const panResponse = await fetch(ENDPOINTS.kyc_pan, {
+          method: "POST",
+          body: formData,
+        });
+
+        if (panResponse.ok) {
+          const panData = await panResponse.json();
+          const extractedPanCandidate = normalizePan(panData?.extracted_fields?.pan_number || "");
+          const extractedPan = isValidPan(extractedPanCandidate)
+            ? extractedPanCandidate
+            : (panData?.extracted_fields?.pan_number || "");
+
+          if (extractedPan) {
+            const extractedName = panData?.extracted_fields?.name || "";
+            const extractedDob = panData?.extracted_fields?.date_of_birth || "";
+            const ocrMessage: Message = {
+              id: (Date.now() + 2).toString(),
+              content: `PAN OCR detected:\nPAN: ${extractedPan}${extractedName ? `\nName: ${extractedName}` : ""}${extractedDob ? `\nDOB: ${extractedDob}` : ""}`,
+              type: 'assistant',
+              timestamp: new Date(),
+              status: 'delivered'
+            };
+            setMessages(prev => [...prev, ocrMessage]);
+          }
+        }
+      }
+
       // Send to backend with channel parameter
       const formData = new FormData();
       formData.append('message', content);

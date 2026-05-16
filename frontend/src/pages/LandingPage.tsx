@@ -148,11 +148,11 @@ const HeroSection = ({ onStartChat, onHowItWorks, onWhatsApp }: { onStartChat: (
             <span className="text-[#F5C518] block animate-in fade-in slide-in-from-bottom-8 duration-700 delay-250">POWERED BY AI.</span>
           </h1>
 
-          <p className="font-sans text-[17px] text-[#666666] leading-[1.6] mt-5 max-w-[400px] animate-in fade-in duration-700 delay-[400ms]">
+          <p className="font-sans text-[17px] text-[#666666] leading-[1.6] mt-5 max-w-[400px] animate-in fade-in duration-700 [animation-delay:400ms]">
             From blockchain-secured KYC to signed sanction letter — in under 5 minutes.
           </p>
 
-          <div className="flex items-center gap-3 mt-8 animate-in fade-in duration-700 delay-[550ms]">
+          <div className="flex items-center gap-3 mt-8 animate-in fade-in duration-700 [animation-delay:550ms]">
             <button 
               onClick={onStartChat}
               className="px-8 py-3.5 bg-[#F5C518] text-black font-sans font-bold text-[13px] tracking-[1px] rounded-sm border-none cursor-pointer transition-all duration-200 hover:shadow-[0_0_40px_rgba(245,197,24,0.45)] hover:-translate-y-px active:translate-y-0"
@@ -173,7 +173,7 @@ const HeroSection = ({ onStartChat, onHowItWorks, onWhatsApp }: { onStartChat: (
             </button>
           </div>
 
-          <div className="mt-7 flex gap-1 animate-in fade-in duration-700 delay-[700ms]">
+          <div className="mt-7 flex gap-1 animate-in fade-in duration-700 [animation-delay:700ms]">
             <span className="font-sans text-[12px] text-[#333333] tracking-[1px] uppercase">
               82.1% ACCURACY  •  99.4% FASTER  •  BLOCKCHAIN-SECURED
             </span>

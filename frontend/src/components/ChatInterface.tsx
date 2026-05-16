@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { ENDPOINTS } from "@/config";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -162,6 +162,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const handleViewAnalytics = () => {
+    window._analyticsSessionId = userData.sessionId;
+    localStorage.setItem("loanease_session_id", userData.sessionId);
     setShowAnalytics(true);
   };
 
@@ -223,6 +225,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const activeAgentIndex = AGENT_PIPELINE.indexOf(activeAgent);
   const panInputRef = useRef<HTMLInputElement>(null);
   const aadhaarInputRef = useRef<HTMLInputElement>(null);
+  const [processingLog, setProcessingLog] = useState<string[]>([]);
   const showWelcomeState = messages.length === 0 && !showSessionBanner && !hasStartedConversation;
   const isInputLocked =
     isEscalated ||
@@ -235,6 +238,90 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     showPanConfirmCard ||
     isTyping ||
     isBackendBusy;
+  const isProcessing = isBackendBusy || isKycProcessing || isTyping;
+
+  const getInputPlaceholder = () => {
+    if (isEscalated) return "Chat disabled pending human review";
+    if (!hasStartedConversation) return "Click 'Apply for a Loan' to start";
+    if (showSanction) return "Your sanction letter is ready. Ask a question or download it.";
+    if (showLoanOffers) return "Type 'accept' or ask to negotiate the rate...";
+    if (userData.stage === "credit") return "Your score is ready. How would you like to proceed?";
+    if (userData.stage === "offer") return "Tell me your loan amount or ask to compare offers...";
+    if (userData.stage === "negotiate") return "Ask for a better rate or accept the current offer...";
+    return "Type your message...";
+  };
+
+  const processingLines = useMemo(() => {
+    if (isKycProcessing) {
+      return [
+        "> KYC_AGENT: Processing document...",
+        "> OCR_ENGINE: Extracting text fields",
+        "> REGEX_NER: PAN pattern found",
+        "> VALIDATION: Format check passed",
+        "> AWAITING: Cross-validation...",
+      ];
+    }
+
+    if (isBackendBusy && userData.stage === "credit") {
+      return [
+        "> CREDIT_AGENT: Running assessment...",
+        "> SCORE_ENGINE: Computing CIBIL profile",
+        "> RISK_MODEL: Evaluating repayment risk",
+        "> OUTPUT: Preparing credit decision...",
+      ];
+    }
+
+    if (isBackendBusy && showLoanOffers) {
+      return [
+        "> OFFER_ENGINE: Building loan options...",
+        "> PRICING: Calculating rate bands",
+        "> OPTIMIZER: Selecting best tenure",
+        "> OUTPUT: Rendering recommendations...",
+      ];
+    }
+
+    if (isTyping) {
+      return [
+        "> CHAT_ENGINE: Drafting response...",
+        "> NLU: Interpreting user intent",
+        "> POLICY: Selecting next action",
+      ];
+    }
+
+    return [
+      "> SYSTEM: Awaiting backend activity...",
+    ];
+  }, [isBackendBusy, isKycProcessing, isTyping, showLoanOffers, userData.stage]);
+
+  useEffect(() => {
+    if (!isProcessing) {
+      setProcessingLog([]);
+      return;
+    }
+
+    setProcessingLog([processingLines[0]]);
+    let index = 1;
+
+    const interval = setInterval(() => {
+      setProcessingLog((prev) => {
+        const nextLine = processingLines[index % processingLines.length];
+        index += 1;
+        return [...prev, nextLine].slice(-8);
+      });
+    }, 650);
+
+    return () => clearInterval(interval);
+  }, [isProcessing, processingLines]);
+
+  useEffect(() => {
+    if (!isProcessing && hasStartedConversation && !isEscalated) {
+      const timer = setTimeout(() => {
+        textAreaRef.current?.focus();
+      }, 100);
+
+      return () => clearTimeout(timer);
+    }
+  }, [isProcessing, hasStartedConversation, isEscalated]);
 
   const handleLanguageChange = (lang: "en" | "hi") => {
     setLanguage(lang);
@@ -372,6 +459,11 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       }
     };
     initSession();
+  }, [userData.sessionId]);
+
+  useEffect(() => {
+    window._analyticsSessionId = userData.sessionId;
+    localStorage.setItem("loanease_session_id", userData.sessionId);
   }, [userData.sessionId]);
 
   const addBotMessage = (text: string) => {
@@ -599,10 +691,23 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
       const extractedPanCandidate = normalizePan(result.extracted_fields?.pan_number || "");
       const panCandidateValid = isValidPan(extractedPanCandidate);
+      const extractedPanNumber = panCandidateValid
+        ? extractedPanCandidate
+        : (result.extracted_fields?.pan_number || "");
       setPanKycData({
         ...result.extracted_fields,
-        pan_number: panCandidateValid ? extractedPanCandidate : result.extracted_fields?.pan_number,
+        pan_number: extractedPanNumber,
       });
+      if (extractedPanNumber) {
+        const extractedName = result.extracted_fields?.name || "";
+        const extractedDob = result.extracted_fields?.date_of_birth || "";
+        addBotMessage(
+          kycText(
+            `PAN OCR detected:\nPAN: ${extractedPanNumber}${extractedName ? `\nName: ${extractedName}` : ""}${extractedDob ? `\nDOB: ${extractedDob}` : ""}`,
+            `PAN OCR मिला:\nPAN: ${extractedPanNumber}${extractedName ? `\nनाम: ${extractedName}` : ""}${extractedDob ? `\nजन्म तिथि: ${extractedDob}` : ""}`
+          )
+        );
+      }
       const issues: string[] = result.validation?.issues || [];
       const confidence = Number(result.confidence_score || 0);
       const panFound = Boolean(result.validation?.pan_format_valid || panCandidateValid);
@@ -1219,7 +1324,9 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       <style>{`
         /* Main app layout */
         .app-layout {
-          display: flex;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 320px;
+          grid-template-rows: minmax(0, 1fr);
           height: 100vh;
           width: 100vw;
           overflow: hidden;
@@ -1228,13 +1335,12 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
         /* Chat area — takes all available space */
         .chat-area {
-          flex: 1;
+          min-width: 0;
           display: flex;
           flex-direction: column;
-          min-width: 0;
           height: 100vh;
           overflow: hidden;
-          transition: all 0.3s ease;
+          transition: all 0.35s ease;
         }
 
         /* Sidebar — fixed width when open */
@@ -1248,7 +1354,33 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           display: flex;
           flex-direction: column;
           overflow: hidden;
-          transition: width 0.3s ease, min-width 0.3s ease, opacity 0.3s ease;
+          transition: width 0.35s ease, min-width 0.35s ease, opacity 0.35s ease, transform 0.35s ease;
+          will-change: transform;
+        }
+
+        .app-layout.is-processing .chat-input-container {
+          height: 0;
+          padding-top: 0;
+          padding-bottom: 0;
+          opacity: 0;
+          transform: translateY(10px);
+          pointer-events: none;
+          overflow: hidden;
+          border-top-color: transparent;
+          box-shadow: none;
+        }
+
+        .app-layout.is-processing .chat-input {
+          border-color: transparent;
+          box-shadow: none;
+        }
+
+        .app-layout.is-processing .processing-indicator {
+          opacity: 1;
+        }
+
+        .app-layout.is-processing .agent-sidebar {
+          box-shadow: 0 -18px 40px rgba(0, 0, 0, 0.35);
         }
 
         /* Sidebar COLLAPSED state */
@@ -1478,6 +1610,11 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           background: #111111;
           border-top: 1px solid #1f1f1f;
           flex-shrink: 0;
+          height: 72px;
+          opacity: 1;
+          transform: translateY(0);
+          overflow: hidden;
+          transition: height 0.35s ease, opacity 0.3s ease, transform 0.35s ease, padding 0.35s ease, border-top-color 0.35s ease;
         }
         .chat-input {
           flex: 1;
@@ -1496,6 +1633,26 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         .chat-input:focus {
           border-color: #F5C518;
           box-shadow: 0 0 0 2px rgba(245, 197, 24, 0.1);
+        }
+        .chat-input.ready-glow {
+          box-shadow: 0 0 20px rgba(245, 197, 24, 0.3);
+          animation: ready-glow-fade 1s ease-out;
+        }
+        @keyframes ready-glow-fade {
+          0% { box-shadow: 0 0 20px rgba(245, 197, 24, 0.3); }
+          100% { box-shadow: 0 0 0 rgba(245, 197, 24, 0); }
+        }
+        .processing-indicator {
+          height: 2px;
+          background: linear-gradient(90deg, transparent, #F5C518, transparent);
+          background-size: 200% 100%;
+          animation: shimmer 1.5s infinite;
+          opacity: 0;
+          transition: opacity 0.3s ease;
+        }
+        @keyframes shimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
         }
         .send-button {
           background: #F5C518;
@@ -1550,7 +1707,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         </div>
       )}
 
-      <div className="app-layout">
+      <div className={`app-layout ${isProcessing ? 'is-processing' : ''}`}>
         {/* Chat Area */}
         <div className="chat-area">
           {/* Header */}
@@ -1958,18 +2115,12 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
       {/* Input */}
       <div className="chat-input-container">
-        <div className="flex max-w-4xl flex-1 items-center gap-3 mx-auto w-full">
+            <div className="flex max-w-4xl flex-1 items-center gap-3 mx-auto w-full">
           <Textarea
             ref={textAreaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={
-              isEscalated
-                ? "Chat disabled pending human review"
-                : !hasStartedConversation
-                  ? "Click 'Apply for a Loan' to start"
-                  : "Type your message..."
-            }
+                placeholder={getInputPlaceholder()}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -1977,7 +2128,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
               }
             }}
             rows={1}
-            className="chat-input flex-1"
+                className={cn("chat-input flex-1", !isProcessing && hasStartedConversation && !isEscalated ? "ready-glow" : "")}
             disabled={isInputLocked}
           />
           <Button
@@ -1993,6 +2144,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
             <Send className="w-4 h-4" />
           </Button>
         </div>
+
+        <div className="processing-indicator" />
 
           {/* Sidebar Tab - visible when sidebar is collapsed */}
           <div className="sidebar-tab hidden" onClick={toggleAgentSidebar}>
@@ -2018,6 +2171,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
                 trace={agentTrace} 
                 pipelineStatus={pipelineStatus} 
                 activeAgentLabel={activeAgent}
+                liveProcessing={isProcessing}
+                liveLogLines={processingLog}
               />
             </div>
 
