@@ -15,6 +15,41 @@ PURPOSE_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
     ("debt_consolidation", ("consolidate", "debt", "credit card", "repay loans")),
     ("travel", ("travel", "trip", "vacation", "holiday")),
 ]
+
+PURPOSE_PROFILES = {
+    "medical": {
+        "urgency": "high",
+        "tone": "empathetic",
+        "processing": "priority",
+        "opening_message": "Medical emergencies need fast action. I'll prioritize your application.",
+        "rate_note": "Medical loans often qualify for our fastest processing track — under 3 minutes.",
+        "skip_small_talk": True,
+    },
+    "home_renovation": {
+        "urgency": "medium",
+        "tone": "professional",
+        "alternative_suggestion": "Have you considered a Home Improvement Loan? Rates can be 0.5-1% lower than personal loans for renovation purposes.",
+    },
+    "wedding": {
+        "urgency": "medium",
+        "tone": "warm",
+        "tenure_suggestion": "For wedding loans, many borrowers prefer 24-36 months so EMI clears before the next major expense.",
+    },
+    "education": {
+        "urgency": "medium",
+        "rate_note": "Education loans may qualify for lower rates. Do you have an admission letter from the institution?",
+    },
+    "business": {
+        "urgency": "medium",
+        "redirect_note": "For business purposes, a Business Loan product may offer better terms. However, I can process a personal loan if you prefer.",
+    },
+    "debt_consolidation": {
+        "urgency": "low",
+        "special_check": True,
+        "note": "For debt consolidation, I need to verify your existing EMI obligations to ensure the new loan doesn't overburden you.",
+    },
+}
+
 LANGUAGE_HINTS = {
     "hi": (" hindi ", "हिंदी", "namaste", "kripya", "kya", "mujhe", "loan chahiye", "chahiye"),
     "hinglish": ("mujhe", "chahiye", "kaise", "kitna", "please", "bhai", "yaar", "loan", "emi"),
@@ -226,15 +261,24 @@ def build_memory_prompt_block(context: Dict[str, Any]) -> str:
     amount = context.get("loan_amount")
     language = context.get("language") or "en"
 
-    purpose_guidance = {
-        "home_renovation": "Great choice - renovation loans typically have strong approval rates.",
-        "medical": "Use an empathetic, fast-flow tone and keep the process moving.",
-        "wedding": "Mention that EMI can be structured around their timeline if they have a date in mind.",
-        "education": "Check whether education-loan rates or lower-cost options may apply.",
-        "business": "Flag that this is a personal-loan product and mention business-loan alternatives if relevant.",
-        "debt_consolidation": "Keep the tone practical and focused on simplifying repayments.",
-        "travel": "Stay upbeat and help them balance comfort versus EMI.",
-    }.get(str(purpose), "")
+    purpose_guidance = ""
+    if purpose in PURPOSE_PROFILES:
+        profile = PURPOSE_PROFILES[purpose]
+        urgency = profile.get("urgency", "medium")
+        guidance = [f"Urgency: {urgency}", f"Tone: {profile.get('tone', tone)}"]
+        if "opening_message" in profile:
+            guidance.append(f"Opening Note: {profile['opening_message']}")
+        if "rate_note" in profile:
+            guidance.append(f"Rate Note: {profile['rate_note']}")
+        if "alternative_suggestion" in profile:
+            guidance.append(f"Alternative Suggestion: {profile['alternative_suggestion']}")
+        if "tenure_suggestion" in profile:
+            guidance.append(f"Tenure Suggestion: {profile['tenure_suggestion']}")
+        if "redirect_note" in profile:
+            guidance.append(f"Redirect Note: {profile['redirect_note']}")
+        if "note" in profile:
+            guidance.append(f"Important Note: {profile['note']}")
+        purpose_guidance = " | ".join(guidance)
 
     lines = [
         "Conversation memory:",

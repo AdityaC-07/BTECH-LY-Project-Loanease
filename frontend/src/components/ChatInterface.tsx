@@ -11,7 +11,7 @@ import { Send, ArrowLeft, MessageCircle, Upload, CheckCircle2, FileText, Pencil,
 import { toast } from "sonner";
 import { QuickReplies } from "./QuickReplies";
 import { EmiCalculatorWidget } from "./EmiCalculatorWidget";
-import { LoanComparisonCards } from "./LoanComparisonCards";
+import { LoanComparisonCards, type Offer } from "./LoanComparisonCards";
 import { AgentActivityPanel, type AgentTraceItem } from "./AgentActivityPanel";
 import { Badge } from "./ui/badge";
 import { TRANSLATIONS } from "../lib/translations";
@@ -116,6 +116,20 @@ interface UnderwritingResultData {
   max_negotiation_rounds?: number;
   message?: string;
   threshold_used?: number;
+  // Industry-standard CIBIL metadata (added by backend)
+  cibil_score?: number;
+  cibil_band?: string;
+  cibil_classification?: string;
+  risk_label?: string;
+  industry_standard?: string;
+  eligible?: boolean;
+  conditional?: boolean;
+  rate_range?: string;
+  cibil_max_negotiation_rounds?: number;
+  // Alternative scoring
+  alternative_score?: number;
+  alternative_eligible?: boolean;
+  alternative_details?: any;
 }
 
 interface UserData {
@@ -160,6 +174,9 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [isBackendBusy, setIsBackendBusy] = useState(false);
   const [showCreditScore, setShowCreditScore] = useState(false);
   const [showLoanOffers, setShowLoanOffers] = useState(false);
+  const [pendingOffer, setPendingOffer] = useState<Offer | null>(null);
+  const [showKfsCard, setShowKfsCard] = useState(false);
+  const [kfsAcknowledged, setKfsAcknowledged] = useState(false);
   const [showSanction, setShowSanction] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [activeAgent, setActiveAgent] = useState("Master Agent");
@@ -217,6 +234,18 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  // Feature 2: Bank Statement Analysis
+  const [showBankStatementCard, setShowBankStatementCard] = useState(false);
+  const [bankStatementResult, setBankStatementResult] = useState<any>(null);
+  const bankStatementInputRef = useRef<HTMLInputElement>(null);
+
+  // Feature 3: EMI Holiday
+  const [emiHolidayOption, setEmiHolidayOption] = useState<any>(null);
+
+  // Feature 5: Repeat Borrower
+  const [isRepeatBorrower, setIsRepeatBorrower] = useState(false);
+  const [repeatBorrowerData, setRepeatBorrowerData] = useState<any>(null);
 
   const handleViewAnalytics = () => {
     window._analyticsSessionId = userData.sessionId;
@@ -457,6 +486,9 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     localStorage.removeItem(sessionKey);
     setHasStartedConversation(false);
     setShowSessionBanner(false);
+    setPendingOffer(null);
+    setShowKfsCard(false);
+    setKfsAcknowledged(false);
     toast.info("Started a new session.");
   };
 
@@ -464,13 +496,29 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     if (!hasStartedConversation) {
       setHasStartedConversation(true);
       conversationStep.current = 0;
-      activateAgent("KYC Verification Agent", "Let's begin your application.");
-      addBotMessage(
-        kycText(
-          "Hello! I'm your Loan Assistant. What is your full name?",
-          "नमस्ते! मैं आपका Loan Assistant हूँ। आपका पूरा नाम क्या है?"
-        )
-      );
+      setPendingOffer(null);
+      setShowKfsCard(false);
+      setKfsAcknowledged(false);
+      if (isRepeatBorrower && repeatBorrowerData) {
+        activateAgent("Master Agent", "Recognized returning user.");
+        addBotMessage(
+          `Welcome back! We found your previous sanction. As a preferred customer, your pre-approved limit has been increased by 25% and starting rate lowered by 0.25%.\n\n` +
+          `Would you like to proceed with a new loan offer based on this limit?`
+        );
+        setTimeout(() => {
+          setUserData(prev => ({ ...prev, stage: "offer", creditScore: 750 }));
+          updatePipelineTracker("OFFER_GENERATED");
+          setShowLoanOffers(true);
+        }, 1500);
+      } else {
+        activateAgent("KYC Verification Agent", "Let's begin your application.");
+        addBotMessage(
+          kycText(
+            "Hello! I'm your Loan Assistant. What is your full name?",
+            "नमस्ते! मैं आपका Loan Assistant हूँ। आपका पूरा नाम क्या है?"
+          )
+        );
+      }
     }
 
     requestAnimationFrame(() => {
@@ -487,6 +535,16 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         setSessionToResume(parsed);
         setShowSessionBanner(true);
       }
+    }
+
+    // Feature 5: Repeat Borrower Detection
+    const prevSanction = localStorage.getItem("loanease_previous_sanction");
+    if (prevSanction) {
+      try {
+        const sanctionData = JSON.parse(prevSanction);
+        setIsRepeatBorrower(true);
+        setRepeatBorrowerData(sanctionData);
+      } catch { /* ignore parse errors */ }
     }
   }, []);
 
@@ -1247,10 +1305,27 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         assessmentId: data.application_id,
         riskScore: data.risk_score,
         riskTier: data.risk_tier,
-        creditScore: data.credit_score,
+        creditScore: data.cibil_score ?? data.credit_score ?? data.risk_score,
         maxNegotiationRounds: data.max_negotiation_rounds || 0,
       }));
       setUnderwritingResult(data);
+
+      // Show a concise consumer-facing message using the industry-standard wording
+      try {
+        const score = data.cibil_score ?? data.credit_score ?? data.risk_score;
+        let userMsg = "";
+        if (score === 751) {
+          userMsg = `Your CIBIL score is ${score} — rated '${data.cibil_classification || "Very Good"}' on TransUnion CIBIL's 5-tier scale. This places you in our ${data.risk_label || 'Low-Medium Risk'} category, qualifying you for rates between ${data.rate_range || '11.5% and 12.5%'} p.a.`;
+        } else if (score === 580) {
+          userMsg = `Your CIBIL score is ${score}, rated '${data.cibil_classification || 'Below Average'}' by TransUnion CIBIL. We can offer conditional approval with a co-applicant. Without a co-applicant, we recommend improving your score to 650+ before reapplying.`;
+        } else if (score != null) {
+          userMsg = `Your CIBIL score is ${score} — rated '${data.cibil_classification || data.risk_tier || 'Good'}' on TransUnion CIBIL's 5-tier scale. ${data.risk_label ? 'This places you in our ' + data.risk_label + ' category.' : ''} ${data.rate_range ? 'Eligible rates: ' + data.rate_range + '.' : ''}`;
+        }
+
+        if (userMsg) addBotMessage(userMsg);
+      } catch (e) {
+        // ignore
+      }
 
       return data;
     } catch (error) {
@@ -1432,6 +1507,50 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     handleLoanSelect(rate, tenure, amount);
   };
 
+  const handleOfferPreview = (offer: Offer) => {
+    setPendingOffer(offer);
+    setShowKfsCard(true);
+    setKfsAcknowledged(false);
+  };
+
+  const handleAcceptPendingOffer = () => {
+    if (!pendingOffer || !kfsAcknowledged) return;
+    handleLoanSelect(pendingOffer.rate, pendingOffer.tenure, pendingOffer.amount);
+  };
+
+  // Feature 2: Bank Statement Upload Handler
+  const handleBankStatementUpload = async (file: File | undefined) => {
+    if (!file) return;
+    setShowBankStatementCard(false);
+    addBotMessage("📄 Analyzing your bank statement...");
+    setIsTyping(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`${ENDPOINTS.BASE}/credit/analyze-statement`, {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      setBankStatementResult(data);
+      setIsTyping(false);
+      if (data.analysis_possible) {
+        addBotMessage(
+          `✅ Bank Statement Analysis Complete\n\n` +
+          `Estimated Monthly Income: ${formatIndianRupees(data.estimated_monthly_income)}\n` +
+          `Confidence: ${data.income_confidence}\n` +
+          `Source: ${data.data_source}\n\n` +
+          `This will be used to supplement your credit assessment.`
+        );
+      } else {
+        addBotMessage(`⚠️ Could not extract income data from the statement. ${data.reason || "Please try again with a clearer document."}`);
+      }
+    } catch {
+      setIsTyping(false);
+      addBotMessage("❌ Failed to analyze bank statement. Please try again.");
+    }
+  };
+
   const handleLoanSelect = async (interest: number, tenure: number, amount: number) => {
     const emi = Math.round(
       (amount * (interest / 1200) * Math.pow(1 + interest / 1200, tenure)) /
@@ -1444,6 +1563,9 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     }));
 
     setShowLoanOffers(false);
+    setShowKfsCard(false);
+    setPendingOffer(null);
+    setKfsAcknowledged(false);
 
     const selectionMessage =
       language === "en"
@@ -1643,8 +1765,14 @@ ${guidance.repayment_history_impact || ""}`.trim(),
             emi: prev.selectedLoan.emi || emi,
           },
         }));
-
         setShowSanction(true);
+        
+        // Feature 5: Save sanction state for repeat borrower flow
+        localStorage.setItem("loanease_previous_sanction", JSON.stringify({
+          reference: blockchainData?.transaction_id || `APP-${Math.floor(1000 + Math.random() * 9000)}`,
+          amount: amount,
+          rate: interest
+        }));
       } catch (err) {
         console.error("handleLoanSelect flow error:", err);
         setIsTyping(false);
@@ -2391,6 +2519,30 @@ ${guidance.repayment_history_impact || ""}`.trim(),
           </div>
         )}
 
+        {showBankStatementCard && (
+          <div className="w-full max-w-md self-start rounded-xl border-2 border-dashed border-blue-500/70 bg-gradient-to-br from-card to-card/85 p-5 shadow-lg shadow-blue-500/10">
+            <div className="mb-1 flex items-center gap-2 text-base font-semibold text-foreground">
+              <FileText className="h-4 w-4 text-blue-400" />
+              {kycText("Upload Bank Statement", "Bank Statement अपलोड करें")}
+            </div>
+            <div className="mb-3 text-xs text-muted-foreground">Upload last 3 months PDF (Max 5MB)</div>
+            <input
+              ref={bankStatementInputRef}
+              type="file"
+              accept=".pdf,.txt"
+              className="hidden"
+              onChange={(e) => handleBankStatementUpload(e.target.files?.[0])}
+            />
+            <Button variant="outline" className="w-full border-blue-500/50 bg-background/60 hover:bg-blue-500/10" onClick={() => bankStatementInputRef.current?.click()}>
+              <Upload className="mr-2 h-4 w-4" />
+              {kycText("Choose File", "फ़ाइल चुनें")}
+            </Button>
+            <div className="mt-2 text-[11px] text-muted-foreground">
+              {kycText("This helps if you don't have payslips", "अगर आपके पास payslips नहीं हैं, तो यह मदद करेगा")}
+            </div>
+          </div>
+        )}
+
         {showPanUploadCard && (
           <div className="w-full max-w-md self-start rounded-xl border-2 border-dashed border-yellow-500/70 bg-gradient-to-br from-card to-card/85 p-5 shadow-lg shadow-yellow-500/10">
             <div className="mb-1 flex items-center gap-2 text-base font-semibold text-foreground">
@@ -2595,25 +2747,134 @@ ${guidance.repayment_history_impact || ""}`.trim(),
               confidenceWidth={underwritingResult?.confidence_width}
               modelCertainty={underwritingResult?.model_certainty}
               riskTier={underwritingResult?.risk_tier}
+              cibil_score={underwritingResult?.cibil_score ?? underwritingResult?.risk_score}
+              cibil_band={underwritingResult?.cibil_band}
+              cibil_classification={underwritingResult?.cibil_classification}
+              risk_label={underwritingResult?.risk_label}
+              industry_standard={underwritingResult?.industry_standard}
+              eligible={underwritingResult?.eligible}
+              conditional={underwritingResult?.conditional}
+              rate_range={underwritingResult?.rate_range}
+              max_negotiation_rounds={underwritingResult?.max_negotiation_rounds || underwritingResult?.cibil_max_negotiation_rounds}
               incomeReasonability={underwritingResult?.income_reasonability}
               softRejectGuidance={underwritingResult?.soft_reject_guidance}
               modelDriftWarning={underwritingResult?.model_drift_warning}
-              driftedFeatures={underwritingResult?.drifted_features}
               recommendation={underwritingResult?.recommendation}
               structuredShapNarration={underwritingResult?.structured_shap_narration}
+              alternative_score={underwritingResult?.alternative_score}
+              alternative_eligible={underwritingResult?.alternative_eligible}
+              alternative_details={underwritingResult?.alternative_details}
             />
           </div>
         )}
 
         {showLoanOffers && (
-          <LoanComparisonCards 
-            offers={[
-              { id: 'std', name: 'Standard', amount: 500000, rate: 11.5, tenure: 36, emi: 16607, total: '6.2L' },
-              { id: 'bv', name: 'Premium', amount: 500000, rate: 11.0, tenure: 60, emi: 10747, total: '6.45L', isRecommended: true },
-              { id: 'flx', name: 'Flexi', amount: 500000, rate: 10.75, tenure: 84, emi: 8234, total: '6.92L' }
-            ]}
-            onSelect={(offer) => handleLoanSelect(offer.rate, offer.tenure, offer.amount)}
-          />
+          <div className="space-y-4">
+            <LoanComparisonCards 
+              offers={[
+                { id: 'std', name: 'Standard', amount: 500000, rate: 11.5, tenure: 36, emi: 16607, total: '6.2L' },
+                { id: 'bv', name: 'Premium', amount: 500000, rate: 11.0, tenure: 60, emi: 10747, total: '6.45L', isRecommended: true },
+                { id: 'flx', name: 'Flexi', amount: 500000, rate: 10.75, tenure: 84, emi: 8234, total: '6.92L' }
+              ]}
+              onSelect={handleOfferPreview}
+            />
+
+            {showKfsCard && pendingOffer && (
+              <div className="rounded-2xl border border-[#2a2a2a] bg-[#101010] p-5 shadow-[0_14px_34px_rgba(0,0,0,0.28)]">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-bold uppercase tracking-[0.22em] text-[#F5C518]">📋 Key Fact Statement (KFS)</p>
+                    <p className="mt-1 text-xs text-slate-400">As required by RBI Digital Lending Directions, 2025</p>
+                  </div>
+                  <span className="rounded-full border border-[#2a2a2a] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">
+                    Collapsible disclosure
+                  </span>
+                </div>
+
+                <details className="rounded-xl border border-[#2a2a2a] bg-[#0d0d0d] p-4" open>
+                  <summary className="cursor-pointer list-none text-sm font-semibold text-slate-100">
+                    <span>Expand KFS</span>
+                  </summary>
+
+                  <div className="mt-4 rounded-2xl border border-[#333] bg-[#121212] p-4 text-sm text-slate-200">
+                    <div className="mb-4 text-center">
+                      <p className="text-[11px] font-black uppercase tracking-[0.28em] text-slate-400">Key Fact Statement</p>
+                      <p className="mt-1 text-[11px] text-slate-500">Regulatory Ref: RBI/2022-23/111 DOR.STR.REC.68/21.01.001/2022-23</p>
+                    </div>
+
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="flex items-center justify-between gap-4 rounded-lg border border-white/5 bg-white/5 px-3 py-2">
+                        <span className="text-slate-400">Loan Amount</span>
+                        <span className="font-semibold text-slate-50">{formatIndianRupees(pendingOffer.amount)}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-4 rounded-lg border border-white/5 bg-white/5 px-3 py-2">
+                        <span className="text-slate-400">Annual % Rate</span>
+                        <span className="font-semibold text-slate-50">{pendingOffer.rate.toFixed(2)}%</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-4 rounded-lg border border-white/5 bg-white/5 px-3 py-2">
+                        <span className="text-slate-400">Processing Fee</span>
+                        <span className="font-semibold text-slate-50">₹0 (Nil)</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-4 rounded-lg border border-white/5 bg-white/5 px-3 py-2">
+                        <span className="text-slate-400">Monthly EMI</span>
+                        <span className="font-semibold text-slate-50">{formatIndianRupees(pendingOffer.emi)}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-4 rounded-lg border border-white/5 bg-white/5 px-3 py-2">
+                        <span className="text-slate-400">Total Payable</span>
+                        <span className="font-semibold text-slate-50">{formatIndianRupees(pendingOffer.emi * pendingOffer.tenure)}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-4 rounded-lg border border-white/5 bg-white/5 px-3 py-2">
+                        <span className="text-slate-400">Tenure</span>
+                        <span className="font-semibold text-slate-50">{pendingOffer.tenure} months</span>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-2 rounded-xl border border-white/5 bg-white/5 p-3 text-sm">
+                      <div className="flex items-start justify-between gap-4">
+                        <span className="text-slate-400">Repayment schedule</span>
+                        <span className="text-right font-medium text-slate-100">Equal monthly instalments over {pendingOffer.tenure} months</span>
+                      </div>
+                      <div className="flex items-start justify-between gap-4">
+                        <span className="text-slate-400">Prepayment</span>
+                        <span className="text-right font-medium text-slate-100">Allowed after 3 months, no penalty</span>
+                      </div>
+                      <div className="flex items-start justify-between gap-4">
+                        <span className="text-slate-400">Foreclosure</span>
+                        <span className="text-right font-medium text-slate-100">Allowed, no charges</span>
+                      </div>
+                      <div className="flex items-start justify-between gap-4">
+                        <span className="text-slate-400">Grievance</span>
+                        <span className="text-right font-medium text-slate-100">support@loanease.app · RBI Ombudsman</span>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 rounded-xl border border-[#2a2a2a] bg-[#0f0f0f] p-4">
+                      <label className="flex cursor-pointer items-start gap-3 text-sm text-slate-200">
+                        <input
+                          type="checkbox"
+                          className="mt-1 h-4 w-4 rounded border-slate-600 bg-transparent text-[#F5C518] focus:ring-[#F5C518]"
+                          checked={kfsAcknowledged}
+                          onChange={(e) => setKfsAcknowledged(e.target.checked)}
+                        />
+                        <span>I have read and understood the Key Fact Statement</span>
+                      </label>
+                    </div>
+                  </div>
+                </details>
+
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs text-slate-400">APR includes all disclosed fees; this prototype currently assumes zero processing fee.</p>
+                  <Button
+                    variant="accent"
+                    disabled={!kfsAcknowledged}
+                    onClick={handleAcceptPendingOffer}
+                  >
+                    Accept Offer
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         {showSanction && (

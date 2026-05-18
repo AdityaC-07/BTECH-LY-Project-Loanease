@@ -15,6 +15,8 @@ interface Offer {
   isRecommended?: boolean;
 }
 
+export type { Offer };
+
 interface LoanComparisonCardsProps {
   offers: Offer[];
   onSelect: (offer: Offer) => void;

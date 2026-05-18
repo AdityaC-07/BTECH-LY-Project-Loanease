@@ -244,6 +244,8 @@ async def get_analytics(session_id: str):
         )
         tenure_months = max(1, tenure_months)
 
+        purpose = session_data.get("loan_purpose") or session_data.get("purpose") or "general"
+
         monthly_rate = interest_rate / 12 / 100
         if monthly_rate > 0:
             power_val = (1 + monthly_rate) ** float(tenure_months)
@@ -319,6 +321,7 @@ async def get_analytics(session_id: str):
             },
             "benchmark": benchmark,
             "applicant_normalized": applicant_normalized,
+            "purpose": purpose,
         }
 
     except Exception as e:
@@ -366,6 +369,7 @@ async def get_analytics(session_id: str):
                 "repayment": 83,
                 "coapplicant": 60,
             },
+            "purpose": "general",
         }
 
 

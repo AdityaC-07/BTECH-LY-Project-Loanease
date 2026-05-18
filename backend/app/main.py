@@ -32,7 +32,7 @@ from app.credit_score import get_credit_score, get_credit_band, mask_pan
 from app.kyc_extractors import extract_pan, extract_aadhaar, cross_validate_kyc
 from app.kyc_preprocess import preprocess_image, run_ocr, MAX_UPLOAD_BYTES, UnsupportedDocumentError
 from services.otp_service import otp_store
-from core.config import settings
+from core.config import settings, get_band
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -294,36 +294,31 @@ def credit_score(pan_number: str) -> CreditScoreResponse:
     try:
         pan_number = pan_number.strip().upper()
         credit_score_val = get_credit_score(pan_number)
-        credit_band = get_credit_band(credit_score_val)
+        # Use industry-standard TransUnion CIBIL bands for messaging
+        band = get_band(credit_score_val)
 
-        # Determine which band the score falls into
-        band_names = {
-            (700, 900): "low_risk",
-            (301, 699): "medium_risk",
-            (0, 300): "high_risk",
-        }
-
-        applicant_band = "medium_risk"
-        for (min_score, max_score), band_label in band_names.items():
-            if min_score <= credit_score_val <= max_score:
-                applicant_band = band_label
-                break
+        # Friendly English/Hindi messages using the new CIBIL banding
+        rate_range = None
+        if band.get("rate_min") is not None and band.get("rate_max") is not None:
+            rate_range = f"{band['rate_min']}–{band['rate_max']}% p.a."
 
         message_en = (
-            f"Your credit score is {credit_score_val}. You are in the {credit_band['label']} tier. "
-            "You can continue your loan application. Interest pricing will be adjusted by risk tier."
+            f"Your CIBIL score is {credit_score_val} — rated '{band.get('cibil_classification') or band.get('label')}' on TransUnion CIBIL's 5-tier scale. "
+            f"This places you in our {band.get('label')} category{', qualifying you for rates between ' + rate_range if rate_range else ''}."
         )
         message_hi = (
-            f"आपका credit score {credit_score_val} है। आप {credit_band['label']} tier में आते हैं। "
-            "आप loan application जारी रख सकते हैं। ब्याज दर risk tier के आधार पर तय होगी।"
+            f"आपका CIBIL स्कोर {credit_score_val} है — TransUnion CIBIL के 5-tier scale पर '{band.get('cibil_classification') or band.get('label')}' रेटिंग मिली है। "
+            f"यह आपको हमारी {band.get('label')} category में रखता है{('। आप ' + rate_range + ' वार्षिक दर के लिए पात्र हैं') if rate_range else ''}।"
         )
+
+        applicant_band = band.get("band_key") or band.get("label")
 
         return CreditScoreResponse(
             pan_number=mask_pan(pan_number),
             credit_score=credit_score_val,
             credit_score_out_of=900,
-            credit_band=credit_band["label"],
-            credit_band_color=credit_band["color"],
+            credit_band=band.get("label"),
+            credit_band_color=band.get("color"),
             eligible_for_loan=True,
             applicant_score_falls_in=applicant_band,
             message_en=message_en,
@@ -376,14 +371,38 @@ def assess(payload: AssessRequest) -> AssessResponse:
     session_store.update_stage(session_id, "CREDIT_ASSESSED")
 
     # Build response with all fields from result
-    return AssessResponse(
-        application_id=application_id,
-        **{
-            k: (structured_narration if k == "structured_shap_narration" else result.get(k))
-            for k in AssessResponse.model_fields
-            if k != "application_id" and result.get(k) is not None
-        },
-    )
+    response_data = {
+        k: (structured_narration if k == "structured_shap_narration" else result.get(k))
+        for k in AssessResponse.model_fields
+        if k != "application_id"
+    }
+
+    # Attach industry-standard CIBIL band metadata when a credit score is present
+    try:
+        score = result.get("credit_score")
+        if score is not None:
+            band = get_band(int(score))
+            rate_range = None
+            if band.get("rate_min") is not None and band.get("rate_max") is not None:
+                rate_range = f"{band['rate_min']}–{band['rate_max']}% p.a."
+
+            extra = {
+                "cibil_score": int(score),
+                "cibil_band": band.get("display") or band.get("label"),
+                "cibil_classification": band.get("cibil_classification"),
+                "risk_label": band.get("label"),
+                "industry_standard": "TransUnion CIBIL 5-tier scale",
+                "eligible": band.get("eligible"),
+                "conditional": band.get("conditional", False),
+                "rate_range": rate_range,
+                "max_negotiation_rounds": band.get("max_rounds"),
+            }
+            response_data.update(extra)
+    except Exception:
+        # If anything goes wrong, continue without CIBIL extras
+        pass
+
+    return AssessResponse(application_id=application_id, **response_data)
 
 
 # Route alias for frontend compatibility

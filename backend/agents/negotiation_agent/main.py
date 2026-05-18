@@ -28,6 +28,7 @@ class NegotiationStartRequest(BaseModel):
     tenure_months: Optional[int] = None
     max_negotiation_rounds: Optional[int] = 3
     top_positive_factor: Optional[str] = None
+    purpose: Optional[str] = None
 
 class NegotiationStartResponse(BaseModel):
     negotiation_id: str
@@ -96,7 +97,8 @@ _analytics = {
   "total_concession": 0.0,
   "accept_rounds_map": {},
   "total_savings": 0.0,
-  "escalation_reasons": {}
+  "escalation_reasons": {},
+  "purpose_distribution": {}
 }
 
 # Load ML Model
@@ -259,8 +261,13 @@ async def start_negotiation(request: NegotiationStartRequest):
         current_rate = request.desired_rate
         risk_category = request.risk_tier or "MEDIUM"
 
+        purpose = request.purpose
         if session:
             underwriting_result = session["data"].get("underwriting_result", {})
+            conversation_context = session["data"].get("conversation_context", {})
+            if not purpose:
+                purpose = conversation_context.get("loan_purpose")
+
             if not current_rate:
                 current_rate = underwriting_result.get("interest_rate", 12.0)
             risk_category = underwriting_result.get("risk_category", risk_category)
@@ -272,6 +279,7 @@ async def start_negotiation(request: NegotiationStartRequest):
             current_rate,
             risk_category,
             request.customer_profile,
+            purpose
         )
 
         negotiation_id = generate_negotiation_id()
@@ -286,8 +294,12 @@ async def start_negotiation(request: NegotiationStartRequest):
             "negotiation_steps": neg_params["negotiation_steps"],
             "customer_profile": request.customer_profile,
             "risk_category": risk_category,
+            "purpose": purpose,
             "completed": False,
         }
+
+        if purpose:
+            _analytics["purpose_distribution"][purpose] = _analytics["purpose_distribution"].get(purpose, 0) + 1
 
         if request.session_id:
             session_store.update_stage(request.session_id, "NEGOTIATION_STARTED")
@@ -607,5 +619,6 @@ async def get_analytics():
         "decisions_by_engine": _analytics["decisions_by_engine"],
         "most_common_accept_round": _analytics["most_common_accept_round"],
         "avg_savings_per_applicant": _analytics["avg_savings_per_applicant"],
-        "top_reason_for_escalation": _analytics["top_reason_for_escalation"]
+        "top_reason_for_escalation": _analytics["top_reason_for_escalation"],
+        "purpose_distribution": _analytics["purpose_distribution"]
     }

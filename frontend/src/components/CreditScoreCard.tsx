@@ -32,6 +32,19 @@ interface CreditScoreCardProps {
   driftedFeatures?: string[];
   recommendation?: string | null;
   structuredShapNarration?: string | null;
+  // New CIBIL-focused props
+  cibil_score?: number | null;
+  cibil_band?: string | null;
+  cibil_classification?: string | null;
+  risk_label?: string | null;
+  industry_standard?: string | null;
+  eligible?: boolean | null;
+  conditional?: boolean | null;
+  rate_range?: string | null;
+  max_negotiation_rounds?: number | null;
+  alternative_score?: number | null;
+  alternative_eligible?: boolean | null;
+  alternative_details?: any | null;
 }
 
 interface StructuredNarrationPayload {
@@ -62,6 +75,18 @@ export const CreditScoreCard = ({
   driftedFeatures,
   recommendation,
   structuredShapNarration,
+  cibil_score = null,
+  cibil_band = null,
+  cibil_classification = null,
+  risk_label = null,
+  industry_standard = null,
+  eligible = null,
+  conditional = null,
+  rate_range = null,
+  max_negotiation_rounds = null,
+  alternative_score = null,
+  alternative_eligible = null,
+  alternative_details = null,
 }: CreditScoreCardProps) => {
   const [step, setStep] = useState(1);
   const [displayScore, setDisplayScore] = useState(300);
@@ -109,21 +134,25 @@ export const CreditScoreCard = ({
   const dashLength = circumference * gaugeProgress;
   const bandPosition = Math.max(0, Math.min(100, ((score - 300) / (maxScore - 300)) * 100));
 
+  const referenceScore = cibil_score ?? score;
+
   const getScoreTone = () => {
-    if (score >= 700) return "text-[#22c55e]";
-    if (score >= 550) return "text-[#F5C518]";
+    if (referenceScore >= 700) return "text-[#22c55e]";
+    if (referenceScore >= 550) return "text-[#F5C518]";
     return "text-[#ef4444]";
   };
 
   const getTierLabel = () => {
-    if (score >= 700) return "LOW RISK TIER";
-    if (score >= 550) return "MEDIUM RISK TIER";
+    if (risk_label) return risk_label.toUpperCase();
+    if (referenceScore >= 700) return "LOW RISK TIER";
+    if (referenceScore >= 550) return "MEDIUM RISK TIER";
     return "HIGH RISK TIER";
   };
 
   const getRateBand = () => {
-    if (score >= 700) return "10.5% – 12.5% p.a. eligible";
-    if (score >= 550) return "12.5% – 15.0% p.a. eligible";
+    if (rate_range) return rate_range + (eligible === false ? ' (subject to conditions)' : '');
+    if (referenceScore >= 700) return "10.5% – 12.5% p.a. eligible";
+    if (referenceScore >= 550) return "12.5% – 15.0% p.a. eligible";
     return "15.5%+ p.a. likely";
   };
 
@@ -214,7 +243,7 @@ export const CreditScoreCard = ({
 
           <div className="absolute inset-0 flex flex-col items-center justify-center">
             <span className={cn("text-[48px] font-black leading-none tracking-tight", getScoreTone())}>
-              {displayScore}
+              {cibil_score ?? displayScore}
             </span>
             <span className="mt-1 text-xs font-semibold tracking-[0.3em] text-slate-400">/ {maxScore}</span>
           </div>
@@ -223,9 +252,9 @@ export const CreditScoreCard = ({
         <div
           className={cn(
             "mx-auto mt-4 inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-bold tracking-[0.25em] uppercase transition-all duration-500",
-            score >= 700
+            referenceScore >= 700
               ? "border-[#22c55e]/30 bg-[#22c55e]/10 text-[#22c55e]"
-              : score >= 550
+              : referenceScore >= 550
                 ? "border-[#F5C518]/30 bg-[#F5C518]/10 text-[#F5C518]"
                 : "border-[#ef4444]/30 bg-[#ef4444]/10 text-[#ef4444]",
             detailsReady ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
@@ -235,6 +264,35 @@ export const CreditScoreCard = ({
           {getTierLabel()}
         </div>
       </div>
+
+      {alternative_score != null && (
+        <div className={cn(
+          "relative mt-6 rounded-2xl border border-blue-500/30 bg-blue-500/10 p-5 shadow-lg transition-all duration-500",
+          detailsReady ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
+        )}>
+          <div className="flex items-start gap-3">
+            <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-500/20 text-blue-400">
+              <CheckCircle2 className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-blue-300">Alternative Assessment</p>
+              <p className="mt-1 text-sm text-blue-100">
+                {alternative_details?.message || `Your alternative profile score is ${alternative_score}/100.`}
+              </p>
+              {alternative_details?.components && (
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {Object.entries(alternative_details.components).map(([key, comp]: [string, any]) => (
+                    <div key={key} className="rounded-lg border border-blue-500/20 bg-blue-950/30 px-3 py-2 text-xs">
+                      <span className="font-semibold text-blue-300">+{comp.score}</span>{" "}
+                      <span className="text-blue-200/80">{comp.reason}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="relative mt-6 rounded-2xl border border-[#2a2a2a] bg-[#0f0f0f]/90 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
         <div className="mb-2 flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.3em] text-slate-500">
@@ -257,12 +315,18 @@ export const CreditScoreCard = ({
           </div>
         </div>
 
-        <div
-          className="mt-2 text-[10px] font-semibold uppercase tracking-[0.28em] text-[#F5C518] transition-all duration-700"
-          style={{ marginLeft: `calc(${bandPosition}% - 2.5rem)` }}
-        >
-          Your score: HERE ↑
-        </div>
+        {cibil_band ? (
+          <div className="mt-2 text-[12px] font-bold uppercase tracking-[0.08em] text-slate-200">
+            {industry_standard ? `${industry_standard} · ` : ''}{cibil_band} · {cibil_classification}
+          </div>
+        ) : (
+          <div
+            className="mt-2 text-[10px] font-semibold uppercase tracking-[0.28em] text-[#F5C518] transition-all duration-700"
+            style={{ marginLeft: `calc(${bandPosition}% - 2.5rem)` }}
+          >
+            Your score: HERE ↑
+          </div>
+        )}
 
         <div className="mt-4 grid grid-cols-3 gap-2 text-center text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-300">
           <div className="rounded-xl border border-[#3a1f1f] bg-[#1a1212] px-2 py-3">
@@ -351,6 +415,9 @@ export const CreditScoreCard = ({
         <div className="rounded-2xl border border-[#2f2608] bg-[#111111] px-4 py-4 shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
           <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-[#F5C518]">What this means for your rate</p>
           <p className="mt-2 text-sm text-slate-200">{getRateBand()}</p>
+          {max_negotiation_rounds != null && (
+            <p className="mt-1 text-xs text-slate-400">Max negotiation rounds: {max_negotiation_rounds}</p>
+          )}
         </div>
 
         {incomeReasonability && (

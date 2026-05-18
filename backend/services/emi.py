@@ -73,10 +73,13 @@ def calculate_affordability(
         "assumed_tenure": estimated_tenure
     }
 
+from services.conversation_context import PURPOSE_PROFILES
+
 def calculate_negotiation_params(
     current_rate: float,
     risk_category: str,
-    customer_profile: str = "STANDARD"
+    customer_profile: str = "STANDARD",
+    purpose: str = None
 ) -> Dict:
     """Calculate negotiation parameters based on risk and profile"""
     
@@ -97,6 +100,13 @@ def calculate_negotiation_params(
     }
     
     base_concession = risk_concessions.get(risk_category, 0.0)
+    
+    # Adjust for purpose (e.g. medical gets priority/better rate)
+    if purpose and purpose in PURPOSE_PROFILES:
+        profile = PURPOSE_PROFILES[purpose]
+        if profile.get("processing") == "priority" or profile.get("urgency") == "high":
+            base_concession += 0.5
+
     profile_multiplier = profile_multipliers.get(customer_profile, 1.0)
     
     max_concession = base_concession * profile_multiplier
@@ -105,8 +115,14 @@ def calculate_negotiation_params(
     # Negotiation steps
     steps = []
     current_step = current_rate
+    
+    # If high urgency, allow larger jumps to close faster
+    step_size = settings.CONCESSION_STEP
+    if purpose and purpose in PURPOSE_PROFILES and PURPOSE_PROFILES[purpose].get("urgency") == "high":
+        step_size *= 1.5
+        
     while current_step > min_rate:
-        current_step = max(min_rate, current_step - settings.CONCESSION_STEP)
+        current_step = max(min_rate, current_step - step_size)
         steps.append(current_step)
     
     return {
@@ -116,3 +132,4 @@ def calculate_negotiation_params(
         "negotiation_steps": [round(step, 2) for step in steps],
         "total_steps": len(steps)
     }
+

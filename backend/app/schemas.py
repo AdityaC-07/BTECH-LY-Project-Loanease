@@ -25,6 +25,15 @@ class AssessResponse(BaseModel):
     application_id: str
     decision: Literal["APPROVED", "APPROVED_WITH_CONDITIONS", "CONDITIONAL_REJECT", "REJECTED"]
     credit_score: int
+    cibil_score: int | None = None
+    cibil_band: str | None = None
+    cibil_classification: str | None = None
+    risk_label: str | None = None
+    industry_standard: str | None = None
+    eligible: bool | None = None
+    conditional: bool | None = None
+    rate_range: str | None = None
+    max_negotiation_rounds: int | None = None
     credit_score_out_of: int = 900
     credit_band: str
     credit_band_color: Literal["green", "yellow", "orange", "red"]

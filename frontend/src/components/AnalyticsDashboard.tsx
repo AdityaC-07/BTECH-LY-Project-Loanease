@@ -17,6 +17,7 @@ const ANALYTICS_DEMO_DATA = {
     emi: 10871,
     total_payable: 652260,
     total_interest: 152260,
+    purpose: "medical",
   },
   credit_data: {
     credit_score: 750,
@@ -69,6 +70,7 @@ const normalizeAnalyticsData = (raw: any) => {
       emi: Number(safeLoan.emi ?? 10871),
       total_payable: Number(safeLoan.total_payable ?? 652260),
       total_interest: Number(safeLoan.total_interest ?? 152260),
+      purpose: raw?.purpose || safeLoan.purpose || "general",
     },
     credit_data: {
       credit_score: Number(safeCredit.credit_score ?? 750),
@@ -498,6 +500,7 @@ export const AnalyticsDashboard = ({ sessionId, customerName, initialAmount, ini
 
   const analytics = normalizeAnalyticsData(analyticsData || ANALYTICS_DEMO_DATA);
   const riskScore = Number(analytics.credit_data.risk_score || 80);
+  const purpose = analytics.loan_data.purpose || "general";
 
   return (
     <div className="w-full max-w-6xl mx-auto p-4 space-y-8 animate-slide-up" id="analytics-section">
@@ -505,6 +508,9 @@ export const AnalyticsDashboard = ({ sessionId, customerName, initialAmount, ini
         <h2 className="text-3xl font-bold font-display text-white flex items-center justify-center gap-2">
         <BarChart3 className="w-8 h-8" />
         Your Loan Insights
+        <span className="ml-2 text-sm bg-accent/20 text-accent px-3 py-1 rounded-full uppercase tracking-wider font-semibold">
+          {purpose.replace("_", " ")}
+        </span>
       </h2>
         <p className="text-muted-foreground">Complete breakdown of your loan and approval profile</p>
       </div>
