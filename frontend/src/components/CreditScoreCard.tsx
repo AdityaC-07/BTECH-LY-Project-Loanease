@@ -31,6 +31,13 @@ interface CreditScoreCardProps {
   modelDriftWarning?: boolean;
   driftedFeatures?: string[];
   recommendation?: string | null;
+  structuredShapNarration?: string | null;
+}
+
+interface StructuredNarrationPayload {
+  summary?: string;
+  positive_factors?: Array<{ feature?: string; label?: string; shap_value?: number; actual_value?: string }>;
+  negative_factors?: Array<{ feature?: string; label?: string; shap_value?: number; actual_value?: string }>;
 }
 
 interface ShapFactor {
@@ -54,6 +61,7 @@ export const CreditScoreCard = ({
   modelDriftWarning,
   driftedFeatures,
   recommendation,
+  structuredShapNarration,
 }: CreditScoreCardProps) => {
   const [step, setStep] = useState(1);
   const [displayScore, setDisplayScore] = useState(300);
@@ -137,6 +145,22 @@ export const CreditScoreCard = ({
       { label: "Loan Amount", value: -0.31, positive: false },
       { label: "Existing EMIs", value: -0.24, positive: false },
     ];
+  };
+
+  const parsedNarration = (() => {
+    if (!structuredShapNarration) return null;
+    try {
+      const parsed = JSON.parse(structuredShapNarration) as StructuredNarrationPayload;
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const formatNarrationLabel = (value?: string) => {
+    if (!value) return "Factor";
+    const normalized = value.replace(/_/g, " ").trim();
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1).toLowerCase();
   };
 
   if (step === 1) {
@@ -365,6 +389,58 @@ export const CreditScoreCard = ({
             <p>Green bars = helped your application. Red bars = reduced your score.</p>
           </div>
         </div>
+
+        {parsedNarration && (
+          <div className="rounded-2xl border border-[#2a2a2a] bg-[#101010] px-4 py-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">Narration</p>
+            {parsedNarration.summary && (
+              <p className="mt-2 text-sm text-slate-200">
+                {parsedNarration.summary}
+              </p>
+            )}
+            {!parsedNarration.summary && (
+              <p className="mt-2 text-sm text-slate-200">
+                Here’s a plain-English breakdown of what influenced your score.
+              </p>
+            )}
+
+            {parsedNarration.positive_factors?.length ? (
+              <div className="mt-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-[#22c55e]">What helped you</p>
+                <ul className="mt-2 space-y-2 text-sm text-slate-200">
+                  {parsedNarration.positive_factors.map((factor, index) => (
+                    <li key={`${factor.feature || factor.label || "positive"}-${index}`} className="flex items-start gap-2">
+                      <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[#22c55e]" />
+                      <span>
+                        <span className="font-medium">{formatNarrationLabel(factor.label || factor.feature)}</span>
+                        {typeof factor.shap_value === "number" ? ` (${factor.shap_value.toFixed(3)})` : ""}
+                        {factor.actual_value ? ` · ${factor.actual_value}` : ""}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {parsedNarration.negative_factors?.length ? (
+              <div className="mt-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-[#ef4444]">What pulled you down</p>
+                <ul className="mt-2 space-y-2 text-sm text-slate-200">
+                  {parsedNarration.negative_factors.map((factor, index) => (
+                    <li key={`${factor.feature || factor.label || "negative"}-${index}`} className="flex items-start gap-2">
+                      <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[#ef4444]" />
+                      <span>
+                        <span className="font-medium">{formatNarrationLabel(factor.label || factor.feature)}</span>
+                        {typeof factor.shap_value === "number" ? ` (${factor.shap_value.toFixed(3)})` : ""}
+                        {factor.actual_value ? ` · ${factor.actual_value}` : ""}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        )}
       </div>
     </div>
   );

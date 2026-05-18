@@ -1,6 +1,7 @@
 export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 export const ENDPOINTS = {
+  session_init: `${API_BASE_URL}/session/init`,
   kyc_pan: `${API_BASE_URL}/kyc/extract/pan`,
   kyc_aadhaar: `${API_BASE_URL}/kyc/extract/aadhaar`,
   kyc_verify: `${API_BASE_URL}/kyc/verify`,

@@ -128,7 +128,8 @@ export const AgentActivityPanel = ({ trace, pipelineStatus, activeAgentLabel, li
       <div 
         ref={panelRef}
         className="fixed bottom-6 right-6 z-50 w-1 h-1"
-
+        aria-hidden="true"
+      >
         {liveProcessing && (
           <div className="border-t border-[#1a1a1a] bg-[#0a0a0a] px-4 py-4">
             <div className="mb-3 flex items-center justify-between">
@@ -152,8 +153,7 @@ export const AgentActivityPanel = ({ trace, pipelineStatus, activeAgentLabel, li
             </div>
           </div>
         )}
-        aria-hidden="true"
-      />
+      </div>
     );
   }
 

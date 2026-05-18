@@ -66,7 +66,7 @@ class OtpStore:
             "expires_in_seconds": OTP_TTL_MINUTES * 60,
             "resend_count": record.resend_count,
             "sent": delivered,
-            "demo_otp": record.otp if settings.DEMO_MODE else None,
+            "demo_otp": record.otp if self._use_demo_provider() else None,
         }
 
     def resend_otp(self, session_id: str) -> dict:
@@ -93,7 +93,7 @@ class OtpStore:
             "expires_in_seconds": OTP_TTL_MINUTES * 60,
             "resend_count": self._records[session_id].resend_count,
             "sent": delivered,
-            "demo_otp": otp if settings.DEMO_MODE else None,
+            "demo_otp": otp if self._use_demo_provider() else None,
         }
 
     def verify_otp(self, session_id: str, otp_input: str) -> dict:
@@ -134,18 +134,56 @@ class OtpStore:
         }
 
     def _dispatch_otp(self, mobile: str, otp: str) -> bool:
-        if settings.DEMO_MODE:
-            logger.info("DEMO_MODE OTP for XXXXXX%s: %s", mobile[-4:], otp)
+        provider = (getattr(settings, "SMS_PROVIDER", "").strip().lower() or "auto")
+
+        if provider in {"demo", "mock"}:
+            logger.info("DEMO OTP for XXXXXX%s: %s", mobile[-4:], otp)
             return True
 
-        provider = (getattr(settings, "SMS_PROVIDER", "").strip().lower() or "fast2sms")
-        if provider == "fast2sms":
-            return self._send_fast2sms(mobile, otp)
-        if provider == "twilio":
-            return self._send_twilio(mobile, otp)
+        if provider == "auto":
+            for candidate in ("fast2sms", "textbelt", "twilio", "webhook"):
+                delivered = self._dispatch_with_provider(candidate, mobile, otp)
+                if delivered is not None:
+                    return delivered
+            logger.warning("No usable SMS provider configured")
+            return False
+
+        delivered = self._dispatch_with_provider(provider, mobile, otp)
+        if delivered is not None:
+            return delivered
 
         logger.warning("Unsupported SMS provider '%s'", provider)
         return False
+
+    def _use_demo_provider(self) -> bool:
+        provider = (getattr(settings, "SMS_PROVIDER", "").strip().lower() or "auto")
+        return provider in {"demo", "mock"}
+
+    def _dispatch_with_provider(self, provider: str, mobile: str, otp: str) -> bool | None:
+        if provider == "fast2sms":
+            api_key = getattr(settings, "FAST2SMS_API_KEY", "")
+            if not api_key:
+                return None
+            return self._send_fast2sms(mobile, otp)
+        if provider == "textbelt":
+            api_key = getattr(settings, "TEXTBELT_API_KEY", "")
+            if not api_key:
+                return None
+            return self._send_textbelt(mobile, otp)
+        if provider == "twilio":
+            account_sid = getattr(settings, "TWILIO_ACCOUNT_SID", "")
+            auth_token = getattr(settings, "TWILIO_AUTH_TOKEN", "")
+            from_number = getattr(settings, "TWILIO_FROM_NUMBER", "")
+            if not account_sid or not auth_token or not from_number:
+                return None
+            return self._send_twilio(mobile, otp)
+        if provider == "webhook":
+            webhook_url = getattr(settings, "SMS_WEBHOOK_URL", "")
+            if not webhook_url:
+                return None
+            return self._send_webhook(mobile, otp)
+
+        return None
 
     def _send_fast2sms(self, mobile: str, otp: str) -> bool:
         api_key = getattr(settings, "FAST2SMS_API_KEY", "")
@@ -167,6 +205,49 @@ class OtpStore:
             return True
         except Exception as exc:
             logger.error("Fast2SMS OTP dispatch failed: %s", str(exc))
+            return False
+
+    def _send_textbelt(self, mobile: str, otp: str) -> bool:
+        api_key = getattr(settings, "TEXTBELT_API_KEY", "")
+        if not api_key:
+            logger.warning("TEXTBELT_API_KEY missing; cannot deliver OTP")
+            return False
+
+        payload = {
+            "phone": mobile,
+            "message": f"Your LoanEase OTP is {otp}. It expires in {OTP_TTL_MINUTES} minutes.",
+            "key": api_key,
+        }
+
+        try:
+            with httpx.Client(timeout=15) as client:
+                response = client.post("https://textbelt.com/text", data=payload)
+                response.raise_for_status()
+                body = response.json()
+            return bool(body.get("success"))
+        except Exception as exc:
+            logger.error("Textbelt OTP dispatch failed: %s", str(exc))
+            return False
+
+    def _send_webhook(self, mobile: str, otp: str) -> bool:
+        webhook_url = getattr(settings, "SMS_WEBHOOK_URL", "")
+        if not webhook_url:
+            logger.warning("SMS_WEBHOOK_URL missing; cannot deliver OTP")
+            return False
+
+        payload = {
+            "phone": mobile,
+            "message": f"Your LoanEase OTP is {otp}. It expires in {OTP_TTL_MINUTES} minutes.",
+            "otp": otp,
+        }
+
+        try:
+            with httpx.Client(timeout=15) as client:
+                response = client.post(webhook_url, json=payload)
+                response.raise_for_status()
+            return True
+        except Exception as exc:
+            logger.error("Webhook OTP dispatch failed: %s", str(exc))
             return False
 
     def _send_twilio(self, mobile: str, otp: str) -> bool:

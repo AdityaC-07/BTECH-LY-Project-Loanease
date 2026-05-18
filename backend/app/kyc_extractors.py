@@ -29,6 +29,13 @@ OCR_DIGIT_MAP = str.maketrans({
     "०": "0", "१": "1", "२": "2", "३": "3", "४": "4", "५": "5", "६": "6", "७": "7", "८": "8", "९": "9",
 })
 
+AADHAAR_REQUIRED_FIELDS = {
+    "aadhaar_last4": "Aadhaar number",
+    "name": "Name",
+    "date_of_birth": "Date of birth",
+    "mobile_number": "Mobile number",
+}
+
 
 def _normalize_pan_candidate(candidate: str) -> str:
     token = re.sub(r"[^A-Z0-9]", "", candidate.upper())
@@ -265,22 +272,29 @@ def extract_aadhaar(raw_text: str) -> dict:
     name = _extract_name_from_aadhaar(raw_text)
     mobile_number = extract_mobile_from_aadhaar(raw_text)
 
+    extracted_fields = {
+        "aadhaar_last4": aadhaar_last4,
+        "mobile_number": mobile_number,
+        "mobile_last4": mobile_number[-4:] if mobile_number else None,
+        "name": name,
+        "date_of_birth": dob,
+        "age": age,
+        "gender": gender,
+        "age_eligible": age_ok,
+    }
+
+    missing_fields = [label for key, label in AADHAAR_REQUIRED_FIELDS.items() if not extracted_fields.get(key)]
+
     return {
         "document_type": "AADHAAR",
-        "extracted_fields": {
-            "aadhaar_last4": aadhaar_last4,
-            "mobile_number": mobile_number,
-            "mobile_last4": mobile_number[-4:] if mobile_number else None,
-            "name": name,
-            "date_of_birth": dob,
-            "age": age,
-            "gender": gender,
-            "age_eligible": age_ok,
-        },
+        "extracted_fields": extracted_fields,
         "validation": {
             "aadhaar_format_valid": aadhaar_ok,
             "mobile_found": bool(mobile_number),
             "overall_valid": aadhaar_ok and age_ok,
+            "missing_fields": missing_fields,
+            "required_fields": list(AADHAAR_REQUIRED_FIELDS.values()),
+            "issues": [f"{field} is missing" for field in missing_fields],
         },
     }
 

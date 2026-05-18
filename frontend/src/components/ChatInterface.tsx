@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect, useMemo, KeyboardEvent, ClipboardEvent } from "react";
-import { ENDPOINTS } from "@/config";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import React, { useState, useRef, useEffect, useMemo, ClipboardEvent } from "react";
+import { ENDPOINTS } from "../config";
+import { Button } from "./ui/button";
+import { Textarea } from "./ui/textarea";
 import { ChatMessage } from "./ChatMessage";
 import { CreditScoreCard } from "./CreditScoreCard";
 import { SanctionLetter } from "./SanctionLetter";
@@ -13,10 +13,10 @@ import { QuickReplies } from "./QuickReplies";
 import { EmiCalculatorWidget } from "./EmiCalculatorWidget";
 import { LoanComparisonCards } from "./LoanComparisonCards";
 import { AgentActivityPanel, type AgentTraceItem } from "./AgentActivityPanel";
-import { Badge } from "@/components/ui/badge";
-import { TRANSLATIONS } from "@/lib/translations";
-import { formatIndianRupees, detectLanguage } from "@/lib/languageUtils";
-import { cn } from "@/lib/utils";
+import { Badge } from "./ui/badge";
+import { TRANSLATIONS } from "../lib/translations";
+import { formatIndianRupees, detectLanguage } from "../lib/languageUtils";
+import { cn } from "../lib/utils";
 import { User } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -69,6 +69,14 @@ interface AadhaarKycFields {
   gender?: string;
   age_eligible?: boolean;
 }
+
+const formatMissingFields = (fields: string[]) => fields.join(", ");
+const missingFieldMessage = (fields: string[]) => {
+  const joined = formatMissingFields(fields);
+  return fields.length === 1 ? `${joined} is missing` : `${joined} are missing`;
+};
+
+const OCR_REQUEST_TIMEOUT_MS = 120000;
 
 interface CreditScoreData {
   credit_score: number;
@@ -528,7 +536,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     // Initialize session in the backend to start orchestration logs
     const initSession = async () => {
       try {
-        await fetch(`/session/init/${userData.sessionId}`, { method: "POST" });
+        await fetch(`${ENDPOINTS.session_init}/${userData.sessionId}`, { method: "POST" });
       } catch (e) {
         console.warn("Failed to initialize session logging", e);
       }
@@ -540,6 +548,27 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     window._analyticsSessionId = userData.sessionId;
     localStorage.setItem("loanease_session_id", userData.sessionId);
   }, [userData.sessionId]);
+
+  useEffect(() => {
+    const modalOpen = showPanUploadCard || showAadhaarUploadCard;
+    if (modalOpen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setShowPanUploadCard(false);
+        setShowAadhaarUploadCard(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [showPanUploadCard, showAadhaarUploadCard]);
 
   const addBotMessage = (text: string) => {
     setMessages((prev) => [
@@ -658,7 +687,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       const response = await fetch(ENDPOINTS.kyc_pan, {
         method: "POST",
         body: form,
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(OCR_REQUEST_TIMEOUT_MS),
       });
 
       if (!response.ok) {
@@ -683,7 +712,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       const response = await fetch(ENDPOINTS.kyc_aadhaar, {
         method: "POST",
         body: form,
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(OCR_REQUEST_TIMEOUT_MS),
       });
 
       if (!response.ok) {
@@ -821,7 +850,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     }
   };
 
-  const handleOtpKeyDown = (index: number, event: KeyboardEvent<HTMLInputElement>) => {
+  const handleOtpKeyDown = (index: number, event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Backspace" && !otpDigits[index] && index > 0) {
       otpInputRefs.current[index - 1]?.focus();
       setOtpDigits((current) => {
@@ -1052,7 +1081,24 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       setAadhaarKycData(aadhaarResult.extracted_fields);
 
       const aadhaarIssues: string[] = aadhaarResult.validation?.issues || [];
+      const missingFields: string[] = aadhaarResult.validation?.missing_fields || [];
       const aadhaarConfidence = Number(aadhaarResult.confidence_score || 0);
+
+      if (missingFields.length > 0) {
+        stopKycProgress(timer);
+        addBotMessage(
+          kycText(
+            `${missingFieldMessage(missingFields)}. Please upload a clearer Aadhaar card.`,
+            `${missingFieldMessage(missingFields)}। कृपया एक स्पष्ट Aadhaar कार्ड अपलोड करें।`
+          )
+        );
+        if (aadhaarIssues.length > 0) {
+          toast.error(aadhaarIssues[0]);
+        }
+        setShowAadhaarUploadCard(true);
+        return;
+      }
+
       // More relaxed Aadhaar validation - accept if confidence is reasonable
       const aadhaarValid = Boolean(aadhaarResult.validation?.aadhaar_format_valid || aadhaarConfidence >= 0.15);
       if (!aadhaarValid) {
@@ -1154,9 +1200,13 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       }, 1300);
     } catch (error) {
       stopKycProgress(timer);
+      const isTimeout = error instanceof Error && error.name === "TimeoutError";
       const msg = error instanceof Error
-        ? (error.name === "TimeoutError"
-            ? kycText("Scan timed out. Try a smaller or clearer image.", "स्कैन timeout हो गया। छोटी या स्पष्ट छवि आज़माएं।")
+        ? (isTimeout
+            ? kycText(
+                "Aadhaar OCR is taking longer than usual. Please wait a moment, then retry with a smaller or clearer image if needed.",
+                "Aadhaar OCR सामान्य से अधिक समय ले रहा है। कृपया थोड़ा इंतज़ार करें, फिर ज़रूरत हो तो छोटी या स्पष्ट छवि के साथ पुनः प्रयास करें।"
+              )
             : error.message.includes("fetch")
               ? kycText("Could not connect to server. Check your connection.", "सर्वर से कनेक्ट नहीं हो सका। कनेक्शन जांचें।")
               : `${error.message}`)
@@ -2342,7 +2392,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
         )}
 
         {showPanUploadCard && (
-          <div className="max-w-md rounded-xl border-2 border-dashed border-yellow-500/70 bg-gradient-to-br from-card to-card/85 p-5 shadow-lg shadow-yellow-500/10">
+          <div className="w-full max-w-md self-start rounded-xl border-2 border-dashed border-yellow-500/70 bg-gradient-to-br from-card to-card/85 p-5 shadow-lg shadow-yellow-500/10">
             <div className="mb-1 flex items-center gap-2 text-base font-semibold text-foreground">
               <FileText className="h-4 w-4 text-yellow-400" />
               {kycText("Upload PAN Card", "PAN कार्ड अपलोड करें")}
@@ -2366,7 +2416,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
         )}
 
         {showPanConfirmCard && panKycData && (
-          <div className="max-w-md rounded-xl border border-green-500/50 bg-gradient-to-br from-card to-card/85 p-4 shadow-lg shadow-green-500/10">
+          <div className="relative z-20 max-w-md rounded-xl border border-green-500/50 bg-gradient-to-br from-card to-card/85 p-4 shadow-lg shadow-green-500/10 pointer-events-auto">
             <div className="mb-2 flex items-center gap-2 text-base font-semibold text-green-400">
               <CheckCircle2 className="h-4 w-4" />
               {kycText("PAN Card Verified", "PAN कार्ड सत्यापित")}
@@ -2380,7 +2430,8 @@ ${guidance.repayment_history_impact || ""}`.trim(),
             <div className="mt-3 flex gap-2">
               <Button
                 variant="accent"
-                className="flex-1"
+                type="button"
+                className="relative z-20 flex-1 pointer-events-auto"
                 onClick={() => {
                   setShowPanConfirmCard(false);
                   setShowAadhaarUploadCard(true);
@@ -2391,7 +2442,8 @@ ${guidance.repayment_history_impact || ""}`.trim(),
               </Button>
               <Button
                 variant="outline"
-                className="flex-1"
+                type="button"
+                className="relative z-20 flex-1 pointer-events-auto"
                 onClick={() => {
                   setShowPanConfirmCard(false);
                   setShowPanUploadCard(true);
@@ -2405,7 +2457,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
         )}
 
         {showAadhaarUploadCard && (
-          <div className="max-w-md rounded-xl border-2 border-dashed border-yellow-500/70 bg-gradient-to-br from-card to-card/85 p-5 shadow-lg shadow-yellow-500/10">
+          <div className="w-full max-w-md self-start rounded-xl border-2 border-dashed border-yellow-500/70 bg-gradient-to-br from-card to-card/85 p-5 shadow-lg shadow-yellow-500/10">
             <div className="mb-1 flex items-center gap-2 text-base font-semibold text-foreground">
               <FileText className="h-4 w-4 text-yellow-400" />
               {kycText("Upload Aadhaar Card", "Aadhaar कार्ड अपलोड करें")}
@@ -2426,6 +2478,28 @@ ${guidance.repayment_history_impact || ""}`.trim(),
             </Button>
             <div className="mt-2 text-[11px] text-muted-foreground">
               {kycText("or drag file here", "या फ़ाइल यहां drag करें")}
+            </div>
+          </div>
+        )}
+
+        {aadhaarKycData && (
+          <div className="max-w-md rounded-xl border border-yellow-500/40 bg-gradient-to-br from-card to-card/80 p-4 shadow-lg shadow-yellow-500/10">
+            <div className="mb-2 flex items-center gap-2 text-base font-semibold text-yellow-400">
+              <CheckCircle2 className="h-4 w-4" />
+              {kycText("Aadhaar OCR Detected", "Aadhaar OCR मिला")}
+            </div>
+            <div className="space-y-1.5 text-sm text-foreground">
+              {aadhaarKycData.name && <div className="font-medium">{aadhaarKycData.name}</div>}
+              {aadhaarKycData.aadhaar_last4 && <div>{kycText("Aadhaar ending", "Aadhaar के अंतिम अंक")}: {aadhaarKycData.aadhaar_last4}</div>}
+              {aadhaarKycData.date_of_birth && <div>{aadhaarKycData.date_of_birth}{aadhaarKycData.age ? ` (Age: ${aadhaarKycData.age})` : ""}</div>}
+              {aadhaarKycData.gender && <div>{aadhaarKycData.gender}</div>}
+              {aadhaarKycData.mobile_number ? (
+                <div>{kycText("Mobile", "मोबाइल")}: {aadhaarKycData.mobile_number}</div>
+              ) : (
+                <div className="text-muted-foreground">
+                  {kycText("Mobile number not detected in OCR", "OCR में मोबाइल नंबर नहीं मिला")}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -2526,6 +2600,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
               modelDriftWarning={underwritingResult?.model_drift_warning}
               driftedFeatures={underwritingResult?.drifted_features}
               recommendation={underwritingResult?.recommendation}
+              structuredShapNarration={underwritingResult?.structured_shap_narration}
             />
           </div>
         )}
@@ -2618,7 +2693,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
         </div>
 
         {/* Agent Sidebar */}
-        <div className={`agent-sidebar border-l border-border bg-card/80 backdrop-blur-md transition-all duration-300 ${isSidebarOpen ? 'w-[320px]' : 'w-0 overflow-hidden opacity-0'}`}>
+        <div className={`agent-sidebar border-l border-border bg-card/80 backdrop-blur-md transition-all duration-300 pointer-events-none hover:pointer-events-auto ${isSidebarOpen ? 'w-[320px]' : 'w-0 overflow-hidden opacity-0'} ${(showPanUploadCard || showAadhaarUploadCard) ? 'hidden' : ''}`}>
           <div className="flex flex-col h-full">
             <div className="flex items-center justify-between p-4 border-b border-border/50">
               <div className="flex items-center gap-2 font-bold text-sm">

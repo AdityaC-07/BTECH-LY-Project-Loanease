@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import logging
 import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
-from typing import Optional, Any
+from typing import Optional, Any, TypeAlias
 
 from fastapi import FastAPI, HTTPException, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -87,6 +88,36 @@ negotiation_schemas = _load_module(
     "negotiation_app_schemas",
     neg_backend_path / "schemas.py",
 )
+
+
+class PipelineStartRequest(BaseModel):
+    session_id: str
+    applicant_name: str
+    loan_amount: float
+    loan_term: int
+    offered_rate: float
+
+
+CounterRequest: TypeAlias = Any
+CounterResponse: TypeAlias = Any
+StartNegotiationRequest: TypeAlias = Any
+StartNegotiationResponse: TypeAlias = Any
+StartFromUnderwritingRequest: TypeAlias = Any
+StartFromUnderwritingResponse: TypeAlias = Any
+AcceptRequest: TypeAlias = Any
+AcceptResponse: TypeAlias = Any
+EscalateRequest: TypeAlias = Any
+EscalateResponse: TypeAlias = Any
+HistoryResponse: TypeAlias = Any
+TranslateRequest: TypeAlias = Any
+TranslateResponse: TypeAlias = Any
+ChatRequest: TypeAlias = Any
+ChatResponse: TypeAlias = Any
+IntentClassificationRequest: TypeAlias = Any
+IntentClassificationResponse: TypeAlias = Any
+CreditExplanationRequest: TypeAlias = Any
+NegotiationExplanationRequest: TypeAlias = Any
+RejectionMessageRequest: TypeAlias = Any
 
 # Import specific functions and classes
 append_history = negotiation_service.append_history
@@ -327,6 +358,10 @@ def assess(payload: AssessRequest) -> AssessResponse:
     }
     store.save(record)
 
+    structured_narration = result.get("structured_shap_narration")
+    if isinstance(structured_narration, (dict, list)):
+        structured_narration = json.dumps(structured_narration, ensure_ascii=False)
+
     # Log Credit assessment
     # Try to find session_id in payload or raw request
     session_id = payload.session_id if hasattr(payload, 'session_id') else str(uuid4())
@@ -344,7 +379,7 @@ def assess(payload: AssessRequest) -> AssessResponse:
     return AssessResponse(
         application_id=application_id,
         **{
-            k: result.get(k)
+            k: (structured_narration if k == "structured_shap_narration" else result.get(k))
             for k in AssessResponse.model_fields
             if k != "application_id" and result.get(k) is not None
         },
@@ -364,6 +399,10 @@ def explain(application_id: str) -> ExplainResponse:
     if record is None:
         raise HTTPException(status_code=404, detail="Application not found")
 
+    structured_narration = record.get("structured_shap_narration")
+    if isinstance(structured_narration, (dict, list)):
+        structured_narration = json.dumps(structured_narration, ensure_ascii=False)
+
     return ExplainResponse(
         application_id=record["application_id"],
         decision=record["decision"],
@@ -374,7 +413,7 @@ def explain(application_id: str) -> ExplainResponse:
         raw_input=record["raw_input"],
         top_explanations=record["shap_explanation"],
         shap_waterfall=record["shap_waterfall"],
-        structured_shap_narration=record.get("structured_shap_narration"),
+        structured_shap_narration=structured_narration,
         confidence_lower=record.get("confidence_lower"),
         confidence_upper=record.get("confidence_upper"),
         confidence_width=record.get("confidence_width"),
@@ -662,6 +701,7 @@ async def extract_pan_document(document: UploadFile = File(...), session_id: str
     
     # Log KYC start if session_id provided
     if session_id:
+        session_store.get_or_create(session_id)
         session_store.log_agent(session_id, {
             "agent": "KYCVerificationAgent",
             "action": "SCANNING_PAN",
@@ -696,6 +736,7 @@ async def extract_aadhaar_document(document: UploadFile = File(...), session_id:
     
     # Log KYC start if session_id provided
     if session_id:
+        session_store.get_or_create(session_id)
         session_store.log_agent(session_id, {
             "agent": "KYCVerificationAgent",
             "action": "SCANNING_AADHAAR",
@@ -712,6 +753,7 @@ async def extract_aadhaar_document(document: UploadFile = File(...), session_id:
         result = extract_aadhaar(ocr_text)
         mobile_number = result.get("extracted_fields", {}).get("mobile_number")
         if session_id and mobile_number:
+            session_store.update_data(session_id, "aadhaar_data", result.get("extracted_fields", {}))
             session_store.update_data(session_id, "aadhaar_mobile", mobile_number)
             session_store.update_data(session_id, "aadhaar_mobile_last4", mobile_number[-4:])
         
@@ -719,7 +761,6 @@ async def extract_aadhaar_document(document: UploadFile = File(...), session_id:
             "document_type": "AADHAAR",
             "extracted_fields": {
                 **result["extracted_fields"],
-                "mobile_number": None,
             },
             "validation": result["validation"],
             "confidence_score": confidence,
@@ -736,6 +777,9 @@ async def verify_kyc(pan: UploadFile = File(...), aadhaar: UploadFile = File(...
     
     _assert_upload_constraints(pan, pan_bytes)
     _assert_upload_constraints(aadhaar, aadhaar_bytes)
+
+    if session_id:
+        session_store.get_or_create(session_id)
     
     try:
         # Extract PAN
@@ -751,6 +795,7 @@ async def verify_kyc(pan: UploadFile = File(...), aadhaar: UploadFile = File(...
         aadhaar_result = extract_aadhaar(aadhaar_ocr_text)
         mobile_number = aadhaar_result.get("extracted_fields", {}).get("mobile_number")
         if session_id and mobile_number:
+            session_store.update_data(session_id, "aadhaar_data", aadhaar_result.get("extracted_fields", {}))
             session_store.update_data(session_id, "aadhaar_mobile", mobile_number)
             session_store.update_data(session_id, "aadhaar_mobile_last4", mobile_number[-4:])
         
@@ -774,7 +819,6 @@ async def verify_kyc(pan: UploadFile = File(...), aadhaar: UploadFile = File(...
             "pan_data": pan_result.get("extracted_fields"),
             "aadhaar_data": {
                 **aadhaar_result.get("extracted_fields"),
-                "mobile_number": None,
             },
             "cross_validation": validation["cross_validation"],
             "overall_kyc_passed": validation["overall_kyc_passed"],
@@ -788,9 +832,7 @@ async def verify_kyc(pan: UploadFile = File(...), aadhaar: UploadFile = File(...
 
 @app.post("/kyc/send-otp", response_model=OtpResponse)
 async def send_otp(payload: OtpSendRequest):
-    session = session_store.get(payload.session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = session_store.get_or_create(payload.session_id)
 
     mobile_number = session.get("data", {}).get("aadhaar_mobile")
     if not mobile_number:
@@ -808,8 +850,11 @@ async def send_otp(payload: OtpSendRequest):
     session_store.update_data(payload.session_id, "aadhaar_mobile", mobile_number)
     session_store.update_data(payload.session_id, "aadhaar_otp_pending", True)
 
-    if not result["sent"] and not getattr(settings, "DEMO_MODE", False):
-        raise HTTPException(status_code=502, detail="Unable to send OTP right now. Please try again.")
+    if not result["sent"]:
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to send OTP right now. Configure SMS_PROVIDER with valid credentials.",
+        )
 
     return OtpResponse(**result)
 
@@ -848,7 +893,7 @@ async def verify_otp(payload: OtpVerifyRequest):
 # =============================================================================
 
 @app.post("/negotiate/chat", response_model=negotiation_schemas.CounterResponse)
-def negotiate_chat(payload: negotiation_schemas.CounterRequest) -> negotiation_schemas.CounterResponse:
+def negotiate_chat(payload: CounterRequest) -> CounterResponse:
     # Log Negotiation action
     session_store.log_agent(payload.session_id, {
         "agent": "Negotiation Agent",
@@ -862,7 +907,7 @@ def negotiate_chat(payload: negotiation_schemas.CounterRequest) -> negotiation_s
     return negotiation_schemas.CounterResponse(**counter_session(payload.model_dump()))
 
 @app.post("/negotiate/start", response_model=negotiation_schemas.StartNegotiationResponse)
-def negotiate_start(payload: negotiation_schemas.StartNegotiationRequest) -> negotiation_schemas.StartNegotiationResponse:
+def negotiate_start(payload: StartNegotiationRequest) -> StartNegotiationResponse:
     session = start_session(payload.model_dump())
     negotiation_store.create(session)
 
@@ -880,7 +925,7 @@ def negotiate_start(payload: negotiation_schemas.StartNegotiationRequest) -> neg
 
 
 @app.post("/negotiate/start-from-underwriting", response_model=negotiation_schemas.StartFromUnderwritingResponse)
-def negotiate_start_from_underwriting(payload: negotiation_schemas.StartFromUnderwritingRequest) -> negotiation_schemas.StartFromUnderwritingResponse:
+def negotiate_start_from_underwriting(payload: StartFromUnderwritingRequest) -> StartFromUnderwritingResponse:
     base_url = payload.underwriting_base_url.rstrip("/")
     assess_url = f"{base_url}/assess"
 
@@ -927,7 +972,7 @@ def negotiate_start_from_underwriting(payload: negotiation_schemas.StartFromUnde
 
 
 @app.post("/negotiate/counter", response_model=negotiation_schemas.CounterResponse)
-def negotiate_counter(payload: negotiation_schemas.CounterRequest) -> negotiation_schemas.CounterResponse:
+def negotiate_counter(payload: CounterRequest) -> CounterResponse:
     session = negotiation_store.get(payload.session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -953,7 +998,7 @@ def negotiate_counter(payload: negotiation_schemas.CounterRequest) -> negotiatio
 
 
 @app.post("/negotiate/accept", response_model=negotiation_schemas.AcceptResponse)
-def negotiate_accept(payload: negotiation_schemas.AcceptRequest) -> negotiation_schemas.AcceptResponse:
+def negotiate_accept(payload: AcceptRequest) -> AcceptResponse:
     session = negotiation_store.get(payload.session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -1007,7 +1052,7 @@ def negotiate_accept(payload: negotiation_schemas.AcceptRequest) -> negotiation_
 
 
 @app.post("/negotiate/escalate", response_model=negotiation_schemas.EscalateResponse)
-def negotiate_escalate(payload: negotiation_schemas.EscalateRequest) -> negotiation_schemas.EscalateResponse:
+def negotiate_escalate(payload: EscalateRequest) -> EscalateResponse:
     session = negotiation_store.get(payload.session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -1047,7 +1092,7 @@ def negotiate_escalate(payload: negotiation_schemas.EscalateRequest) -> negotiat
 
 
 @app.get("/negotiate/history/{session_id}", response_model=negotiation_schemas.HistoryResponse)
-def negotiate_history(session_id: str) -> negotiation_schemas.HistoryResponse:
+def negotiate_history(session_id: str) -> HistoryResponse:
     session = negotiation_store.get(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -1093,7 +1138,6 @@ if PIPELINE_AVAILABLE:
             raise
         except Exception as e:
             logger.error(f"Pipeline log error: {e}")
-            raise HTTPException(status_code=500, detail="Pipeline log unavailable")
 
 
 # =============================================================================
@@ -1102,7 +1146,7 @@ if PIPELINE_AVAILABLE:
 
 if TRANSLATION_AVAILABLE:
     @app.post("/translate", response_model=translation_schemas.TranslateResponse)
-    def translate(payload: translation_schemas.TranslateRequest) -> translation_schemas.TranslateResponse:
+    def translate(payload: TranslateRequest) -> TranslateResponse:
         """Translate text between languages"""
         try:
             result = translation_service.translate(
@@ -1126,12 +1170,12 @@ if TRANSLATION_AVAILABLE:
         return {"message": message, "intent": intent}
 
     @app.post("/chat", response_model=translation_schemas.ChatResponse)
-    async def chat(request: translation_schemas.ChatRequest) -> translation_schemas.ChatResponse:
+    async def chat(request: ChatRequest) -> ChatResponse:
         """Process chat message using Groq LLM"""
         return await groq_service.process_chat_request(request)
 
     @app.post("/chat/stream")
-    async def chat_stream(request: translation_schemas.ChatRequest):
+    async def chat_stream(request: ChatRequest):
         """Stream chat response token by token"""
         async def generate():
             async for token in groq_service.stream_chat_response(request):
@@ -1140,12 +1184,12 @@ if TRANSLATION_AVAILABLE:
         return StreamingResponse(generate(), media_type="text/plain")
 
     @app.post("/intent/classify", response_model=translation_schemas.IntentClassificationResponse)
-    async def classify_intent(request: translation_schemas.IntentClassificationRequest) -> translation_schemas.IntentClassificationResponse:
+    async def classify_intent(request: IntentClassificationRequest) -> IntentClassificationResponse:
         """Classify user intent using Groq"""
         return await groq_service.classify_intent(request)
 
     @app.post("/explain/credit")
-    async def explain_credit(request: translation_schemas.CreditExplanationRequest):
+    async def explain_credit(request: CreditExplanationRequest):
         """Generate credit decision explanation"""
         explanation = await groq_service.generate_credit_explanation(
             request.credit_score,
@@ -1158,7 +1202,7 @@ if TRANSLATION_AVAILABLE:
         return {"explanation": explanation}
 
     @app.post("/explain/negotiation")
-    async def explain_negotiation(request: translation_schemas.NegotiationExplanationRequest):
+    async def explain_negotiation(request: NegotiationExplanationRequest):
         """Generate negotiation explanation"""
         explanation = await groq_service.generate_negotiation_explanation(
             request.starting_rate,
@@ -1173,7 +1217,7 @@ if TRANSLATION_AVAILABLE:
         return {"explanation": explanation}
 
     @app.post("/generate/rejection")
-    async def generate_rejection(request: translation_schemas.RejectionMessageRequest):
+    async def generate_rejection(request: RejectionMessageRequest):
         """Generate empathetic rejection message"""
         message = await groq_service.generate_rejection_message(
             request.credit_score,
