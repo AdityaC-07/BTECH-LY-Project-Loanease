@@ -6,7 +6,14 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     GROQ_MODEL_PRIMARY: str = "llama-3.3-70b-versatile"
     GROQ_MODEL_FALLBACK: str = "llama-3.1-8b-instant"
-    CIBIL_BANDS = {
+    GROQ_TIMEOUT: int = 8
+    CIBIL_BANDS: dict[str, dict[str, object]] = {
+        "POOR": {"min": 300, "max": 549, "label": "Poor", "color": "red", "eligible": False},
+        "FAIR": {"min": 550, "max": 649, "label": "Fair", "color": "orange", "eligible": True},
+        "GOOD": {"min": 650, "max": 749, "label": "Good", "color": "yellow", "eligible": True},
+        "VERY_GOOD": {"min": 750, "max": 799, "label": "Very Good", "color": "green", "eligible": True},
+        "EXCELLENT": {"min": 800, "max": 900, "label": "Excellent", "color": "green", "eligible": True},
+    }
     
     # Credit scoring
     CREDIT_SCORE_MIN: int = 300

@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Body
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -520,7 +521,7 @@ async def verify_otp(request: OtpVerifyRequest):
         raise HTTPException(status_code=404, detail="OTP session not found") from None
 
     if result["verified"]:
-            session_store.update_stage(request.session_id, "KYC_VERIFIED")
+        session_store.update_stage(request.session_id, "KYC_VERIFIED")
         session_store.update_data(request.session_id, "aadhaar_otp_verified", True)
         session_store.log_agent(request.session_id, {
             "agent": "KYCVerificationAgent",

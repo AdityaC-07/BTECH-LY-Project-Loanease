@@ -1962,9 +1962,8 @@ ${guidance.repayment_history_impact || ""}`.trim(),
       <style>{`
         /* Main app layout */
         .app-layout {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) 320px;
-          grid-template-rows: minmax(0, 1fr);
+          display: flex;
+          flex-direction: row;
           height: 100vh;
           width: 100vw;
           overflow: hidden;
@@ -1976,6 +1975,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
           min-width: 0;
           display: flex;
           flex-direction: column;
+          flex: 1 1 auto;
           height: 100vh;
           overflow: hidden;
           transition: all 0.35s ease;
@@ -1986,6 +1986,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
           width: 320px;
           min-width: 320px;
           max-width: 320px;
+          flex: 0 0 320px;
           height: 100vh;
           background: #1a1a1a;
           border-left: 1px solid #2a2a2a;
@@ -3106,14 +3107,14 @@ ${guidance.repayment_history_impact || ""}`.trim(),
         </div>
 
         {/* Agent Sidebar */}
-        <div className={`agent-sidebar border-l border-border bg-card/80 backdrop-blur-md transition-all duration-300 pointer-events-none hover:pointer-events-auto ${isSidebarOpen ? 'w-[320px]' : 'w-0 overflow-hidden opacity-0'} ${(showPanUploadCard || showAadhaarUploadCard) ? 'hidden' : ''}`}>
+        <div className={`agent-sidebar border-l border-border bg-card/80 backdrop-blur-md transition-all duration-300 ${isSidebarOpen ? 'w-[320px]' : 'w-0 overflow-hidden opacity-0'} ${(showPanUploadCard || showAadhaarUploadCard) ? 'hidden' : ''}`}>
           <div className="flex flex-col h-full">
             <div className="flex items-center justify-between p-4 border-b border-border/50">
               <div className="flex items-center gap-2 font-bold text-sm">
                 <Bot className="w-4 h-4 text-yellow-400" />
                 AGENT ORCHESTRATION
               </div>
-              <Button variant="ghost" size="icon" onClick={toggleAgentSidebar} className="h-8 w-8">
+              <Button variant="ghost" size="icon" onClick={() => setIsSidebarOpen(false)} className="h-8 w-8">
                 <X className="w-4 h-4" />
               </Button>
             </div>

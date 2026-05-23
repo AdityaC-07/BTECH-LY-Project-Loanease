@@ -19,6 +19,8 @@ from startup_selftest import run_startup_selftest
 from services.groq_service import GroqService
 from services.memory import ConversationMemory
 from services.ocr import init_ocr, ocr_ready
+from core.config import settings
+from core.session import session_store
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -169,6 +171,23 @@ async def save_session(payload: SessionSaveRequest):
         },
     )
     return SessionResponse(**app.state.saved_sessions[payload.session_id])
+
+
+@app.post("/session/init/{session_id}")
+async def init_session(session_id: str):
+    """Initialize a new session and log the start."""
+    session_store.get_or_create(session_id)
+    session_store.log_agent(
+        session_id,
+        {
+            "agent": "MasterOrchestratorAgent",
+            "action": "INITIATED_SESSION",
+            "reasoning": "New loan inquiry received. Starting orchestration.",
+            "status": "SUCCESS",
+        },
+    )
+    session_store.update_stage(session_id, "INITIATED")
+    return {"status": "success", "session_id": session_id}
 
 
 @app.get("/session/{session_id}", response_model=SessionResponse)

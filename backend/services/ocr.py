@@ -553,9 +553,6 @@ def extract_aadhaar(ocr_text: str) -> Dict:
     mobile_last4 = mobile_number[-4:] if mobile_number else None
     if age is not None:
         age_eligible = 18 <= age <= 75
-
-        "mobile_number": mobile_number,
-        "mobile_last4": mobile_last4,
     return {
         "aadhaar_number": aadhaar_number,
         "aadhaar_last4": aadhaar_last4,
@@ -563,7 +560,9 @@ def extract_aadhaar(ocr_text: str) -> Dict:
         "date_of_birth": dob,
         "age": age,
         "gender": gender,
-        "age_eligible": age_eligible
+        "age_eligible": age_eligible,
+        "mobile_number": mobile_number,
+        "mobile_last4": mobile_last4,
     }
 
 def cross_validate_kyc(pan_data: Dict, aadhaar_data: Dict) -> Dict:
