@@ -296,6 +296,19 @@ async def get_analytics(session_id: str):
             "coapplicant": 60,
         }
 
+        loan_health = build_loan_health(
+            {
+                "amount": loan_amount,
+                "rate": interest_rate,
+                "tenure_months": tenure_months,
+                "emi": emi,
+                "total_interest": total_interest,
+                "income": session_data.get("monthly_income") or session_data.get("applicant_income"),
+                "monthly_income": session_data.get("monthly_income") or session_data.get("applicant_income"),
+            },
+            {"credit_score": credit_score, "risk_score": risk_score},
+        )
+
         return {
             "success": True,
             "session_found": session_found,
@@ -319,6 +332,7 @@ async def get_analytics(session_id: str):
                 "rounds_taken": rounds_taken,
                 "total_savings": round(total_savings, 2),
             },
+            "loan_health": loan_health,
             "benchmark": benchmark,
             "applicant_normalized": applicant_normalized,
             "purpose": purpose,
@@ -353,6 +367,16 @@ async def get_analytics(session_id: str):
                 "rounds_taken": 2,
                 "total_savings": 8400,
             },
+            "loan_health": build_loan_health(
+                {
+                    "amount": 500000,
+                    "rate": 11.0,
+                    "tenure_months": 60,
+                    "emi": 10871,
+                    "total_interest": 152260,
+                },
+                {"credit_score": 750, "risk_score": 80},
+            ),
             "benchmark": {
                 "avg_credit_score": 720,
                 "avg_income_normalized": 70,
@@ -390,6 +414,8 @@ async def pipeline_start_override(request: dict):
             "loan_amount": request.get("loan_amount"),
             "loan_term": request.get("loan_term"),
             "offered_rate": request.get("offered_rate"),
+            "previous_sanction_reference": request.get("previous_sanction_reference"),
+            "repeat_borrower": bool(request.get("previous_sanction_reference")),
         }
     })
     return {
@@ -422,6 +448,59 @@ async def get_global_logs(limit: int = 20):
         "logs": session_store.get_global_activity(limit),
         "total_active_sessions": len(session_store._sessions),
         "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+
+def build_loan_health(loan_data: dict, credit_data: dict) -> dict:
+    loan_amount = float(loan_data.get("amount") or 0)
+    emi = float(loan_data.get("emi") or 0)
+    tenure_months = max(1, int(loan_data.get("tenure_months") or 60))
+    total_interest = float(loan_data.get("total_interest") or 0)
+    credit_score = float(credit_data.get("credit_score") or 720)
+
+    income_base = float(loan_data.get("income") or loan_data.get("monthly_income") or 50000)
+    foir = emi / income_base if income_base > 0 else 1.0
+
+    score = 100
+    factors: list[dict[str, Any]] = []
+
+    if foir > 0.5:
+        score -= 20
+        factors.append({
+            "factor": "High EMI burden",
+            "impact": -20,
+            "advice": "Consider part-prepayment when possible to reduce burden",
+        })
+    elif foir < 0.3:
+        factors.append({
+            "factor": "Comfortable EMI ratio",
+            "impact": 0,
+            "advice": "Excellent EMI-to-income ratio reduces default risk",
+        })
+
+    if tenure_months > 60:
+        score -= 10
+        factors.append({
+            "factor": "Long tenure",
+            "impact": -10,
+            "advice": "Longer tenure increases total interest. Prepay after bonus or increment.",
+        })
+
+    if credit_score >= 800:
+        factors.append({
+            "factor": "Strong credit profile",
+            "impact": 0,
+            "advice": "Timely repayment can push your score toward 850+",
+        })
+
+    health_label = "Excellent" if score >= 80 else "Good" if score >= 60 else "Moderate"
+    prepayment_savings = round(total_interest * 0.12) if total_interest > 0 else 0
+
+    return {
+        "loan_health_score": max(score, 0),
+        "health_label": health_label,
+        "factors": factors,
+        "prepayment_advice": f"Prepaying ₹10,000 in Month 6 saves ₹{prepayment_savings} in total interest",
     }
 
 

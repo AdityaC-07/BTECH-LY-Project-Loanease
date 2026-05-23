@@ -37,6 +37,15 @@ const ANALYTICS_DEMO_DATA = {
     rounds_taken: 2,
     total_savings: 8400,
   },
+  loan_health: {
+    loan_health_score: 82,
+    health_label: "Good",
+    factors: [
+      { factor: "Comfortable EMI ratio", impact: 0, advice: "Excellent EMI-to-income ratio reduces default risk" },
+      { factor: "Strong credit profile", impact: 0, advice: "Timely repayment can push your score toward 850+" },
+    ],
+    prepayment_advice: "Prepaying ₹10,000 in Month 6 saves ₹18,000 in total interest",
+  },
   benchmark: {
     avg_credit_score: 720,
     avg_income_normalized: 70,
@@ -59,6 +68,7 @@ const normalizeAnalyticsData = (raw: any) => {
   const safeLoan = raw?.loan_data || {};
   const safeCredit = raw?.credit_data || {};
   const safeSummary = raw?.negotiation_summary || {};
+  const safeHealth = raw?.loan_health || {};
 
   return {
     success: raw?.success ?? true,
@@ -85,6 +95,14 @@ const normalizeAnalyticsData = (raw: any) => {
       final_rate: Number(safeSummary.final_rate ?? 11.0),
       rounds_taken: Number(safeSummary.rounds_taken ?? 2),
       total_savings: Number(safeSummary.total_savings ?? 8400),
+    },
+    loan_health: {
+      loan_health_score: Number(safeHealth.loan_health_score ?? 82),
+      health_label: safeHealth.health_label ?? "Good",
+      factors: Array.isArray(safeHealth.factors) && safeHealth.factors.length > 0
+        ? safeHealth.factors
+        : ANALYTICS_DEMO_DATA.loan_health.factors,
+      prepayment_advice: safeHealth.prepayment_advice ?? ANALYTICS_DEMO_DATA.loan_health.prepayment_advice,
     },
     benchmark: raw?.benchmark || ANALYTICS_DEMO_DATA.benchmark,
     applicant_normalized: raw?.applicant_normalized || ANALYTICS_DEMO_DATA.applicant_normalized,
@@ -501,6 +519,7 @@ export const AnalyticsDashboard = ({ sessionId, customerName, initialAmount, ini
   const analytics = normalizeAnalyticsData(analyticsData || ANALYTICS_DEMO_DATA);
   const riskScore = Number(analytics.credit_data.risk_score || 80);
   const purpose = analytics.loan_data.purpose || "general";
+  const loanHealth = analytics.loan_health || ANALYTICS_DEMO_DATA.loan_health;
 
   return (
     <div className="w-full max-w-6xl mx-auto p-4 space-y-8 animate-slide-up" id="analytics-section">
@@ -514,6 +533,44 @@ export const AnalyticsDashboard = ({ sessionId, customerName, initialAmount, ini
       </h2>
         <p className="text-muted-foreground">Complete breakdown of your loan and approval profile</p>
       </div>
+
+      <Card className="bg-card border-none shadow-lg overflow-hidden">
+        <div className="bg-gradient-primary h-1" />
+        <CardHeader>
+          <CardTitle className="text-xl flex items-center gap-2">
+            <CheckCircle2 className="h-5 w-5 text-accent" />
+            Loan Health
+          </CardTitle>
+          <CardDescription>Post-sanction repayment guidance and early-warning cues.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-[160px_minmax(0,1fr)] md:items-center">
+            <div className="rounded-2xl border border-border/50 bg-secondary/30 p-5 text-center">
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Health Score</p>
+              <p className={`mt-2 text-5xl font-black ${Number(loanHealth.loan_health_score || 0) >= 80 ? "text-green-400" : Number(loanHealth.loan_health_score || 0) >= 60 ? "text-accent" : "text-red-400"}`}>
+                {Math.round(Number(loanHealth.loan_health_score || 0))}
+              </p>
+              <p className="mt-1 text-xs uppercase tracking-[0.25em] text-muted-foreground">{loanHealth.health_label || "Moderate"}</p>
+            </div>
+            <div className="space-y-3">
+              {(loanHealth.factors || []).map((factor: any, index: number) => (
+                <div key={`${factor.factor || factor.advice || index}`} className="rounded-xl border border-border/50 bg-background/40 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-medium text-white">{factor.factor}</p>
+                    <span className={factor.impact > 0 ? "text-green-400" : factor.impact < 0 ? "text-red-400" : "text-accent"}>
+                      {factor.impact > 0 ? `+${factor.impact}` : factor.impact || 0}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">{factor.advice}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-xl border border-accent/20 bg-accent/10 p-4 text-sm text-accent-foreground">
+            {loanHealth.prepayment_advice}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Live EMI Calculator */}
       <Card className="bg-card border-none shadow-lg overflow-hidden">

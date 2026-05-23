@@ -11,6 +11,7 @@ export const ENDPOINTS = {
   assess: `${API_BASE_URL}/assess`,
   credit_assess: `${API_BASE_URL}/credit/assess`,
   credit_score: `${API_BASE_URL}/credit-score`,
+  credit_analyze_statement: `${API_BASE_URL}/credit/analyze-statement`,
   negotiate_start: `${API_BASE_URL}/negotiate/start`,
   negotiate_counter: `${API_BASE_URL}/negotiate/counter`,
   negotiate_accept: `${API_BASE_URL}/negotiate/accept`,

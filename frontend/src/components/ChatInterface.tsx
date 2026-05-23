@@ -129,7 +129,46 @@ interface UnderwritingResultData {
   // Alternative scoring
   alternative_score?: number;
   alternative_eligible?: boolean;
-  alternative_details?: any;
+  alternative_details?: Record<string, unknown> | null;
+}
+
+interface BankStatementAnalysis {
+  analysis_possible?: boolean;
+  estimated_monthly_income?: number;
+  income_confidence?: string;
+  data_source?: string;
+  reason?: string;
+  note?: string;
+}
+
+interface EmiHolidayOption {
+  holidayMonths?: number;
+  holiday_months?: number;
+  adjustedPrincipal?: number;
+  adjusted_principal?: number;
+  emi?: number;
+  original_emi?: number;
+  extraCost?: number;
+  extra_cost?: number;
+  message?: string;
+  recommended?: boolean;
+  firstEmiAfterMonth?: number;
+  first_emi_after_month?: number;
+}
+
+interface RepeatBorrowerData {
+  sanction_reference?: string;
+  reference?: string;
+  sanctioned_at?: string;
+  sanctionedDate?: string;
+  date?: string;
+  amount?: number;
+  limit?: number;
+  preapproved_limit?: number;
+  rate?: number;
+  purpose?: string;
+  employment_type?: string;
+  employer_name?: string;
 }
 
 interface UserData {
@@ -141,6 +180,8 @@ interface UserData {
     interest: number;
     tenure: number;
     emi: number;
+    holidayMonths?: number;
+    holidayExtraCost?: number;
   };
   assessmentId: string;
   sessionId: string;
@@ -237,20 +278,37 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
   // Feature 2: Bank Statement Analysis
   const [showBankStatementCard, setShowBankStatementCard] = useState(false);
-  const [bankStatementResult, setBankStatementResult] = useState<any>(null);
+  const [bankStatementResult, setBankStatementResult] = useState<BankStatementAnalysis | null>(null);
   const bankStatementInputRef = useRef<HTMLInputElement>(null);
 
   // Feature 3: EMI Holiday
-  const [emiHolidayOption, setEmiHolidayOption] = useState<any>(null);
+  const [emiHolidayOption, setEmiHolidayOption] = useState<EmiHolidayOption | null>(null);
+  const [selectedHolidayMonths, setSelectedHolidayMonths] = useState<number>(0);
 
   // Feature 5: Repeat Borrower
   const [isRepeatBorrower, setIsRepeatBorrower] = useState(false);
-  const [repeatBorrowerData, setRepeatBorrowerData] = useState<any>(null);
+  const [repeatBorrowerData, setRepeatBorrowerData] = useState<RepeatBorrowerData | null>(null);
 
   const handleViewAnalytics = () => {
     window._analyticsSessionId = userData.sessionId;
     localStorage.setItem("loanease_session_id", userData.sessionId);
     setShowAnalytics(true);
+  };
+
+  const calculateEmiWithHoliday = (amount: number, rate: number, tenureMonths: number, holidayMonths: number) => {
+    const monthlyRate = rate / 12 / 100;
+    const adjustedPrincipal = monthlyRate > 0 ? amount * Math.pow(1 + monthlyRate, holidayMonths) : amount;
+    const power = Math.pow(1 + monthlyRate, tenureMonths);
+    const emi = monthlyRate === 0 ? adjustedPrincipal / tenureMonths : (adjustedPrincipal * monthlyRate * power) / (power - 1);
+    const basePower = Math.pow(1 + monthlyRate, tenureMonths);
+    const baseEmi = monthlyRate === 0 ? amount / tenureMonths : (amount * monthlyRate * basePower) / (basePower - 1);
+    return {
+      holidayMonths,
+      adjustedPrincipal,
+      emi: Math.round(emi),
+      extraCost: Math.max(0, Math.round((emi * tenureMonths) - (baseEmi * tenureMonths))),
+      firstEmiAfterMonth: holidayMonths + 1,
+    };
   };
 
   const toggleAgentSidebar = () => {
@@ -489,6 +547,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     setPendingOffer(null);
     setShowKfsCard(false);
     setKfsAcknowledged(false);
+    setSelectedHolidayMonths(0);
+    setEmiHolidayOption(null);
     toast.info("Started a new session.");
   };
 
@@ -501,9 +561,12 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       setKfsAcknowledged(false);
       if (isRepeatBorrower && repeatBorrowerData) {
         activateAgent("Master Agent", "Recognized returning user.");
+        const sanctionedAt = repeatBorrowerData.sanctioned_at || repeatBorrowerData.sanctionedDate || repeatBorrowerData.date || "recently";
+        const baseAmount = Number(repeatBorrowerData.preapproved_limit || repeatBorrowerData.limit || repeatBorrowerData.amount || 500000);
+        const preApprovedLimit = Number.isFinite(baseAmount) ? Math.round(baseAmount) : 500000;
         addBotMessage(
-          `Welcome back! We found your previous sanction. As a preferred customer, your pre-approved limit has been increased by 25% and starting rate lowered by 0.25%.\n\n` +
-          `Would you like to proceed with a new loan offer based on this limit?`
+          `Welcome back! Your previous loan was sanctioned on ${sanctionedAt}. Based on your repayment history, your pre-approved limit for a new loan is ${formatIndianRupees(preApprovedLimit)}.\n\n` +
+          `As a repeat borrower, your starting rate is also trimmed by 0.25%. Would you like to proceed with a new offer?`
         );
         setTimeout(() => {
           setUserData(prev => ({ ...prev, stage: "offer", creditScore: 750 }));
@@ -538,7 +601,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     }
 
     // Feature 5: Repeat Borrower Detection
-    const prevSanction = localStorage.getItem("loanease_previous_sanction");
+    const prevSanction = localStorage.getItem("previous_sanction_reference") || localStorage.getItem("loanease_previous_sanction");
     if (prevSanction) {
       try {
         const sanctionData = JSON.parse(prevSanction);
@@ -1288,6 +1351,11 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     credit_history: number;
     property_area: string;
     preferred_language: "en" | "hi";
+    session_id?: string;
+    employment_type?: string;
+    employer_name?: string;
+    monthly_income?: number;
+    loan_purpose?: string;
   }) => {
     setIsBackendBusy(true);
     try {
@@ -1351,6 +1419,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          session_id: userData.sessionId,
           applicant_name: userData.name,
           risk_score: riskScore,
           risk_tier: riskTier,
@@ -1358,6 +1427,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           tenure_months: tenureMonths,
           max_negotiation_rounds: maxNegotiationRounds,
           top_positive_factor: "good credit history",
+          customer_profile: isRepeatBorrower ? "EXCELLENT" : "STANDARD",
         }),
       });
 
@@ -1511,11 +1581,23 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     setPendingOffer(offer);
     setShowKfsCard(true);
     setKfsAcknowledged(false);
+    const riskTierText = (userData.riskTier || "").toLowerCase();
+    if (riskTierText.includes("low") || riskTierText.includes("medium")) {
+      const preview = calculateEmiWithHoliday(offer.amount, offer.rate, offer.tenure, 2);
+      setEmiHolidayOption({
+        ...preview,
+        message: `Would you like a 2-month EMI holiday? Your first EMI starts in month ${preview.firstEmiAfterMonth}.`,
+      });
+      setSelectedHolidayMonths(0);
+    } else {
+      setEmiHolidayOption(null);
+      setSelectedHolidayMonths(0);
+    }
   };
 
   const handleAcceptPendingOffer = () => {
     if (!pendingOffer || !kfsAcknowledged) return;
-    handleLoanSelect(pendingOffer.rate, pendingOffer.tenure, pendingOffer.amount);
+    handleLoanSelect(pendingOffer.rate, pendingOffer.tenure, pendingOffer.amount, selectedHolidayMonths);
   };
 
   // Feature 2: Bank Statement Upload Handler
@@ -1527,7 +1609,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch(`${ENDPOINTS.BASE}/credit/analyze-statement`, {
+      formData.append("session_id", userData.sessionId);
+      const res = await fetch(ENDPOINTS.credit_analyze_statement, {
         method: "POST",
         body: formData,
       });
@@ -1551,15 +1634,27 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     }
   };
 
-  const handleLoanSelect = async (interest: number, tenure: number, amount: number) => {
-    const emi = Math.round(
-      (amount * (interest / 1200) * Math.pow(1 + interest / 1200, tenure)) /
-        (Math.pow(1 + interest / 1200, tenure) - 1)
+  const handleLoanSelect = async (interest: number, tenure: number, amount: number, holidayMonths = 0) => {
+    const baseMonthlyRate = interest / 1200;
+    const standardEmi = Math.round(
+      (amount * baseMonthlyRate * Math.pow(1 + baseMonthlyRate, tenure)) /
+        (Math.pow(1 + baseMonthlyRate, tenure) - 1)
     );
+    const holidayDetails = holidayMonths > 0
+      ? calculateEmiWithHoliday(amount, interest, tenure, holidayMonths)
+      : null;
+    const emi = holidayDetails?.emi ?? standardEmi;
 
     setUserData((prev) => ({
       ...prev,
-      selectedLoan: { amount, interest, tenure, emi },
+      selectedLoan: {
+        amount,
+        interest,
+        tenure,
+        emi,
+        holidayMonths: holidayMonths > 0 ? holidayMonths : undefined,
+        holidayExtraCost: holidayDetails?.extraCost,
+      },
     }));
 
     setShowLoanOffers(false);
@@ -1569,8 +1664,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
     const selectionMessage =
       language === "en"
-        ? `You selected: ${formatIndianRupees(amount)} at ${interest}% for ${tenure} months.\n\n${TRANSLATIONS.emi[language]}: ${formatIndianRupees(emi)}/month`
-        : `आपने चुना: ${formatIndianRupees(amount)} ${interest}% पर ${tenure} महीनों के लिए।\n\n${TRANSLATIONS.emi[language]}: ${formatIndianRupees(emi)}/month`;
+        ? `You selected: ${formatIndianRupees(amount)} at ${interest}% for ${tenure} months.\n\n${TRANSLATIONS.emi[language]}: ${formatIndianRupees(emi)}/month${holidayMonths > 0 ? `\nEMI holiday: ${holidayMonths} months` : ""}`
+        : `आपने चुना: ${formatIndianRupees(amount)} ${interest}% पर ${tenure} महीनों के लिए।\n\n${TRANSLATIONS.emi[language]}: ${formatIndianRupees(emi)}/month${holidayMonths > 0 ? `\nEMI holiday: ${holidayMonths} महीनों का` : ""}`;
 
     setMessages((prev) => [
       ...prev,
@@ -1609,6 +1704,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
               loan_amount: amount,
               loan_term: tenure,
               offered_rate: interest,
+              previous_sanction_reference: repeatBorrowerData?.sanction_reference || repeatBorrowerData?.reference,
             }),
           });
           if (pipelineStart.ok) {
@@ -1628,19 +1724,25 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           dependents: "1",
           education: "Graduate",
           self_employed: "No",
-          applicant_income: 5000,
+          applicant_income: Number(bankStatementResult?.estimated_monthly_income || 5000),
           coapplicant_income: 1500,
           loan_amount: amount / 100000,
           loan_amount_term: tenure,
           credit_history: 1,
           property_area: "Urban",
           preferred_language: language,
+          session_id: userData.sessionId,
+          employment_type: repeatBorrowerData?.employment_type || "salaried",
+          employer_name: repeatBorrowerData?.employer_name || "TCS",
+          monthly_income: Number(bankStatementResult?.estimated_monthly_income || 5000),
+          loan_purpose: repeatBorrowerData?.purpose || "general",
         });
 
         const decision = assessmentResult?.decision;
         const isApproved = assessmentResult && (
           decision === "APPROVED" ||
-          decision === "APPROVED_WITH_CONDITIONS"
+          decision === "APPROVED_WITH_CONDITIONS" ||
+          decision === "CONDITIONAL_APPROVAL"
         );
         const isSoftReject = decision === "CONDITIONAL_REJECT";
 
@@ -1686,6 +1788,9 @@ ${guidance.repayment_history_impact || ""}`.trim(),
           tenure,
           assessmentResult.max_negotiation_rounds || 3,
         );
+        if (negotiationResult?.emi_holiday_option) {
+          setEmiHolidayOption(negotiationResult.emi_holiday_option);
+        }
 
         // Accept negotiation (best-effort)
         try {
@@ -1695,6 +1800,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
             body: JSON.stringify({
               session_id: negotiationResult?.session_id || userData.sessionId,
               final_rate: interest,
+              holiday_months: selectedHolidayMonths,
             }),
           });
         } catch {
@@ -1768,11 +1874,18 @@ ${guidance.repayment_history_impact || ""}`.trim(),
         setShowSanction(true);
         
         // Feature 5: Save sanction state for repeat borrower flow
-        localStorage.setItem("loanease_previous_sanction", JSON.stringify({
-          reference: blockchainData?.transaction_id || `APP-${Math.floor(1000 + Math.random() * 9000)}`,
+        const sanctionReference = blockchainData?.transaction_id || `APP-${Math.floor(1000 + Math.random() * 9000)}`;
+        const sanctionRecord = JSON.stringify({
+          sanction_reference: sanctionReference,
+          reference: sanctionReference,
+          sanctioned_at: new Date().toISOString(),
           amount: amount,
-          rate: interest
-        }));
+          rate: interest,
+          preapproved_limit: Math.round(amount * (isRepeatBorrower ? 1.25 : 1.0)),
+          holiday_months: selectedHolidayMonths,
+        });
+        localStorage.setItem("previous_sanction_reference", sanctionRecord);
+        localStorage.setItem("loanease_previous_sanction", sanctionRecord);
       } catch (err) {
         console.error("handleLoanSelect flow error:", err);
         setIsTyping(false);
@@ -2388,6 +2501,13 @@ ${guidance.repayment_history_impact || ""}`.trim(),
                   </div>
                 </div>
               )}
+              <Button
+                variant="outline"
+                className="w-full border-blue-500/30 bg-blue-500/5 text-blue-200 hover:bg-blue-500/10"
+                onClick={() => setShowBankStatementCard(true)}
+              >
+                No payslips? Upload bank statement
+              </Button>
               <div className="flex justify-between pt-2 border-t border-border/50 text-muted-foreground text-[10px]">
                 <span>Time taken</span>
                 <span>0.9s</span>
@@ -2778,6 +2898,38 @@ ${guidance.repayment_history_impact || ""}`.trim(),
               ]}
               onSelect={handleOfferPreview}
             />
+
+            {emiHolidayOption && (
+              <div className="rounded-2xl border border-sky-500/30 bg-sky-500/10 p-5 shadow-[0_14px_34px_rgba(0,0,0,0.18)]">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.22em] text-sky-200">EMI Holiday</p>
+                    <p className="mt-1 text-sm text-slate-100">
+                      {emiHolidayOption.message || `Pause the first ${emiHolidayOption.holidayMonths || emiHolidayOption.holiday_months || 2} EMIs and start later.`}
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-sky-400/30 bg-sky-400/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-200">
+                    {emiHolidayOption.recommended || emiHolidayOption.recommended === undefined ? "Recommended" : "Optional"}
+                  </span>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button
+                    variant={selectedHolidayMonths === (emiHolidayOption.holidayMonths || emiHolidayOption.holiday_months || 2) ? "accent" : "outline"}
+                    onClick={() => setSelectedHolidayMonths(emiHolidayOption.holidayMonths || emiHolidayOption.holiday_months || 2)}
+                  >
+                    Use EMI holiday
+                  </Button>
+                  <Button variant="ghost" onClick={() => setSelectedHolidayMonths(0)}>
+                    Regular schedule
+                  </Button>
+                </div>
+                {emiHolidayOption.extraCost != null || emiHolidayOption.extra_cost != null ? (
+                  <div className="mt-3 text-xs text-sky-100/80">
+                    Extra cost: {formatIndianRupees(Number(emiHolidayOption.extraCost || emiHolidayOption.extra_cost || 0))}
+                  </div>
+                ) : null}
+              </div>
+            )}
 
             {showKfsCard && pendingOffer && (
               <div className="rounded-2xl border border-[#2a2a2a] bg-[#101010] p-5 shadow-[0_14px_34px_rgba(0,0,0,0.28)]">

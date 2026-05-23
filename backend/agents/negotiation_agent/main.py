@@ -40,6 +40,7 @@ class NegotiationStartResponse(BaseModel):
     customer_profile: str
     # Fields the frontend reads from negotiate/start
     opening_offer: Optional[Dict[str, Any]] = None
+    emi_holiday_option: Optional[Dict[str, Any]] = None
     can_negotiate: bool = True
     rounds_remaining: Optional[int] = None
     detected_intent: str = "START"
@@ -65,6 +66,7 @@ class NegotiationAcceptRequest(BaseModel):
     session_id: Optional[str] = None
     negotiation_id: Optional[str] = None
     final_rate: Optional[float] = None
+    holiday_months: Optional[int] = None
 
 class NegotiationAcceptResponse(BaseModel):
     negotiation_id: str
@@ -241,6 +243,37 @@ def generate_negotiation_id() -> str:
     import uuid
     return f"NEG-{uuid.uuid4().hex[:8].upper()}"
 
+def calculate_monthly_emi(principal: float, annual_rate: float, tenure_months: int) -> float:
+    tenure = max(1, int(tenure_months))
+    monthly_rate = annual_rate / 12 / 100
+    if monthly_rate == 0:
+        return round(principal / tenure, 2)
+
+    factor = (1 + monthly_rate) ** tenure
+    emi = principal * monthly_rate * factor / (factor - 1)
+    return round(emi, 2)
+
+
+def with_emi_holiday(principal: float, rate: float, tenure_months: int, holiday_months: int) -> dict:
+    holiday = max(0, int(holiday_months))
+    tenure = max(1, int(tenure_months))
+    monthly_rate = rate / 12 / 100
+
+    adjusted_principal = principal * ((1 + monthly_rate) ** holiday) if monthly_rate > 0 else principal
+    emi = calculate_monthly_emi(adjusted_principal, rate, tenure)
+    original_emi = calculate_monthly_emi(principal, rate, tenure)
+    original_total = original_emi * tenure
+    adjusted_total = emi * tenure
+
+    return {
+        "holiday_months": holiday,
+        "adjusted_principal": round(adjusted_principal, 2),
+        "emi": emi,
+        "original_emi": original_emi,
+        "extra_cost": round(max(0.0, adjusted_total - original_total), 2),
+        "first_emi_after_month": holiday + 1,
+    }
+
 @router.post("/start", response_model=NegotiationStartResponse)
 async def start_negotiation(request: NegotiationStartRequest):
     """Start rate negotiation — accepts both session-based and direct payloads"""
@@ -327,6 +360,16 @@ async def start_negotiation(request: NegotiationStartRequest):
             "monthly_emi": emi_monthly,
         }
 
+        emi_holiday_option = None
+        normalized_risk = (risk_category or "").replace("_", "-").upper()
+        if normalized_risk in {"LOW", "MEDIUM", "GOOD", "LOW RISK", "MEDIUM-LOW", "MEDIUM-HIGH"}:
+            holiday_preview = with_emi_holiday(loan_amount, current_rate, tenure_months, 2)
+            emi_holiday_option = {
+                **holiday_preview,
+                "message": "Would you like a 2-month EMI holiday at the start of your loan? Interest accrues during the holiday period.",
+                "recommended": normalized_risk in {"LOW", "GOOD", "LOW RISK"},
+            }
+
         return NegotiationStartResponse(
             negotiation_id=negotiation_id,
             session_id=negotiation_id,  # frontend reads session_id from this response
@@ -336,6 +379,7 @@ async def start_negotiation(request: NegotiationStartRequest):
             total_steps=neg_params["total_steps"],
             customer_profile=request.customer_profile,
             opening_offer=opening_offer,
+            emi_holiday_option=emi_holiday_option,
             can_negotiate=True,
             rounds_remaining=neg_params["total_steps"],
             detected_intent="START",
@@ -544,18 +588,23 @@ async def accept_negotiation(request: NegotiationAcceptRequest):
             loan_amount = uw.get("loan_amount", 500000)
             tenure_years = uw.get("tenure_years", 5)
 
-        try:
-            from services.emi import calculate_emi
-            emi_result = calculate_emi(loan_amount, final_rate, tenure_years)
-            monthly_emi = emi_result.get("monthly_emi", 0.0)
-        except Exception:
-            monthly_emi = 0.0
+        holiday_months = max(0, int(request.holiday_months or 0))
+        if holiday_months > 0:
+            holiday_details = with_emi_holiday(loan_amount, final_rate, int(tenure_years * 12), holiday_months)
+            monthly_emi = float(holiday_details["emi"])
+        else:
+            try:
+                from services.emi import calculate_emi
+                emi_result = calculate_emi(loan_amount, final_rate, tenure_years)
+                monthly_emi = emi_result.get("monthly_emi", 0.0)
+            except Exception:
+                monthly_emi = 0.0
 
         sid = negotiation.get("session_id")
         if sid:
             session_store.update_stage(sid, "NEGOTIATION_COMPLETE")
             session_store.update_data(sid, "final_rate", final_rate)
-            session_store.update_data(sid, "emi_details", {"monthly_emi": monthly_emi})
+            session_store.update_data(sid, "emi_details", {"monthly_emi": monthly_emi, "holiday_months": holiday_months})
             session_store.log_agent(sid, {
                 "agent": "negotiation", "action": "accept",
                 "negotiation_id": negotiation_id,
@@ -570,7 +619,10 @@ async def accept_negotiation(request: NegotiationAcceptRequest):
             accepted_rate=final_rate,
             monthly_emi=monthly_emi,
             negotiation_complete=True,
-            message=f"Loan approved at {final_rate}% with EMI of ₹{monthly_emi:,.2f}",
+            message=(
+                f"Loan approved at {final_rate}% with EMI of ₹{monthly_emi:,.2f}"
+                + (f" and a {holiday_months}-month EMI holiday" if holiday_months > 0 else "")
+            ),
         )
 
     except Exception as e:

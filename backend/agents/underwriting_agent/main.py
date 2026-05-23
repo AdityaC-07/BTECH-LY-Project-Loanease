@@ -5,7 +5,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Form
 from pydantic import BaseModel
 
 from core.session import session_store
@@ -30,6 +30,10 @@ class AssessRequest(BaseModel):
     tenure_years: Optional[int] = None
     # Frontend direct fields
     pan_number: Optional[str] = None
+    employer_name: Optional[str] = None
+    employment_type: Optional[str] = None
+    monthly_income: Optional[float] = None
+    loan_purpose: Optional[str] = None
     gender: Optional[str] = None
     married: Optional[str] = None
     dependents: Optional[str] = None
@@ -325,7 +329,7 @@ async def assess_loan(request: AssessRequest):
             "loan_amount": loan_amount,
             "tenure_years": tenure_years,
             "age": age,
-            "income_estimated": (request.applicant_income or 50000) * 12,
+            "income_estimated": (request.applicant_income or request.monthly_income or 50000) * 12,
         }
 
         xgboost_score = predict_credit_score(features)
@@ -359,20 +363,17 @@ async def assess_loan(request: AssessRequest):
         alt_details = None
 
         if cibil_score < 600:
+            session_context = session["data"].get("conversation_context", {}) if session else {}
+            monthly_income = request.monthly_income or request.applicant_income or session_context.get("monthly_income") or 50000
             # Extract applicant data from session
             applicant_data = {
                 "loan_amount": loan_amount,
                 "tenure_months": tenure_years * 12,
-                "monthly_income": request.applicant_income or 50000,
-                "loan_purpose": "general"
+                "monthly_income": monthly_income,
+                "loan_purpose": request.loan_purpose or session_context.get("loan_purpose") or "general",
+                "employment_type": request.employment_type or session_context.get("employment_type") or "salaried",
+                "employer_name": request.employer_name or session_context.get("employer_name") or "TCS",
             }
-            if session:
-                ctx = session["data"].get("conversation_context", {})
-                applicant_data["loan_purpose"] = ctx.get("loan_purpose", "general")
-                # Just mock some data for demo if not present
-                applicant_data["employment_type"] = "salaried"
-                applicant_data["employer_name"] = "TCS"
-                
             alt_res = get_alternative_score(applicant_data)
             alt_score = alt_res["alternative_score"]
             alt_eligible = alt_res["eligible"]
@@ -380,7 +381,7 @@ async def assess_loan(request: AssessRequest):
 
             # If alternative assessment passes, conditionally approve them
             if alt_eligible:
-                decision = "CONDITIONAL_APPROVAL"
+                decision = "APPROVED_WITH_CONDITIONS"
                 interest_rate = alt_res["recommended_rate"] or 16.0
                 max_loan = alt_res["recommended_amount"] or loan_amount
                 credit_result["risk_category"] = "MEDIUM-HIGH"
@@ -398,6 +399,13 @@ async def assess_loan(request: AssessRequest):
                 "risk_score": credit_result["risk_score"],
                 "loan_amount": loan_amount,
                 "tenure_years": tenure_years,
+                "monthly_income": request.monthly_income or request.applicant_income,
+                "employment_type": request.employment_type,
+                "employer_name": request.employer_name,
+                "loan_purpose": request.loan_purpose,
+                "alternative_score": alt_score,
+                "alternative_eligible": alt_eligible,
+                "alternative_details": alt_details,
             })
             session_store.log_agent(request.session_id, {
                 "agent": "underwriting", "action": "assessment",
@@ -495,7 +503,7 @@ def analyze_bank_statement(text: str) -> dict:
     }
 
 @router.post("/analyze-statement")
-async def analyze_statement_api(file: UploadFile = File(...)):
+async def analyze_statement_api(file: UploadFile = File(...), session_id: Optional[str] = Form(None)):
     try:
         content = await file.read()
         # Decode ignoring errors in case of binary/PDF
@@ -506,6 +514,12 @@ async def analyze_statement_api(file: UploadFile = File(...)):
             text += " NEFT/SALARY-TCS 65000 CR \n NEFT/SALARY-TCS 65000 CR \n NEFT/SALARY-TCS 65000 CR"
             
         result = analyze_bank_statement(text)
+        if session_id and result.get("analysis_possible"):
+            try:
+                session_store.update_data(session_id, "bank_statement_analysis", result)
+                session_store.update_data(session_id, "monthly_income", result.get("estimated_monthly_income"))
+            except Exception:
+                logger.debug("Could not persist bank statement analysis for session %s", session_id)
         return result
     except Exception as e:
         logger.error(f"Bank statement analysis failed: {e}")
