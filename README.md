@@ -29,138 +29,18 @@ The post-decision flow now surfaces a richer underwriting summary.
 - **Live Credit Insights**: Credit score, risk tier, and SHAP factors are shown with updated banding.
 - **Post-Sanction Analytics**: EMI, total payable, total interest, and benchmark comparisons come from the analytics endpoint.
 - **Sanction Letter Export**: The sanction letter now has a working PDF download action and an analytics shortcut.
+## ⚙️ Unified Backend Schema
 
-### 🔗 Blockchain Transparency
-The blockchain explorer now mirrors the backend block metadata more closely.
-- **Block Typing**: Explorer cards distinguish genesis, transaction, and sanction blocks.
-- **Stable Explorer Stats**: Chain validity, active sanctions, and PoW difficulty are surfaced consistently.
-- **Tamper Demo Fallbacks**: The tamper demo can still run with a fallback reference when a live sanction reference is unavailable.
+LoanEase exposes one orchestrated backend surface in the unified app, with the supporting service modules below it. The backend is intentionally modular, but the documentation below groups the pieces by role instead of repeating separate agent pages.
 
-### 📊 LoanEase vs Traditional Lending
-We’ve benchmarked our performance against industry standards to ensure our borrowers get the best experience.
+### Unified Backend Core (`backend/app/main.py`)
 
-| Feature | Traditional Bank | Loan Agent/DSA | **LoanEase (AI)** |
-| :--- | :---: | :---: | :---: |
-| **Approval Time** | 7–10 Days | 3–5 Days | **< 5 Minutes** |
-| **Availability** | Bank Hours | Work Hours | **24/7 Instant** |
-| **Sanction Letter** | Physical/Post | Email/Manual | **Instant Digital** |
-| **Audit Trail** | Paper-based | Fragmented | **Blockchain Secured** |
-| **Effort** | High Manual | Moderate | **Zero Paperwork** |
+#### Responsibilities
+- Serves the primary FastAPI application used by the frontend.
+- Orchestrates underwriting, KYC, negotiation, translation, blockchain, and chat routes.
+- Initializes shared services at startup, including VLM and Twilio Verify.
 
----
-
-## 🛠️ Tech Stack
-
-### Frontend & Core
-- **React 18 + TypeScript**: Type-safe, component-driven architecture.
-- **Vite**: Ultra-fast development and build environment.
-- **TanStack Query**: High-performance data fetching and caching.
-
-### UI & UX
-- **Tailwind CSS**: Utility-first styling with custom EY design tokens.
-- **shadcn/ui**: Accessible, high-quality component primitives.
-- **Lucide React**: Vector-based, professional iconography.
-- **Recharts**: Interactive data visualizations and comparison charts.
-
-### Utilities
-- **Zod**: Robust schema validation for user inputs.
-- **Sonner**: Elegant, non-intrusive toast notifications.
-- **Date-fns**: Precision date handling for repayment schedules.
-
----
-
-## 🎨 Design Philosophy 
-LoanEase is built to feel like a premium, enterprise-grade financial tool:
-- **Palette**: Dark Mode optimized with `Black (#212121)` and `Yellow (#FFE600)`.
-- **Typography**: `Inter` and `DM Sans` for maximum readability and a professional feel.
-- **Interactions**: Subtle micro-animations (float, slide-up) and glassmorphism effects for a modern UX.
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-- [Node.js](https://nodejs.org/) (v18 or higher)
-- [npm](https://www.npmjs.com/) or [yarn](https://yarnpkg.com/)
-
-### Installation
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/AdityaC-07/BTECH-LY-Project-Loanease.git
-   cd BTECH-LY-Project-Loanease
-   ```
-
-2. **Install frontend dependencies**
-   ```bash
-   cd frontend
-   npm install
-   ```
-
-3. **Start the development server**
-   ```bash
-   npm run dev
-   ```
-
-4. **Open in your browser**  
-   Navigate to [http://localhost:8080](http://localhost:8080)
-
----
-
-## 📁 Project Structure
-```text
-loanease/
-├── frontend/
-│   ├── src/
-│   │   ├── components/      # Functional and UI components
-│   │   │   ├── ui/          # shadcn and Radix primitives
-│   │   │   └── ...          # Feature components
-│   │   │   ├── ChannelSelector.tsx
-│   │   │   ├── WhatsAppChat.tsx
-│   │   │   └── WhatsAppInput.tsx
-│   │   ├── pages/           # App-level page views
-│   │   │   └── WhatsAppPage.tsx
-│   │   ├── hooks/           # Custom React hooks
-│   │   ├── lib/             # Shared frontend utilities
-│   │   ├── App.tsx
-│   │   └── main.tsx
-│   ├── public/
-│   ├── package.json
-│   └── vite.config.ts
-├── backend/
-│   ├── app/                 # Underwriting FastAPI app
-│   ├── artifacts/           # Trained model and metadata
-│   ├── data/                # Dataset and assessment store
-│   ├── requirements.txt
-│   └── train_model.py
-├── negotiation_backend/
-│   ├── app/                 # Negotiation FastAPI app
-│   └── requirements.txt
-├── README.md
-└── LICENSE
-```
-
----
-
-## 📈 Impact & Innovation
-- **75% Faster Decisions**: Drastic reduction in turnaround time vs traditional banks.
-- **50% Effort Reduction**: Automated agent-driven workflows minimize manual data entry.
-- **100% Digital Journey**: From KYC to signed sanction letters, no physical touchpoints required.
-
----
-
-## 🚧 Roadmap
-- [ ] Multi-regional Support & Language Localization
-- [ ] Integration with major Core Banking Systems (CBS)
-- [ ] Advanced Fraud Detection using ML models
-- [ ] Mobile App (Progressive Web App support)
-
----
-
-## 📚 API Reference
-
-The tables below reflect the currently mounted routes in the unified backend and the standalone service modules. Every service also exposes OpenAPI docs at `/docs` on its local port.
-
-### Unified Backend (`backend/app/main.py`)
+#### Core APIs
 
 | Method | Endpoint | Purpose |
 | :--- | :--- | :--- |
@@ -177,10 +57,12 @@ The tables below reflect the currently mounted routes in the unified backend and
 | `POST` | `/assess` | Risk assessment and decision generation |
 | `POST` | `/credit/assess` | Legacy assessment alias |
 | `POST` | `/explain/{application_id}` | Stored-application explanation and SHAP waterfall |
-| `POST` | `/escalation/callback-preference` | Legacy callback preference alias |
 | `POST` | `/kyc/extract/pan` | PAN OCR extraction and validation |
 | `POST` | `/kyc/extract/aadhaar` | Aadhaar OCR extraction and validation |
 | `POST` | `/kyc/verify` | Cross-document KYC verification |
+| `POST` | `/kyc/send-otp` | Send Aadhaar verification OTP via Twilio Verify |
+| `POST` | `/kyc/resend-otp` | Resend Aadhaar verification OTP via Twilio Verify |
+| `POST` | `/kyc/verify-otp` | Verify Aadhaar OTP or QR-backed identity proof |
 | `POST` | `/negotiate/start` | Start a negotiation session |
 | `POST` | `/negotiate/start-from-underwriting` | Start negotiation from underwriting context |
 | `POST` | `/negotiate/counter` | Submit a counter-offer |
@@ -197,296 +79,52 @@ The tables below reflect the currently mounted routes in the unified backend and
 | `POST` | `/generate/rejection` | Generate rejection messaging |
 | `GET` | `/groq/health` | Groq integration health |
 
-### Blockchain Service (`backend/blockchain_service.py` and blockchain agent)
+### Unified Backend Modules
 
-| Method | Endpoint | Purpose |
-| :--- | :--- | :--- |
-| `POST` | `/blockchain/sanction` | Register and seal a sanction record |
-| `GET` | `/blockchain/verify/{reference}` | Verify a blockchain reference |
-| `GET` | `/blockchain/chain` | Return the blockchain chain payload |
-| `GET` | `/blockchain/stats` | Return chain statistics |
-| `GET` | `/blockchain/explorer-data` | Explorer-ready chain metadata |
-| `POST` | `/blockchain/tamper-test` | Run tamper simulation |
-| `GET` | `/blockchain/verify-chain` | Chain verification summary |
-| `GET` | `/health` | Blockchain service health |
+#### Credit Underwriting Module (`backend/`)
+- Trains the underwriting model from `backend/data/loan_train.csv`.
+- Produces artifacts in `backend/artifacts/`.
+- Exposes the assessment, explanation, credit-score, and analytics routes.
 
-### Negotiation Backend (`negotiation_backend/`)
+#### KYC Module (`backend/agents/kyc.py` and `backend/services/vlm_kyc.py`)
+- Extracts PAN and Aadhaar fields with the VLM abstraction.
+- Decodes Aadhaar Secure QR payloads and stores QR metadata in session state.
+- Verifies Aadhaar-linked mobile numbers via QR hash first, then Twilio Verify OTP.
+- Returns KYC status and reference IDs for the downstream credit flow.
 
-| Method | Endpoint | Purpose |
-| :--- | :--- | :--- |
-| `POST` | `/negotiate/start` | Start a negotiation session from risk context |
-| `POST` | `/negotiate/start-from-underwriting` | Start negotiation via underwriting output |
-| `POST` | `/negotiate/counter` | Submit a counter request |
-| `POST` | `/negotiate/accept` | Accept current negotiated offer |
-| `POST` | `/negotiate/escalate` | Escalate case to a human officer |
-| `GET` | `/negotiate/history/{session_id}` | Retrieve session history |
-| `GET` | `/health` | Negotiation service health |
-| `GET` | `/negotiate/analytics` | Negotiation analytics summary |
+#### Negotiation Module (`backend/agents/negotiation_agent/`)
+- Runs stateful, risk-aware loan-rate negotiation.
+- Computes EMI, total payable, and savings with reducing-balance math.
+- Returns plain-English reasoning for each step.
 
-### Translation Service (`translation_backend/`)
+#### Translation Module (`backend/routers/ai_router.py` and translation routes)
+- Provides multilingual translation and Hinglish intent detection.
+- Supports the chat experience without requiring a separate manual workflow.
 
-| Method | Endpoint | Purpose |
-| :--- | :--- | :--- |
-| `POST` | `/translate` | Translate text between English and Hindi |
-| `POST` | `/detect-hinglish-intent` | Detect intent from Hinglish input |
-| `GET` | `/health` | Translation service health |
+#### Blockchain Module (`backend/blockchain_service.py` and blockchain agent)
+- Registers and verifies sanction records.
+- Exposes chain state, explorer data, and tamper-test routes.
+- Supports the audit trail used by the sanction flow.
 
-### KYC Verification Backend (`kyc_backend/`)
+### Module Setup Summary
 
-| Method | Endpoint | Purpose |
-| :--- | :--- | :--- |
-| `POST` | `/kyc/extract/pan` | Extract PAN fields and validate |
-| `POST` | `/kyc/extract/aadhaar` | Extract Aadhaar fields and validate |
-| `POST` | `/kyc/verify` | Cross-validate PAN and Aadhaar |
-| `POST` | `/kyc/extract/auto` | Auto-detect document type and extract |
-| `GET` | `/health` | KYC service health |
-
-## ⚙️ Backend Services
-
-LoanEase includes the following FastAPI backend services:
-
-- `backend/` for credit underwriting and explainability.
-- `backend/routers/ai_router.py` for chat, intent, and prompt orchestration.
-- `backend/blockchain_service.py` and `backend/agents/blockchain_agent/` for blockchain audit and explorer data.
-- `negotiation_backend/` for dynamic loan-rate negotiation.
-- `translation_backend/` for multilingual translation + Hinglish intent detection.
-- `kyc_backend/` for PAN/Aadhaar OCR extraction and KYC verification.
-
-### Credit Underwriting Backend (`backend/`)
-
-#### What it does
-- Trains an XGBoost classifier using `backend/data/loan_train.csv`.
-- Produces prediction artifacts in `backend/artifacts/`.
-- Exposes underwriting APIs for assessment, explanation, and health monitoring.
-- Returns SHAP-based plain-English factor explanations.
-- Serves a post-decision analytics endpoint at `/analytics/{session_id}` for EMI, payoff, and benchmark summaries.
-
-#### Setup
-From repository root:
+Run the unified backend from the backend directory:
 
 ```powershell
 cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-```
-
-#### Dataset
-Place Kaggle Loan Prediction dataset CSV at:
-
-- `backend/data/loan_train.csv`
-
-Expected columns:
-
-- `Gender`, `Married`, `Dependents`, `Education`, `Self_Employed`
-- `ApplicantIncome`, `CoapplicantIncome`, `LoanAmount`, `Loan_Amount_Term`
-- `Credit_History`, `Property_Area`, `Loan_Status`
-
-#### Train model
-
-```powershell
-python train_model.py --data data/loan_train.csv --artifacts artifacts
-```
-
-Training pipeline includes:
-
-- Missing-value imputation: median (numeric), mode (categorical)
-- Label encoding for categoricals
-- 80/20 train-test split
-- GridSearchCV tuning for `max_depth`, `n_estimators`, `learning_rate`
-- Classification report and confusion matrix in console output
-
-Artifacts generated:
-
-- `backend/artifacts/loan_model.pkl`
-- `backend/artifacts/preprocessor.pkl`
-- `backend/artifacts/metadata.json`
-
-#### Run API
-
-```powershell
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Docs: `http://localhost:8000/docs`
 
-#### API endpoints (validated)
-
-| Method | Endpoint | Purpose |
-| :--- | :--- | :--- |
-| `GET` | `/health` | Service health, model version, accuracy, uptime |
-| `GET` | `/credit-score/{pan_number}` | Credit score simulation, score band, and eligibility context |
-| `POST` | `/assess` | Risk assessment and decision generation |
-| `POST` | `/explain/{application_id}` | Full explanation and SHAP waterfall for a stored application |
-
-#### Risk bands
-- `300-549` = High Risk
-- `550-699` = Medium Risk
-- `700-900` = Low Risk
-
-#### Risk policy (current)
-- Final risk combines credit score band + model risk score.
-- All users remain loan-eligible; risk tier changes pricing and negotiation limits.
+### Service Notes
+- `backend/services/vlm_kyc.py` is provider-agnostic and can be mapped to a Qwen-compatible multimodal backend if needed.
+- `backend/services/aadhaar_qr.py` adds offline Aadhaar Secure QR decoding and mobile-hash verification.
+- `backend/services/otp_service.py` uses Twilio Verify and falls back to demo mode when credentials are absent.
 - Typical interest-rate guidance: `Low Risk` 9-11%, `Medium Risk` 11-13%, `High Risk` 13-15%.
-
-### Dynamic Negotiation Backend (`negotiation_backend/`)
-
-#### What it does
-- Runs stateful in-memory negotiation sessions.
-- Applies risk-aware pricing policy with configurable limits.
-- Returns plain-English reasoning for each response.
-- Computes EMI, total payable, and savings with reducing-balance formula.
-- Performs basic intent detection from applicant messages.
-- Enforces 48-hour session expiry.
-
-#### Setup
-From repository root:
-
-```powershell
-cd negotiation_backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-Run service:
-
-```powershell
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
-```
-
-Docs: `http://localhost:8001/docs`
-
-#### Business constants
-Defined in `negotiation_backend/app/constants.py`:
-
-- `RATE_CEILING = 14.0`
-- `RATE_FLOOR = 10.5`
-- `MAX_ROUNDS = 3`
-- `CONCESSION_STEP = 0.25`
-
-#### Underwriting integration
-Typical flow:
-
-1. Call underwriting `POST /assess`.
-2. Use returned `risk_score` and `risk_tier`.
-3. Start negotiation via `POST /negotiate/start`.
-
-Optional adapter endpoint:
-
-- `POST /negotiate/start-from-underwriting`
-
-#### EMI formula
-
-- `EMI = P * R * (1+R)^N / ((1+R)^N - 1)`
-- `P`: principal
-- `R`: monthly interest rate (`annual_rate / 12 / 100`)
-- `N`: tenure in months
-
-#### CORS
-Allowed origins include:
-
-- `http://localhost:8080`
-- `http://127.0.0.1:8080`
-- `http://localhost:3000`
-- `FRONTEND_DOMAIN` env var (default `https://loanease.example.com`)
-
-#### Core endpoints
-
-| Method | Endpoint | Purpose |
-| :--- | :--- | :--- |
-| `POST` | `/negotiate/start` | Start a negotiation session from supplied risk context |
-| `POST` | `/negotiate/start-from-underwriting` | Start negotiation by first calling underwriting `/assess` |
-| `POST` | `/negotiate/counter` | Submit user counter-request and get a revised offer |
-| `POST` | `/negotiate/accept` | Accept current negotiated offer and close session |
-| `POST` | `/negotiate/escalate` | Escalate case to a human loan officer |
-| `GET` | `/negotiate/history/{session_id}` | Retrieve current session state and conversation history |
-| `GET` | `/health` | Service health, uptime, and active session count |
-
-### Translation Service (`translation_backend/`) — Multilingual Support
-
-#### What it does
-- Translates text between English and Hindi using Google Translate free tier.
-- Detects Hinglish input (Hindi written in English letters) and maps to intents.
-- Provides language detection, fallback handling, and caching.
-- Enables chatbot to communicate in user's preferred language.
-
-#### Setup
-From repository root:
-
-```powershell
-cd translation_backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-Run service:
-
-```powershell
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8002
-```
-
-Docs: `http://localhost:8002/docs`
-
-#### API endpoints
-
-| Method | Endpoint | Purpose |
-| :--- | :--- | :--- |
-| `POST` | `/translate` | Translate text between English and Hindi |
-| `POST` | `/detect-hinglish-intent` | Detect intent from Hinglish (Hindi in English letters) |
-| `GET` | `/health` | Service health and uptime |
-
-#### Supported Hinglish Intents
-
-- `LOAN_REQUEST` - "loan chahiye", "mujhe loan", "loan lena hai"
-- `RATE_QUERY` - "kitna rate", "rate kya hai", "interest kya"
-- `COUNTER_REQUEST` - "aur kam karo", "aur neeche", "kamtar karo" (negotiation)
-- `ACCEPTANCE` - "theek hai", "manzoor", "accept"
-- `CANCELLATION` - "cancel", "nahi chahiye", "band karo"
-- `KYC_PROMPT` - "documents", "kyc", "pan card", "aadhar"
-
-#### Frontend Features
-
-- **Language Switcher**: EN/HI pills in chat header (yellow active state)
-- **Auto-detection**: Detects user language from typed message via franc-min CDN
-- **Hardcoded Critical Strings**: Core messages (approval, rejection, KYC) in both languages
-- **Number Formatting**: Indian style (₹5,00,000) in Hindi mode
-- **Translation Caching**: 24-hour client-side cache for translations
-- **Channel Selector**: Users can choose web chat or WhatsApp entry from the hero flow.
-- **Channel-Aware Prompts**: Backend prompts adjust response length and formatting per channel.
-
-#### Example Usage
-
-**Translate endpoint:**
-
-```bash
-curl -X POST "http://localhost:8002/translate" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "Congratulations! Your loan is approved.",
-    "source_language": "en",
-    "target_language": "hi"
-  }'
-```
-
-**Hinglish intent detection:**
-
-```bash
-curl -X POST "http://localhost:8002/detect-hinglish-intent" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "aur kam karo rate"}'
-```
-
-#### How to Add a New Language
-
-1. **Update Translation Service**: Add language code to `SUPPORTED_LANGUAGES` in `translation_backend/app/translation_service.py`
-2. **Add Hardcoded Strings**: Update `frontend/src/lib/translations.ts` with new language translations
-3. **Update Intent Detection** (if needed): Add phrase mappings to `translation_backend/app/hinglish_intent.py`
-4. **Update Language Switcher**: Add button for new language in `frontend/src/components/LanguageSwitcher.tsx`
-5. **Verify franc-min Support**: Ensure language code is supported by franc-min library
-
-For detailed integration steps, see `MULTILINGUAL_INTEGRATION.md`.
 
 ### Frontend Decision Flow
 
@@ -494,42 +132,6 @@ For detailed integration steps, see `MULTILINGUAL_INTEGRATION.md`.
 - **Credit Score Card**: Score 592 is treated as Medium Risk in the UI thresholding.
 - **Sanction Letter**: Download PDF now triggers a real export flow.
 - **Analytics Dashboard**: Pulls live session analytics from `/analytics/{session_id}` and renders charts from backend data.
-
-### KYC Verification Backend (`kyc_backend/`) — OCR + Document Validation
-
-#### What it does
-- Extracts PAN fields from uploaded JPG/PNG/PDF.
-- Extracts Aadhaar fields from uploaded JPG/PNG/PDF.
-- Runs cross-document validation (name + DOB + age eligibility).
-- Returns structured KYC status and reference ID for downstream flow.
-
-#### Setup
-From repository root:
-
-```powershell
-cd kyc_backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-Run service:
-
-```powershell
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8003
-```
-
-Docs: `http://localhost:8003/docs`
-
-#### API endpoints
-
-| Method | Endpoint | Purpose |
-| :--- | :--- | :--- |
-| `POST` | `/kyc/extract/pan` | Extract PAN fields + validation |
-| `POST` | `/kyc/extract/aadhaar` | Extract Aadhaar fields + validation |
-| `POST` | `/kyc/verify` | Cross-validate PAN and Aadhaar together |
-| `POST` | `/kyc/extract/auto` | Auto-detect doc type and extract |
-| `GET` | `/health` | Service health, OCR engine status, uptime |
 
 ---
 
@@ -641,6 +243,41 @@ If dependencies are not installed, run in each backend directory:
 ```bash
 pip install -r requirements.txt
 ```
+
+For the KYC stack, ensure the backend environment includes the OCR/QR and OTP packages used by the new flow:
+
+- `twilio`
+- `pyzbar`
+- `opencv-python`
+
+On Linux, `pyzbar` may also require `libzbar0`.
+
+### KYC Verification Usage
+
+The KYC journey now runs in three layers:
+
+1. PAN extraction validates document text and identity fields.
+2. Aadhaar extraction decodes the Secure QR when present and stores QR metadata in session state.
+3. QR hash verification is attempted first; Twilio OTP is used when the QR hash check is unavailable or inconclusive.
+
+Recommended environment variables:
+
+```powershell
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your_auth_token
+TWILIO_VERIFY_SERVICE_SID=VAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+OTP_EXPIRY_MINUTES=10
+```
+
+The VLM layer is provider-agnostic. If you deploy a Qwen-compatible multimodal model, wire it behind `backend/services/vlm_kyc.py` using the same extraction contract.
+
+Typical demo flow:
+
+1. Upload PAN.
+2. Upload Aadhaar.
+3. If the Aadhaar Secure QR is decoded, the UI shows an offline verification status.
+4. If QR hash verification cannot complete, the flow continues with Twilio OTP.
+5. On success, the application advances to credit assessment.
 
 ### 🎯 Service Startup Order
 

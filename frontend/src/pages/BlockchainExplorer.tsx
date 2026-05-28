@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
-import { ChevronLeft, Database, Activity, Lock, Layers, Info, X, ExternalLink, ShieldCheck, Link as LinkIcon } from "lucide-react";
+import { ChevronLeft, Database, Activity, Lock, Layers, Info, X, ExternalLink, ShieldCheck, Link as LinkIcon, Search, CheckCircle2, AlertCircle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { BlockCard } from "@/components/blockchain/BlockCard";
 import { MerkleTree } from "@/components/blockchain/MerkleTree";
@@ -35,6 +35,28 @@ export default function BlockchainExplorer() {
   const [loading, setLoading] = useState(true);
   const [tamperResult, setTamperResult] = useState<any>(null);
   const [isBroken, setIsBroken] = useState(false);
+  const [txnSearch, setTxnSearch] = useState("");
+  const [txnVerification, setTxnVerification] = useState<any>(null);
+  const [txnLoading, setTxnLoading] = useState(false);
+  const [pendingAutoVerify, setPendingAutoVerify] = useState<string | null>(null);
+  const searchSectionRef = useRef<HTMLDivElement | null>(null);
+  const resultSectionRef = useRef<HTMLDivElement | null>(null);
+
+  const formatCurrency = (value: any): string => {
+    if (value === undefined || value === null || value === "") return "—";
+    const numberValue = Number(value);
+    if (Number.isNaN(numberValue)) return String(value);
+    return `₹${numberValue.toLocaleString("en-IN")}`;
+  };
+
+  const renderResultField = (label: string, value: any) => (
+    <div className="rounded-md border border-white/5 bg-black/60 p-4">
+      <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
+        {label}
+      </div>
+      <div className="break-words font-mono text-sm text-white">{value ?? "—"}</div>
+    </div>
+  );
 
   const fetchData = async () => {
     try {
@@ -51,11 +73,70 @@ export default function BlockchainExplorer() {
     }
   };
 
+  async function verifyTransaction(overrideTxnId?: string) {
+    const txnId = (overrideTxnId ?? txnSearch).trim();
+
+    if (!txnId) {
+      return;
+    }
+
+    setTxnLoading(true);
+    setTxnVerification(null);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/blockchain/verify/${encodeURIComponent(txnId)}`);
+      const data = await response.json();
+      setTxnVerification(data);
+      window.setTimeout(() => {
+        resultSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }, 50);
+    } catch (error) {
+      console.error("Failed to verify transaction", error);
+      setTxnVerification({
+        found: false,
+        authentic: false,
+        txn_id: txnId,
+        status: "ERROR",
+        message: "Could not connect to the ledger. Please try again.",
+        risk_level: "HIGH",
+      });
+      window.setTimeout(() => {
+        resultSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }, 50);
+    } finally {
+      setTxnLoading(false);
+    }
+  }
+
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const autoVerify = params.get("verify");
+
+    if (!autoVerify) {
+      return;
+    }
+
+    setPendingAutoVerify(autoVerify);
+    setTxnSearch(autoVerify);
+    const timer = window.setTimeout(() => {
+      void verifyTransaction(autoVerify);
+    }, 500);
+
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!loading && pendingAutoVerify) {
+      searchSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setPendingAutoVerify(null);
+    }
+  }, [loading, pendingAutoVerify]);
 
   const handleTamper = (result: any) => {
     setTamperResult(result);
@@ -90,6 +171,11 @@ export default function BlockchainExplorer() {
   );
   const sanctionRef = latestSanction?.transaction_data?.sanction_reference || latestSanction?.transaction_data?.transaction_id;
 
+  const verificationResult = txnVerification;
+  const isAuthentic = Boolean(verificationResult?.authentic);
+  const isNotFound = verificationResult?.found === false || verificationResult?.status === "ERROR";
+  const isTampered = verificationResult?.found && !verificationResult?.authentic;
+
   return (
     <div className="min-h-screen bg-black text-white font-sans selection:bg-[hsl(47,100%,50%)] selection:text-black">
       {/* Header */}
@@ -121,6 +207,125 @@ export default function BlockchainExplorer() {
       </header>
 
       <main className="max-w-[1400px] mx-auto px-6 py-12 space-y-12">
+        {/* Transaction Verification */}
+        <section
+          ref={searchSectionRef}
+          className="rounded-3xl border border-[#1a1a1a] bg-[#0a0a0a] px-6 py-10 text-center shadow-[0_24px_80px_rgba(0,0,0,0.35)] md:px-10"
+        >
+          <h2 className="mb-2 text-3xl font-black uppercase tracking-tighter md:text-4xl">Verify a Transaction</h2>
+          <p className="mx-auto mb-8 max-w-2xl text-sm text-muted-foreground md:text-base">
+            Enter any Transaction ID from a LoanEase sanction letter to verify its authenticity.
+          </p>
+
+          <div className="mx-auto flex max-w-3xl flex-col gap-3 sm:flex-row sm:gap-0">
+            <input
+              id="txnSearchInput"
+              type="text"
+              value={txnSearch}
+              onChange={(event) => setTxnSearch(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  void verifyTransaction();
+                }
+              }}
+              placeholder="TXN-5ED5818EE05D"
+              spellCheck={false}
+              autoComplete="off"
+              className="w-full rounded-md border border-[#2a2a2a] bg-[#111] px-5 py-4 font-mono text-[15px] tracking-[0.08em] text-[hsl(47,100%,50%)] outline-none transition-colors placeholder:text-[#333] focus:border-[hsl(47,100%,50%)] sm:rounded-r-none"
+            />
+            <button
+              id="txnVerifyBtn"
+              type="button"
+              onClick={() => void verifyTransaction()}
+              disabled={txnLoading}
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-[hsl(47,100%,50%)] px-8 py-4 text-sm font-bold tracking-[0.2em] text-black transition-colors hover:bg-[#e6b800] disabled:cursor-not-allowed disabled:bg-[#333] disabled:text-[#666] sm:rounded-l-none"
+            >
+              <Search className="h-4 w-4" />
+              {txnLoading ? "VERIFYING..." : "VERIFY"}
+            </button>
+          </div>
+
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground">
+            <span>Examples:</span>
+            <button
+              type="button"
+              onClick={() => {
+                setTxnSearch("TXN-5ED5818EE05D");
+                void verifyTransaction("TXN-5ED5818EE05D");
+              }}
+              className="rounded-full border border-white/10 bg-white/5 px-3 py-1 font-mono text-[13px] text-[hsl(47,100%,50%)] transition-colors hover:border-[hsl(47,100%,50%)]"
+            >
+              TXN-5ED5818EE05D
+            </button>
+          </div>
+
+          <div ref={resultSectionRef} className="mt-8">
+            {verificationResult && isAuthentic && (
+              <div className="result-authentic rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-6 text-left">
+                <div className="result-status flex items-center gap-3 text-2xl font-black uppercase tracking-tight text-emerald-400 md:text-3xl">
+                  <CheckCircle2 className="h-7 w-7" />
+                  Transaction Verified
+                </div>
+                <p className="mt-2 text-sm text-zinc-300">
+                  This transaction is authentic and recorded in the immutable LoanEase ledger.
+                </p>
+                <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {renderResultField("Transaction ID", verificationResult.txn_id)}
+                  {renderResultField("Status", verificationResult.status)}
+                  {renderResultField("Block", verificationResult.block_index !== undefined ? `#${verificationResult.block_index}` : "—")}
+                  {renderResultField("Applicant", verificationResult.applicant_name || "—")}
+                  {renderResultField("Loan Amount", formatCurrency(verificationResult.loan_amount))}
+                  {renderResultField("Interest Rate", verificationResult.interest_rate !== undefined && verificationResult.interest_rate !== null ? `${verificationResult.interest_rate}% p.a.` : "—")}
+                  {renderResultField("Sanction Date", verificationResult.sanction_date ? formatBlockTime(verificationResult.sanction_date) : "—")}
+                  {renderResultField("Block Hash", verificationResult.block_hash ? `${verificationResult.block_hash.slice(0, 20)}...` : "—")}
+                  {renderResultField("Merkle Root", verificationResult.merkle_root ? `${verificationResult.merkle_root.slice(0, 20)}...` : "—")}
+                  {renderResultField("Chain Valid", verificationResult.chain_valid ? "Yes" : "No")}
+                  {renderResultField("Block Hash Valid", verificationResult.block_hash_valid ? "Yes" : "No")}
+                  {renderResultField("Merkle Valid", verificationResult.merkle_root_valid ? "Yes" : "No")}
+                </div>
+                <div className="mt-4 rounded-md border border-white/10 bg-[#0d0d0d] p-3 text-xs text-zinc-500">
+                  ✓ Chain integrity verified to Block #{verificationResult.block_index} &nbsp; ✓ Block hash valid &nbsp; ✓ Merkle tree intact
+                </div>
+              </div>
+            )}
+
+            {verificationResult && isNotFound && (
+              <div className="result-not-found rounded-2xl border border-red-500/30 bg-red-500/10 p-6 text-left">
+                <div className="result-status flex items-center gap-3 text-2xl font-black uppercase tracking-tight text-red-400 md:text-3xl">
+                  <X className="h-7 w-7" />
+                  {verificationResult.status === "ERROR" ? "Verification Failed" : "Not Found"}
+                </div>
+                <p className="mt-2 text-sm text-zinc-300">
+                  {verificationResult.message}
+                </p>
+                <div className="mt-4 rounded-md border border-white/10 bg-[#0d0d0d] p-4 text-sm text-zinc-400">
+                  This could mean the document is forged, the Transaction ID was altered, or the loan was not processed through LoanEase.
+                </div>
+              </div>
+            )}
+
+            {verificationResult && isTampered && (
+              <div className="result-tampered rounded-2xl border border-amber-500/30 bg-amber-500/10 p-6 text-left">
+                <div className="result-status flex items-center gap-3 text-2xl font-black uppercase tracking-tight text-amber-400 md:text-3xl">
+                  <AlertCircle className="h-7 w-7" />
+                  Integrity Failure
+                </div>
+                <p className="mt-2 text-sm text-zinc-300">
+                  Transaction found but blockchain integrity check failed. This document may have been tampered with after issuance.
+                </p>
+                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {renderResultField("Transaction ID", verificationResult.txn_id)}
+                  {renderResultField("Status", verificationResult.status)}
+                  {renderResultField("Block", verificationResult.block_index !== undefined ? `#${verificationResult.block_index}` : "—")}
+                  {renderResultField("Chain Valid", verificationResult.chain_valid ? "Yes" : "No")}
+                  {renderResultField("Block Hash Valid", verificationResult.block_hash_valid ? "Yes" : "No")}
+                  {renderResultField("Merkle Valid", verificationResult.merkle_root_valid ? "Yes" : "No")}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+
         {/* Stats Row */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           {[

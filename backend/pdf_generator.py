@@ -207,7 +207,7 @@ Digital Loan Processing Unit
             self.styles['VerificationStyle']
         ))
         story.append(Paragraph(
-            f"Verify at: loanease.app/verify/{loan_data.get('sanction_reference', 'LE-2026-XXXXX')}", 
+            f"Verify this document at: http://localhost:8080/blockchain/explorer?verify={loan_data.get('transaction_id') or loan_data.get('sanction_reference', 'LE-2026-XXXXX')}", 
             self.styles['VerificationStyle']
         ))
         

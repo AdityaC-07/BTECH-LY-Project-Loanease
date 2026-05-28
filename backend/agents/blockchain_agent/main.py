@@ -109,10 +109,157 @@ class ChainResponse(BaseModel):
     chain_length: int
     blocks: List[Dict[str, Any]]
 
+
+class TransactionVerificationResponse(BaseModel):
+    found: bool
+    authentic: bool
+    txn_id: str
+    status: str
+    message: str
+    risk_level: str
+    verified_at: str
+    applicant_name: Optional[str] = None
+    pan_masked: Optional[str] = None
+    loan_amount: Optional[float] = None
+    interest_rate: Optional[float] = None
+    sanction_date: Optional[str] = None
+    block_index: Optional[int] = None
+    block_hash: Optional[str] = None
+    merkle_root: Optional[str] = None
+    nonce: Optional[int] = None
+    chain_valid: bool = False
+    chain_valid_to_block: bool = False
+    block_hash_valid: bool = False
+    merkle_root_valid: bool = False
+    matched_field: Optional[str] = None
+
+
+class TransactionVerificationBatchRequest(BaseModel):
+    transaction_ids: List[str]
+
+
+class TransactionVerificationBatchResponse(BaseModel):
+    results: List[TransactionVerificationResponse]
+    summary: Dict[str, int]
+
 # ── LEDGER HELPERS ─────────────────────────────────────────────────
 
 def ledger_ready() -> bool:
     return len(ledger.chain) > 0
+
+
+def _normalize_txn_value(value: Any) -> str:
+    return str(value or "").strip().upper()
+
+
+def _mask_name(name: str | None) -> str | None:
+    if not name:
+        return None
+    cleaned = name.strip()
+    if len(cleaned) <= 2:
+        return cleaned[0] + "***"
+    return f"{cleaned[:6]}****"
+
+
+def _mask_pan(pan_value: Any) -> str | None:
+    pan = str(pan_value or "").strip()
+    if not pan:
+        return None
+    if len(pan) <= 5:
+        return pan[:1] + "*****"
+    return f"{pan[:5]}*****"
+
+
+def _find_transaction_in_ledger(txn_id: str):
+    normalized = _normalize_txn_value(txn_id)
+
+    for block in ledger.chain:
+        tx = getattr(block, "transaction_data", {}) or {}
+        for field_name in ("transaction_id", "txn_id", "reference", "sanction_reference"):
+            if _normalize_txn_value(tx.get(field_name)) == normalized:
+                return block, tx, field_name
+
+    return None, None, None
+
+
+def _is_chain_valid_to_block(block_index: int) -> bool:
+    for i in range(1, block_index + 1):
+        current = ledger.chain[i]
+        previous = ledger.chain[i - 1]
+
+        if current.hash != ledger.compute_block_hash(current):
+            return False
+        if current.previous_hash != previous.hash:
+            return False
+
+    return True
+
+
+def _build_transaction_verification(txn_id: str) -> dict[str, Any]:
+    verified_at = datetime.now(timezone.utc).isoformat()
+    txn_id_clean = _normalize_txn_value(txn_id)
+
+    found_block, found_tx, matched_field = _find_transaction_in_ledger(txn_id_clean)
+    if not found_block:
+        return {
+            "found": False,
+            "authentic": False,
+            "txn_id": txn_id_clean,
+            "status": "NOT_FOUND",
+            "message": (
+                f"Transaction ID '{txn_id}' does not exist in the LoanEase ledger. "
+                "This may be forged or belong to a different system."
+            ),
+            "risk_level": "HIGH",
+            "verified_at": verified_at,
+            "chain_valid": False,
+            "chain_valid_to_block": False,
+            "block_hash_valid": False,
+            "merkle_root_valid": False,
+            "matched_field": None,
+        }
+
+    chain_valid_to_block = _is_chain_valid_to_block(found_block.index)
+    block_hash_valid = found_block.hash == ledger.compute_block_hash(found_block)
+    merkle_root_valid = found_block.merkle_root == MerkleTree.compute_root([found_tx])
+    authentic = chain_valid_to_block and block_hash_valid and merkle_root_valid
+
+    applicant_name = found_tx.get("applicant_name") or found_tx.get("name")
+    pan_value = found_tx.get("pan_number") or found_tx.get("pan_masked")
+    loan_amount = found_tx.get("loan_amount")
+    interest_rate = found_tx.get("interest_rate") or found_tx.get("sanctioned_rate")
+    sanction_date = found_tx.get("timestamp") or found_block.timestamp
+
+    return {
+        "found": True,
+        "authentic": authentic,
+        "txn_id": txn_id_clean,
+        "status": "VERIFIED" if authentic else "TAMPERED",
+        "message": (
+            f"Transaction {txn_id} is AUTHENTIC and recorded at Block #{found_block.index} in the LoanEase ledger."
+            if authentic
+            else (
+                f"WARNING: Transaction {txn_id} was found but blockchain integrity check FAILED. "
+                "This document may be tampered."
+            )
+        ),
+        "risk_level": "LOW" if authentic else "HIGH",
+        "verified_at": verified_at,
+        "applicant_name": _mask_name(applicant_name),
+        "pan_masked": _mask_pan(pan_value),
+        "loan_amount": loan_amount,
+        "interest_rate": interest_rate,
+        "sanction_date": sanction_date,
+        "block_index": found_block.index,
+        "block_hash": found_block.hash,
+        "merkle_root": getattr(found_block, "merkle_root", None),
+        "nonce": found_block.nonce,
+        "chain_valid": chain_valid_to_block,
+        "chain_valid_to_block": chain_valid_to_block,
+        "block_hash_valid": block_hash_valid,
+        "merkle_root_valid": merkle_root_valid,
+        "matched_field": matched_field,
+    }
 
 def sign_data(data: str) -> str:
     """Sign data with private key"""
@@ -191,6 +338,7 @@ async def create_sanction_letter(request: SanctionRequest):
         emi_result = calculate_emi(request.loan_amount, request.interest_rate, request.tenure_years)
 
         try:
+            verification_url = f"http://localhost:8080/blockchain/explorer?verify={transaction_id}"
             pdf_bytes = generate_sanction_letter(
                 applicant_name=request.applicant_name,
                 pan_number=request.pan_number,
@@ -199,6 +347,7 @@ async def create_sanction_letter(request: SanctionRequest):
                 tenure_years=request.tenure_years,
                 emi=emi_result["monthly_emi"],
                 application_id=transaction_id,
+                verification_url=verification_url,
             )
             
             # Store PDF for later retrieval
@@ -253,46 +402,30 @@ async def create_sanction_letter(request: SanctionRequest):
         logger.error(f"Sanction letter creation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Sanction letter creation failed: {str(e)}")
 
-@router.get("/verify/{reference_id}", response_model=VerifyResponse)
-async def verify_document(reference_id: str):
-    """Verify document on blockchain"""
-    try:
-        # Find block with this transaction ID
-        target_block = ledger.get_transaction(reference_id)
-        
-        if not target_block:
-            raise HTTPException(status_code=404, detail="Document not found")
-        
-        # Verify signature
-        data_string = json.dumps(target_block.transaction_data, sort_keys=True)
-        signature = target_block.transaction_data.get("signature")
-        
-        signature_valid = False
-        if signature:
-            signature_valid = verify_signature(data_string, signature)
-        
-        # Verify blockchain integrity
-        chain_valid = ledger.is_chain_valid()
-        
-        verification_details = {
-            "signature_valid": signature_valid,
-            "blockchain_integrity": chain_valid,
-            "block_number": target_block.index,
-            "timestamp": target_block.timestamp,
-            "confirmations": len(ledger.chain) - target_block.index
-        }
-        
-        return VerifyResponse(
-            valid=signature_valid and chain_valid,
-            block_data=target_block.data,
-            verification_details=verification_details
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Verification failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
+@router.get("/verify/{txn_id}", response_model=TransactionVerificationResponse)
+@limiter.limit("30/minute")
+async def verify_transaction(request: Request, txn_id: str):
+    """Public transaction-ID verification across the full ledger chain."""
+    return TransactionVerificationResponse(**_build_transaction_verification(txn_id))
+
+
+@router.post("/verify-batch", response_model=TransactionVerificationBatchResponse)
+@limiter.limit("10/minute")
+async def verify_transaction_batch(request: Request, payload: TransactionVerificationBatchRequest):
+    """Verify multiple transaction IDs in one call."""
+    results = [_build_transaction_verification(txn_id) for txn_id in payload.transaction_ids]
+
+    summary = {
+        "total": len(results),
+        "authentic": sum(1 for result in results if result.get("authentic")),
+        "not_found": sum(1 for result in results if not result.get("found")),
+        "tampered": sum(1 for result in results if result.get("found") and not result.get("authentic")),
+    }
+
+    return TransactionVerificationBatchResponse(
+        results=[TransactionVerificationResponse(**result) for result in results],
+        summary=summary,
+    )
 
 @router.get("/chain", response_model=ChainResponse)
 async def get_blockchain():

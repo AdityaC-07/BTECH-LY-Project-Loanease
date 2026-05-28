@@ -69,6 +69,7 @@ class Settings(BaseSettings):    # Groq
     FAST2SMS_API_KEY: str = ""
     TWILIO_ACCOUNT_SID: str = ""
     TWILIO_AUTH_TOKEN: str = ""
+    TWILIO_VERIFY_SERVICE_SID: str = ""
     TWILIO_FROM_NUMBER: str = ""
     TEXTBELT_API_KEY: str = ""
     SMS_WEBHOOK_URL: str = ""

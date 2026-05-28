@@ -1,285 +1,275 @@
-from __future__ import annotations
-
 import logging
-import re
-import random
-import string
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from threading import Lock
+import os
 
-import httpx
+from fastapi import HTTPException
+from twilio.base.exceptions import TwilioRestException
+from twilio.rest import Client
 
-from core.config import settings
+logger = logging.getLogger("otp")
 
-logger = logging.getLogger("loanease.otp")
-
-OTP_LENGTH = 6
-OTP_TTL_MINUTES = int(getattr(settings, "OTP_EXPIRY_MINUTES", 5))
-MAX_VERIFY_ATTEMPTS = 3
-MAX_RESENDS = 3
+_client = None
+_service_sid = None
+_demo_store: dict[str, str] = {}
 
 
-@dataclass
-class OtpRecord:
-    mobile: str
-    otp: str
-    expires_at: datetime
-    attempts: int = 0
-    resend_count: int = 0
-    verified: bool = False
-    locked: bool = False
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+def _verify_payload(
+    *,
+    session_id: str,
+    verified: bool,
+    mobile: str,
+    attempts_remaining: int,
+    terminated: bool = False,
+    reason: str | None = None,
+    message: str | None = None,
+    method: str | None = None,
+    zero_knowledge: bool | None = None,
+    demo_mode: bool | None = None,
+    twilio_status: str | None = None,
+) -> dict:
+    payload = {
+        "session_id": session_id,
+        "verified": verified,
+        "terminated": terminated,
+        "attempts_remaining": attempts_remaining,
+        "mobile_last4": mobile[-4:],
+        "expires_in_seconds": 600,
+        "reason": reason,
+        "message": message,
+        "method": method,
+        "zero_knowledge": zero_knowledge,
+    }
+
+    if demo_mode is not None:
+        payload["demo_mode"] = demo_mode
+    if twilio_status is not None:
+        payload["twilio_status"] = twilio_status
+
+    return payload
 
 
-class OtpStore:
-    def __init__(self) -> None:
-        self._records: dict[str, OtpRecord] = {}
-        self._lock = Lock()
+def init_twilio() -> bool:
+    global _client, _service_sid
 
-    def _generate_otp(self) -> str:
-        return "".join(random.choices(string.digits, k=OTP_LENGTH))
+    sid = os.getenv("TWILIO_ACCOUNT_SID")
+    token = os.getenv("TWILIO_AUTH_TOKEN")
+    _service_sid = os.getenv("TWILIO_VERIFY_SERVICE_SID")
 
-    def _create_record(self, session_id: str, mobile: str) -> OtpRecord:
-        record = OtpRecord(
-            mobile=mobile,
-            otp=self._generate_otp(),
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=OTP_TTL_MINUTES),
-        )
-        self._records[session_id] = record
-        return record
-
-    def send_otp(self, session_id: str, mobile: str, *, force_new: bool = True) -> dict:
-        with self._lock:
-            record = self._records.get(session_id)
-            if record is None or force_new:
-                record = self._create_record(session_id, mobile)
-            else:
-                record.mobile = mobile
-                record.updated_at = datetime.now(timezone.utc)
-                record.expires_at = datetime.now(timezone.utc) + timedelta(minutes=OTP_TTL_MINUTES)
-
-        delivered = self._dispatch_otp(record.mobile, record.otp)
-        return {
-            "session_id": session_id,
-            "mobile_last4": record.mobile[-4:],
-            "expires_in_seconds": OTP_TTL_MINUTES * 60,
-            "resend_count": record.resend_count,
-            "sent": delivered,
-            "demo_otp": record.otp if self._use_demo_provider() else None,
-        }
-
-    def resend_otp(self, session_id: str) -> dict:
-        with self._lock:
-            record = self._records.get(session_id)
-            if record is None:
-                raise KeyError("OTP session not initialized")
-            if record.resend_count >= MAX_RESENDS:
-                raise ValueError("Maximum OTP resend limit reached")
-            record.otp = self._generate_otp()
-            record.resend_count += 1
-            record.attempts = 0
-            record.locked = False
-            record.verified = False
-            record.expires_at = datetime.now(timezone.utc) + timedelta(minutes=OTP_TTL_MINUTES)
-            record.updated_at = datetime.now(timezone.utc)
-            otp = record.otp
-            mobile = record.mobile
-
-        delivered = self._dispatch_otp(mobile, otp)
-        return {
-            "session_id": session_id,
-            "mobile_last4": mobile[-4:],
-            "expires_in_seconds": OTP_TTL_MINUTES * 60,
-            "resend_count": self._records[session_id].resend_count,
-            "sent": delivered,
-            "demo_otp": otp if self._use_demo_provider() else None,
-        }
-
-    def verify_otp(self, session_id: str, otp_input: str) -> dict:
-        with self._lock:
-            record = self._records.get(session_id)
-            if record is None:
-                raise KeyError("OTP session not initialized")
-
-            now = datetime.now(timezone.utc)
-            if record.locked:
-                return self._verification_response(record, verified=False, terminated=True, reason="OTP locked")
-            if now > record.expires_at:
-                record.locked = True
-                return self._verification_response(record, verified=False, terminated=True, reason="OTP expired")
-
-            normalized = re_digits(otp_input)
-            if normalized == record.otp:
-                record.verified = True
-                record.locked = True
-                return self._verification_response(record, verified=True, terminated=False)
-
-            record.attempts += 1
-            if record.attempts >= MAX_VERIFY_ATTEMPTS:
-                record.locked = True
-                return self._verification_response(record, verified=False, terminated=True, reason="Maximum attempts exceeded")
-
-            return self._verification_response(record, verified=False, terminated=False, reason="OTP mismatch")
-
-    def _verification_response(self, record: OtpRecord, *, verified: bool, terminated: bool, reason: str | None = None) -> dict:
-        attempts_remaining = max(0, MAX_VERIFY_ATTEMPTS - record.attempts)
-        return {
-            "verified": verified,
-            "terminated": terminated,
-            "attempts_remaining": attempts_remaining,
-            "mobile_last4": record.mobile[-4:],
-            "expires_in_seconds": max(0, int((record.expires_at - datetime.now(timezone.utc)).total_seconds())),
-            "reason": reason,
-        }
-
-    def _dispatch_otp(self, mobile: str, otp: str) -> bool:
-        provider = (getattr(settings, "SMS_PROVIDER", "").strip().lower() or "auto")
-
-        if provider in {"demo", "mock"}:
-            logger.info("DEMO OTP for XXXXXX%s: %s", mobile[-4:], otp)
-            return True
-
-        if provider == "auto":
-            for candidate in ("fast2sms", "textbelt", "twilio", "webhook"):
-                delivered = self._dispatch_with_provider(candidate, mobile, otp)
-                if delivered is not None:
-                    return delivered
-            logger.warning("No usable SMS provider configured")
-            return False
-
-        delivered = self._dispatch_with_provider(provider, mobile, otp)
-        if delivered is not None:
-            return delivered
-
-        logger.warning("Unsupported SMS provider '%s'", provider)
+    if not all([sid, token, _service_sid]):
+        logger.warning("Twilio not configured - OTP will run in demo mode only")
         return False
 
-    def _use_demo_provider(self) -> bool:
-        provider = (getattr(settings, "SMS_PROVIDER", "").strip().lower() or "auto")
-        return provider in {"demo", "mock"}
+    _client = Client(sid, token)
+    logger.info("Twilio Verify ready")
+    return True
 
-    def _dispatch_with_provider(self, provider: str, mobile: str, otp: str) -> bool | None:
-        if provider == "fast2sms":
-            api_key = getattr(settings, "FAST2SMS_API_KEY", "")
-            if not api_key:
-                return None
-            return self._send_fast2sms(mobile, otp)
-        if provider == "textbelt":
-            api_key = getattr(settings, "TEXTBELT_API_KEY", "")
-            if not api_key:
-                return None
-            return self._send_textbelt(mobile, otp)
-        if provider == "twilio":
-            account_sid = getattr(settings, "TWILIO_ACCOUNT_SID", "")
-            auth_token = getattr(settings, "TWILIO_AUTH_TOKEN", "")
-            from_number = getattr(settings, "TWILIO_FROM_NUMBER", "")
-            if not account_sid or not auth_token or not from_number:
-                return None
-            return self._send_twilio(mobile, otp)
-        if provider == "webhook":
-            webhook_url = getattr(settings, "SMS_WEBHOOK_URL", "")
-            if not webhook_url:
-                return None
-            return self._send_webhook(mobile, otp)
 
-        return None
+def twilio_ready() -> bool:
+    return _client is not None and _service_sid is not None
 
-    def _send_fast2sms(self, mobile: str, otp: str) -> bool:
-        api_key = getattr(settings, "FAST2SMS_API_KEY", "")
-        if not api_key:
-            logger.warning("FAST2SMS_API_KEY missing; cannot deliver OTP")
-            return False
 
-        payload = {
-            "route": "otp",
-            "variables_values": otp,
-            "numbers": mobile,
-        }
-        headers = {"authorization": api_key, "accept": "application/json"}
+def _format_india_number(mobile: str) -> str:
+    """
+    Format mobile number for Twilio.
+    Twilio requires E.164 format: +91XXXXXXXXXX
+    """
+    digits = "".join(c for c in mobile if c.isdigit())
 
-        try:
-            with httpx.Client(timeout=15) as client:
-                response = client.post("https://www.fast2sms.com/dev/bulkV2", data=payload, headers=headers)
-                response.raise_for_status()
-            return True
-        except Exception as exc:
-            logger.error("Fast2SMS OTP dispatch failed: %s", str(exc))
-            return False
+    if digits.startswith("91") and len(digits) == 12:
+        digits = digits[2:]
 
-    def _send_textbelt(self, mobile: str, otp: str) -> bool:
-        api_key = getattr(settings, "TEXTBELT_API_KEY", "")
-        if not api_key:
-            logger.warning("TEXTBELT_API_KEY missing; cannot deliver OTP")
-            return False
+    if len(digits) != 10 or digits[0] not in "6789":
+        raise ValueError(f"Invalid Indian mobile: {mobile}")
 
-        payload = {
-            "phone": mobile,
-            "message": f"Your LoanEase OTP is {otp}. It expires in {OTP_TTL_MINUTES} minutes.",
-            "key": api_key,
+    return f"+91{digits}"
+
+
+async def send(session_id: str, mobile: str) -> dict:
+    """
+    Send OTP via Twilio Verify.
+    Twilio handles OTP generation, storage, expiry, and retry automatically.
+    """
+    demo_mode = os.getenv("DEMO_MODE", "false").lower() == "true"
+
+    if demo_mode or not twilio_ready():
+        import random
+
+        demo_otp = str(random.randint(100000, 999999))
+        _demo_store[session_id] = demo_otp
+
+        logger.info("DEMO OTP [%s]: %s", session_id, demo_otp)
+
+        return {
+            "session_id": session_id,
+            "sent": True,
+            "mobile_last4": mobile[-4:],
+            "expires_in_seconds": 600,
+            "demo_mode": True,
+            "demo_otp": demo_otp,
+            "message": f"Demo mode active. Your OTP: {demo_otp}",
         }
 
-        try:
-            with httpx.Client(timeout=15) as client:
-                response = client.post("https://textbelt.com/text", data=payload)
-                response.raise_for_status()
-                body = response.json()
-            return bool(body.get("success"))
-        except Exception as exc:
-            logger.error("Textbelt OTP dispatch failed: %s", str(exc))
-            return False
+    try:
+        e164 = _format_india_number(mobile)
+        verification = _client.verify.v2.services(_service_sid).verifications.create(
+            to=e164,
+            channel="sms",
+        )
 
-    def _send_webhook(self, mobile: str, otp: str) -> bool:
-        webhook_url = getattr(settings, "SMS_WEBHOOK_URL", "")
-        if not webhook_url:
-            logger.warning("SMS_WEBHOOK_URL missing; cannot deliver OTP")
-            return False
+        logger.info(
+            "OTP sent via Twilio: status=%s, to=+91XXXXXX%s",
+            verification.status,
+            mobile[-4:],
+        )
 
-        payload = {
-            "phone": mobile,
-            "message": f"Your LoanEase OTP is {otp}. It expires in {OTP_TTL_MINUTES} minutes.",
-            "otp": otp,
+        return {
+            "session_id": session_id,
+            "sent": True,
+            "mobile_last4": mobile[-4:],
+            "expires_in_seconds": 600,
+            "twilio_status": verification.status,
+            "message": f"OTP sent to mobile ending in {mobile[-4:]}. Valid for 10 minutes.",
         }
 
-        try:
-            with httpx.Client(timeout=15) as client:
-                response = client.post(webhook_url, json=payload)
-                response.raise_for_status()
-            return True
-        except Exception as exc:
-            logger.error("Webhook OTP dispatch failed: %s", str(exc))
-            return False
+    except TwilioRestException as exc:
+        logger.error("Twilio error: code=%s, msg=%s", exc.code, exc.msg)
 
-    def _send_twilio(self, mobile: str, otp: str) -> bool:
-        account_sid = getattr(settings, "TWILIO_ACCOUNT_SID", "")
-        auth_token = getattr(settings, "TWILIO_AUTH_TOKEN", "")
-        from_number = getattr(settings, "TWILIO_FROM_NUMBER", "")
-        if not account_sid or not auth_token or not from_number:
-            logger.warning("Twilio credentials missing; cannot deliver OTP")
-            return False
-
-        message = f"Your LoanEase OTP is {otp}. It expires in {OTP_TTL_MINUTES} minutes."
-        payload = {
-            "To": f"+91{mobile}",
-            "From": from_number,
-            "Body": message,
+        error_messages = {
+            60200: "Invalid phone number format",
+            60203: "Max send attempts reached. Wait 10 minutes.",
+            60212: "Too many concurrent requests",
+            21608: "Number not verified (trial account restriction). Use a verified number.",
         }
 
-        try:
-            with httpx.Client(timeout=15, auth=(account_sid, auth_token)) as client:
-                response = client.post(
-                    f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json",
-                    data=payload,
-                )
-                response.raise_for_status()
-            return True
-        except Exception as exc:
-            logger.error("Twilio OTP dispatch failed: %s", str(exc))
-            return False
+        user_message = error_messages.get(exc.code, "SMS delivery failed. Please check your number.")
+
+        import random
+
+        fallback_otp = str(random.randint(100000, 999999))
+        _demo_store[session_id] = fallback_otp
+
+        return {
+            "session_id": session_id,
+            "sent": False,
+            "mobile_last4": mobile[-4:],
+            "error_code": exc.code,
+            "message": user_message,
+            "fallback_demo_otp": fallback_otp,
+            "demo_otp": fallback_otp,
+            "fallback_active": True,
+        }
+
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-def re_digits(value: str) -> str:
-    return "".join(ch for ch in value if ch.isdigit())
+async def verify(session_id: str, entered_otp: str, mobile: str) -> dict:
+    """
+    Verify OTP via Twilio Verify.
+    Twilio checks the OTP, handles expiry and attempt limits automatically.
+    """
+    demo_mode = os.getenv("DEMO_MODE", "false").lower() == "true"
+
+    if demo_mode or not twilio_ready():
+        expected = _demo_store.get(session_id)
+
+        if not expected:
+            return _verify_payload(
+                session_id=session_id,
+                verified=False,
+                mobile=mobile,
+                attempts_remaining=0,
+                reason="NOT_FOUND",
+                message="OTP expired. Request a new one.",
+                demo_mode=True,
+            )
+
+        if entered_otp.strip() == expected:
+            _demo_store.pop(session_id, None)
+            return _verify_payload(
+                session_id=session_id,
+                verified=True,
+                mobile=mobile,
+                attempts_remaining=3,
+                message="Mobile verified.",
+                demo_mode=True,
+            )
+
+        return _verify_payload(
+            session_id=session_id,
+            verified=False,
+            mobile=mobile,
+            attempts_remaining=2,
+            reason="WRONG_OTP",
+            message="Incorrect OTP. Please try again.",
+            demo_mode=True,
+        )
+
+    try:
+        e164 = _format_india_number(mobile)
+        check = _client.verify.v2.services(_service_sid).verification_checks.create(
+            to=e164,
+            code=entered_otp.strip(),
+        )
+
+        logger.info("OTP verify: status=%s", check.status)
+
+        if check.status == "approved":
+            return _verify_payload(
+                session_id=session_id,
+                verified=True,
+                mobile=mobile,
+                attempts_remaining=3,
+                message="Mobile number verified successfully.",
+                twilio_status=check.status,
+            )
+
+        return _verify_payload(
+            session_id=session_id,
+            verified=False,
+            mobile=mobile,
+            attempts_remaining=2,
+            reason="WRONG_OTP",
+            message="Incorrect OTP. Please try again.",
+            twilio_status=check.status,
+        )
+
+    except TwilioRestException as exc:
+        logger.error("Twilio verify error: code=%s", exc.code)
+
+        if exc.code == 60202:
+            return _verify_payload(
+                session_id=session_id,
+                verified=False,
+                mobile=mobile,
+                attempts_remaining=0,
+                terminated=True,
+                reason="MAX_ATTEMPTS",
+                message="Maximum verification attempts exceeded. Application terminated for security.",
+            )
+
+        if exc.code == 60203:
+            return _verify_payload(
+                session_id=session_id,
+                verified=False,
+                mobile=mobile,
+                attempts_remaining=0,
+                reason="EXPIRED",
+                message="OTP has expired. Please request a new one.",
+            )
+
+        return _verify_payload(
+            session_id=session_id,
+            verified=False,
+            mobile=mobile,
+            attempts_remaining=0,
+            reason="ERROR",
+            message="Verification failed. Please try again.",
+        )
 
 
-otp_store = OtpStore()
+async def resend(session_id: str, mobile: str) -> dict:
+    """
+    Twilio Verify handles rate limiting automatically.
+    Just call send() again.
+    """
+    return await send(session_id, mobile)

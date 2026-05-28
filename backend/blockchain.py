@@ -5,6 +5,7 @@ import json
 import hashlib
 import base64
 import uuid
+import logging
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
@@ -13,6 +14,10 @@ from pathlib import Path
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption, PublicFormat
+
+
+CHAIN_FILE = Path("data/blockchain.json")
+logger = logging.getLogger("loanease.blockchain")
 
 
 class MerkleTree:
@@ -97,7 +102,10 @@ class Blockchain:
     
     def __init__(self):
         self.chain: List[Block] = []
-        self.create_genesis_block()
+        self.DIFFICULTY = 2
+        self._load_chain()
+        if not self.chain:
+            self.create_genesis_block()
     
     def create_genesis_block(self):
         """Create the first block in the chain"""
@@ -117,6 +125,50 @@ class Blockchain:
             hash=self.compute_hash(json.dumps(genesis_data), "0" * 64, 0, merkle_root)
         )
         self.chain.append(genesis_block)
+        self._save_chain()
+
+    def _save_chain(self):
+        try:
+            CHAIN_FILE.parent.mkdir(parents=True, exist_ok=True)
+            chain_data = []
+            for block in self.chain:
+                chain_data.append({
+                    "index": block.index,
+                    "timestamp": block.timestamp,
+                    "transaction_data": block.transaction_data,
+                    "previous_hash": block.previous_hash,
+                    "hash": block.hash,
+                    "nonce": block.nonce,
+                    "merkle_root": getattr(block, "merkle_root", None),
+                })
+
+            with open(CHAIN_FILE, "w", encoding="utf-8") as file:
+                json.dump(chain_data, file, default=str, indent=2)
+
+            logger.info("Chain saved: %s blocks", len(self.chain))
+        except Exception as exc:
+            logger.error("Chain save failed: %s", exc)
+
+    def _load_chain(self):
+        try:
+            if not CHAIN_FILE.exists():
+                return
+
+            with open(CHAIN_FILE, "r", encoding="utf-8") as file:
+                chain_data = json.load(file)
+
+            self.chain = []
+            for block_data in chain_data:
+                self.chain.append(Block(**block_data))
+
+            if self.chain and self.is_chain_valid():
+                logger.info("Chain loaded: %s blocks, valid", len(self.chain))
+            else:
+                logger.error("Loaded chain INVALID - starting fresh")
+                self.chain = []
+        except Exception as exc:
+            logger.warning("Chain load failed: %s", exc)
+            self.chain = []
     
     def get_latest_block(self) -> Block:
         """Get the most recent block in the chain"""
@@ -142,13 +194,13 @@ class Blockchain:
         # Simple proof of work (find nonce that makes hash start with '00')
         new_block.hash = self.mine_block(new_block)
         self.chain.append(new_block)
+        self._save_chain()
         
         return new_block
     
     def mine_block(self, block: Block) -> str:
         """Simple proof-of-work: find nonce that makes hash start with '00'"""
-        difficulty = 2  # Hash must start with '00'
-        target = "0" * difficulty
+        target = "0" * self.DIFFICULTY
         
         while True:
             block_hash = self.compute_block_hash(block)
@@ -236,6 +288,7 @@ class Blockchain:
         """Reset the blockchain to only the genesis block. Returns blocks cleared."""
         blocks_cleared = max(0, len(self.chain) - 1)
         self.chain = [self.chain[0]]  # Keep only genesis
+        self._save_chain()
         return blocks_cleared
 
 

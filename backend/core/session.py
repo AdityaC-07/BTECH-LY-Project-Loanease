@@ -1,7 +1,14 @@
+import json
+import logging
+from pathlib import Path
 from threading import Lock
 from datetime import datetime, timedelta
 from typing import Optional
 import uuid
+
+
+logger = logging.getLogger("loanease.session")
+SESSION_FILE = Path("data/sessions.json")
 
 class SessionStore:
     def __init__(self):
@@ -9,6 +16,25 @@ class SessionStore:
         self._global_logs = []
         self._MAX_GLOBAL_LOGS = 100
         self._lock = Lock()
+        self._load_from_disk()
+
+    def _load_from_disk(self):
+        try:
+            if SESSION_FILE.exists():
+                with open(SESSION_FILE, "r", encoding="utf-8") as file:
+                    self._sessions = json.load(file)
+                logger.info("Loaded %s sessions from disk", len(self._sessions))
+        except Exception as exc:
+            logger.warning("Session load failed: %s", exc)
+            self._sessions = {}
+
+    def _save_to_disk(self):
+        try:
+            SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(SESSION_FILE, "w", encoding="utf-8") as file:
+                json.dump(self._sessions, file, default=str, indent=2)
+        except Exception as exc:
+            logger.warning("Session save failed: %s", exc)
     
     def create(self, initial_data: dict) -> str:
         session_id = str(uuid.uuid4())[:8].upper()
@@ -21,6 +47,7 @@ class SessionStore:
                 "agent_log": [],
                 "data": initial_data
             }
+            self._save_to_disk()
         return session_id
 
     def get_or_create(self, session_id: str, initial_data: Optional[dict] = None) -> dict:
@@ -39,6 +66,7 @@ class SessionStore:
                 "agent_log": payload.get("agent_log", []),
                 "data": payload.get("data", {}),
             }
+            self._save_to_disk()
             return self._sessions[session_id]
     
     def get(self, session_id: str) -> Optional[dict]:
@@ -57,6 +85,7 @@ class SessionStore:
         with self._lock:
             if session_id in self._sessions:
                 self._sessions[session_id]["stage"] = stage
+                self._save_to_disk()
     
     def log_agent(self, session_id: str, agent_result: dict):
         with self._lock:
@@ -79,6 +108,7 @@ class SessionStore:
         with self._lock:
             if session_id in self._sessions:
                 self._sessions[session_id]["data"][key] = value
+                self._save_to_disk()
     
     def cleanup_expired(self):
         # Call periodically to free memory
@@ -90,6 +120,8 @@ class SessionStore:
             ]
             for k in expired:
                 del self._sessions[k]
+            if expired:
+                self._save_to_disk()
 
     def clear_all(self) -> int:
         """Clear all sessions. Returns number of sessions cleared."""
@@ -97,6 +129,7 @@ class SessionStore:
             count = len(self._sessions)
             self._sessions.clear()
             self._global_logs.clear()
+            self._save_to_disk()
         return count
 
     def get_global_activity(self, limit: int = 20) -> list:

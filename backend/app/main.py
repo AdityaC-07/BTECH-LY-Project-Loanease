@@ -11,7 +11,7 @@ from pathlib import Path
 from uuid import uuid4
 from typing import Optional, Any, TypeAlias
 
-from fastapi import FastAPI, HTTPException, File, Form, UploadFile
+from fastapi import FastAPI, HTTPException, File, Form, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
@@ -31,7 +31,8 @@ from app.storage import ApplicationStore
 from app.credit_score import get_credit_score, get_credit_band, mask_pan
 from app.kyc_extractors import extract_pan, extract_aadhaar, cross_validate_kyc
 from app.kyc_preprocess import preprocess_image, run_ocr, MAX_UPLOAD_BYTES, UnsupportedDocumentError
-from services.otp_service import otp_store
+from services.otp_service import init_twilio, resend as resend_otp_via_twilio, send as send_otp_via_twilio, verify as verify_otp_via_twilio
+from services.aadhaar_qr import verify_mobile_against_qr
 from core.config import settings, get_band
 
 # Configure logging
@@ -243,6 +244,9 @@ class OtpVerifyResponse(BaseModel):
     mobile_last4: str
     expires_in_seconds: int
     reason: str | None = None
+    message: str | None = None
+    method: str | None = None
+    zero_knowledge: bool | None = None
 
 
 @app.on_event("startup")
@@ -250,6 +254,13 @@ def startup_event() -> None:
     global service
     try:
         service = ModelService(ARTIFACTS_DIR)
+        try:
+            if init_twilio():
+                logger.info("Twilio Verify ready")
+            else:
+                logger.warning("Twilio not configured - OTP in demo mode")
+        except Exception as exc:
+            logger.error("Twilio init failed: %s", exc)
     except FileNotFoundError as exc:
         raise RuntimeError(
             "Model artifacts missing. Run `python train_model.py --data data/loan_train.csv` first."
@@ -339,7 +350,8 @@ def get_credit_score_route() -> CreditScoreResponse:
 
 
 @app.post("/assess", response_model=AssessResponse)
-def assess(payload: AssessRequest) -> AssessResponse:
+@limiter.limit("20/minute")
+def assess(request: Request, payload: AssessRequest) -> AssessResponse:
     if service is None:
         raise HTTPException(status_code=503, detail="Model service not ready")
 
@@ -864,12 +876,12 @@ async def send_otp(payload: OtpSendRequest):
             detail="Aadhaar mobile number not found. Please upload the full Aadhaar card with the mobile number visible.",
         )
 
-    result = otp_store.send_otp(payload.session_id, mobile_number)
+    result = await send_otp_via_twilio(payload.session_id, mobile_number)
     session_store.update_stage(payload.session_id, "KYC_OTP_PENDING")
     session_store.update_data(payload.session_id, "aadhaar_mobile", mobile_number)
     session_store.update_data(payload.session_id, "aadhaar_otp_pending", True)
 
-    if not result["sent"]:
+    if not result["sent"] and not result.get("fallback_active") and not settings.DEMO_MODE:
         raise HTTPException(
             status_code=502,
             detail="Unable to send OTP right now. Configure SMS_PROVIDER with valid credentials.",
@@ -880,26 +892,65 @@ async def send_otp(payload: OtpSendRequest):
 
 @app.post("/kyc/resend-otp", response_model=OtpResponse)
 async def resend_otp(payload: OtpSendRequest):
-    try:
-        result = otp_store.resend_otp(payload.session_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="OTP session not found") from None
-    except ValueError as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    session = session_store.get_or_create(payload.session_id)
+    mobile_number = session.get("data", {}).get("aadhaar_mobile")
+    if not mobile_number:
+        aadhaar_data = session.get("data", {}).get("aadhaar_data", {})
+        mobile_number = aadhaar_data.get("mobile_number")
+    if not mobile_number:
+        raise HTTPException(
+            status_code=400,
+            detail="Aadhaar mobile number not found. Please upload the full Aadhaar card with the mobile number visible.",
+        )
+
+    result = await resend_otp_via_twilio(payload.session_id, mobile_number)
 
     return OtpResponse(**result)
 
 
 @app.post("/kyc/verify-otp", response_model=OtpVerifyResponse)
 async def verify_otp(payload: OtpVerifyRequest):
-    try:
-        result = otp_store.verify_otp(payload.session_id, payload.otp)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="OTP session not found") from None
+    session = session_store.get_or_create(payload.session_id)
+    mobile_number = session.get("data", {}).get("aadhaar_mobile")
+    if not mobile_number:
+        aadhaar_data = session.get("data", {}).get("aadhaar_data", {})
+        mobile_number = aadhaar_data.get("mobile_number")
+    if not mobile_number:
+        raise HTTPException(
+            status_code=400,
+            detail="Aadhaar mobile number not found. Please upload the full Aadhaar card with the mobile number visible.",
+        )
+
+    qr_data = session.get("data", {}).get("aadhaar_qr_data")
+    aadhaar_last4 = session.get("data", {}).get("aadhaar_data", {}).get("aadhaar_last4", "")
+
+    if qr_data and qr_data.get("mobile_hash"):
+        qr_verify = verify_mobile_against_qr(mobile_number, qr_data, aadhaar_last4)
+        if qr_verify.get("verified"):
+            session_store.update_stage(payload.session_id, "KYC_VERIFIED")
+            session_store.update_data(payload.session_id, "aadhaar_otp_verified", True)
+            session_store.update_data(payload.session_id, "mobile_verified", True)
+            session_store.update_data(payload.session_id, "verification_method", "AADHAAR_QR_HASH")
+
+            return OtpVerifyResponse(
+                verified=True,
+                terminated=False,
+                attempts_remaining=3,
+                mobile_last4=mobile_number[-4:],
+                expires_in_seconds=600,
+                reason=None,
+                message="Identity verified via Aadhaar cryptographic seal - no OTP required.",
+                method="QR_HASH",
+                zero_knowledge=True,
+            )
+
+    result = await verify_otp_via_twilio(payload.session_id, payload.otp, mobile_number)
 
     if result["verified"]:
         session_store.update_stage(payload.session_id, "KYC_VERIFIED")
         session_store.update_data(payload.session_id, "aadhaar_otp_verified", True)
+        session_store.update_data(payload.session_id, "mobile_verified", True)
+        session_store.update_data(payload.session_id, "verification_method", "OTP_SMS")
     elif result["terminated"]:
         session_store.update_stage(payload.session_id, "KYC_TERMINATED")
         session_store.update_data(payload.session_id, "aadhaar_otp_failed", True)

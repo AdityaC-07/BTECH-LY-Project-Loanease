@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import asyncio
+import contextvars
 import logging
 import os
 from typing import Any, Dict
@@ -7,8 +8,9 @@ from typing import Any, Dict
 # Avoid joblib/loky hanging on some Windows setups during model self-test
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", "4")
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from pydantic import BaseModel
 
@@ -23,6 +25,7 @@ from routers.demo_router import router as demo_router
 from startup_selftest import run_startup_selftest
 from services.groq_service import GroqService
 from services.memory import ConversationMemory
+from services.otp_service import init_twilio
 from services.vlm_kyc import init_vlm, vlm_ready
 from core.config import settings
 from core.session import session_store
@@ -32,6 +35,29 @@ from slowapi.middleware import SlowAPIMiddleware
 from core.limiter import limiter
 
 logger = logging.getLogger("loanease")
+request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
+
+
+def _record_factory(*args, **kwargs):
+    record = _original_record_factory(*args, **kwargs)
+    record.request_id = request_id_var.get()
+    return record
+
+
+_original_record_factory = logging.getLogRecordFactory()
+logging.setLogRecordFactory(_record_factory)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - [%(request_id)s] - %(levelname)s - %(message)s",
+)
+
+_request_log_formatter = logging.Formatter(
+    "%(asctime)s - %(name)s - [%(request_id)s] - %(levelname)s - %(message)s"
+)
+for _logger_name in ("", "uvicorn", "uvicorn.error", "uvicorn.access"):
+    _target_logger = logging.getLogger(_logger_name)
+    for _handler in _target_logger.handlers:
+        _handler.setFormatter(_request_log_formatter)
 
 
 class SessionSaveRequest(BaseModel):
@@ -66,6 +92,14 @@ async def lifespan(app: FastAPI):
             logger.warning("VLM KYC engine unavailable; KYC extraction endpoints may return degraded status")
     except Exception as exc:
         logger.warning("VLM KYC initialization failed; continuing in degraded mode: %s", str(exc))
+
+    try:
+        if init_twilio():
+            logger.info("Twilio Verify ready")
+        else:
+            logger.warning("Twilio not configured - OTP in demo mode")
+    except Exception as exc:
+        logger.error("Twilio init failed: %s", exc)
 
     # 1) Groq service.
     app.state.groq_service = GroqService(
@@ -108,7 +142,6 @@ async def lifespan(app: FastAPI):
         await redis_client.aclose()
     logger.info("LoanEase backend shutting down")
 
-limiter_instance = limiter # Rename to avoid conflict with imported name if needed
 app = FastAPI(
     title="LoanEase API",
     description="Agentic AI Personal Loan System",
@@ -116,11 +149,38 @@ app = FastAPI(
     lifespan=lifespan
 )
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(SlowAPIMiddleware)
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={
+            "error": "Rate limit exceeded",
+            "message": "Too many requests. Please wait before retrying.",
+            "retry_after": "60 seconds",
+        },
+    )
+
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    request_id = str(__import__("uuid").uuid4())[:8]
+    token = request_id_var.set(request_id)
+    start = datetime.now(timezone.utc)
+    response = None
+
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        duration_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
+        status_code = response.status_code if response is not None else 500
+        logger.info("[%s] %s %s → %s (%sms)", request_id, request.method, request.url.path, status_code, duration_ms)
+        request_id_var.reset(token)
+        if response is not None:
+            response.headers["X-Request-ID"] = request_id
 
 # CORS
 app.add_middleware(

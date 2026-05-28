@@ -159,13 +159,16 @@ async def create_sanction_letter(request: SanctionRequest):
         reference = f"LE-{timestamp.year}-{str(len(blockchain.chain) + 1).zfill(5)}"
         
         # Generate PDF
+        verification_url = f"http://localhost:8080/blockchain/explorer?verify={reference}"
         pdf_content = generate_sanction_letter(
-            request.applicant_name,
-            request.pan_number,
-            request.loan_amount,
-            request.interest_rate,
-            request.tenure_years,
-            reference
+            applicant_name=request.applicant_name,
+            pan_number=request.pan_number,
+            loan_amount=request.loan_amount,
+            interest_rate=request.interest_rate,
+            tenure_years=request.tenure_years,
+            emi=0,
+            application_id=reference,
+            verification_url=verification_url,
         )
         
         # Calculate document hash
@@ -450,12 +453,14 @@ async def download_sanction_letter(reference: str):
         
         # Generate PDF if not in session
         pdf_content = generate_sanction_letter(
-            transaction.get("applicant_name", "N/A"),
-            transaction.get("pan_number", "N/A"),
-            transaction.get("loan_amount", 0),
-            transaction.get("interest_rate", 0),
-            transaction.get("tenure_years", 0),
-            reference
+            applicant_name=transaction.get("applicant_name", "N/A"),
+            pan_number=transaction.get("pan_number", "N/A"),
+            loan_amount=transaction.get("loan_amount", 0),
+            interest_rate=transaction.get("interest_rate", 0),
+            tenure_years=transaction.get("tenure_years", 0),
+            emi=0,
+            application_id=reference,
+            verification_url=f"http://localhost:8080/blockchain/explorer?verify={reference}",
         )
         
         from fastapi.responses import Response

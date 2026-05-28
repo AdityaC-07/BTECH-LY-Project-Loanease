@@ -10,6 +10,7 @@ from io import BytesIO
 from typing import Optional
 
 from core.config import settings
+from services.aadhaar_qr import process_aadhaar_with_qr
 
 logger = logging.getLogger("vlm_kyc")
 
@@ -355,14 +356,49 @@ async def extract_aadhaar(contents: bytes, filename: str) -> dict:
         img = _file_to_pil(contents, filename)
         img_part = _pil_to_image_part(img)
 
-        result = await _call_vlm_with_fallback(
-            prompt=AADHAAR_PROMPT,
-            image_part=img_part,
-            task="Aadhaar extraction",
+        vlm_task = asyncio.create_task(
+            _call_vlm_with_fallback(
+                prompt=AADHAAR_PROMPT,
+                image_part=img_part,
+                task="Aadhaar extraction",
+            )
         )
+        qr_task = asyncio.create_task(process_aadhaar_with_qr(contents, filename, img))
 
-        data = _parse_json_response(result)
-        return _validate_aadhaar_data(data)
+        vlm_result_raw, qr_result = await asyncio.gather(vlm_task, qr_task, return_exceptions=True)
+
+        if isinstance(vlm_result_raw, Exception):
+            logger.error(f"VLM failed: {vlm_result_raw}")
+            vlm_result_raw = "{}"
+        if isinstance(qr_result, Exception):
+            logger.error(f"QR failed: {qr_result}")
+            qr_result = {"qr_found": False}
+
+        data = _parse_json_response(vlm_result_raw)
+        validated = _validate_aadhaar_data(data)
+
+        if qr_result.get("qr_parsed") and qr_result.get("qr_data"):
+            qr_fields = qr_result["qr_data"]
+            extracted_fields = validated["extracted_fields"]
+
+            if not extracted_fields.get("name") and qr_fields.get("name"):
+                extracted_fields["name"] = qr_fields["name"]
+
+            if not extracted_fields.get("date_of_birth") and qr_fields.get("dob"):
+                extracted_fields["date_of_birth"] = qr_fields["dob"]
+
+            if qr_fields.get("mobile_hash"):
+                extracted_fields["mobile_hash_available"] = True
+
+        validated["qr_verification"] = {
+            "qr_found": qr_result.get("qr_found", False),
+            "qr_parsed": qr_result.get("qr_parsed", False),
+            "mobile_hash_available": bool(qr_result.get("qr_data", {}).get("mobile_hash")),
+            "data_source": "VLM + Aadhaar QR Decode" if qr_result.get("qr_found") else "VLM only",
+        }
+        validated["_qr_data_for_session"] = qr_result.get("qr_data")
+
+        return validated
 
     except RuntimeError as e:
         # VLM provider failed
@@ -478,17 +514,17 @@ Check:
 3. Year of birth match (if Aadhaar only has year)
 
 Respond ONLY with JSON:
-{
-  "same_person": true/false,
-  "name_match": true/false,
-  "name_similarity": <0.0 to 1.0>,
-  "pan_name": "name from PAN",
-  "aadhaar_name": "name from Aadhaar",
-  "dob_match": true/false/null,
-  "overall_kyc_status": "VERIFIED/PARTIAL/FAILED",
-  "confidence": <0.0 to 1.0>,
-  "reasoning": "brief explanation"
-}
+{{
+    "same_person": true/false,
+    "name_match": true/false,
+    "name_similarity": <0.0 to 1.0>,
+    "pan_name": "name from PAN",
+    "aadhaar_name": "name from Aadhaar",
+    "dob_match": true/false/null,
+    "overall_kyc_status": "VERIFIED/PARTIAL/FAILED",
+    "confidence": <0.0 to 1.0>,
+    "reasoning": "brief explanation"
+}}
 """
 
 

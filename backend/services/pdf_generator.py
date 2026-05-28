@@ -71,6 +71,7 @@ class SanctionLetterGenerator:
         tenure_years: int,
         emi: float,
         application_id: str,
+        verification_url: Optional[str] = None,
         sanction_date: datetime = None
     ) -> bytes:
         """Generate PDF sanction letter"""
@@ -94,6 +95,9 @@ class SanctionLetterGenerator:
         
         story.append(Paragraph(date_text, self.styles['CustomNormal']))
         story.append(Paragraph(ref_text, self.styles['CustomNormal']))
+        verification_link = verification_url or f"http://localhost:8080/blockchain/explorer?verify={application_id}"
+        story.append(Paragraph("Verify this document at:", self.styles['CustomHeading']))
+        story.append(Paragraph(f"<font color='darkgreen'>{verification_link}</font>", self.styles['CustomNormal']))
         story.append(Spacer(1, 30))
         
         # Salutation

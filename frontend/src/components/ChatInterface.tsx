@@ -70,6 +70,13 @@ interface AadhaarKycFields {
   age_eligible?: boolean;
 }
 
+interface AadhaarQrVerification {
+  qr_found?: boolean;
+  qr_parsed?: boolean;
+  mobile_hash_available?: boolean;
+  data_source?: string;
+}
+
 const formatMissingFields = (fields: string[]) => fields.join(", ");
 const missingFieldMessage = (fields: string[]) => {
   const joined = formatMissingFields(fields);
@@ -1013,8 +1020,12 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         resetOtpFlow();
         addBotMessage(
           kycText(
-            "OTP verified successfully. Continuing to your credit profile.",
-            "OTP सफलतापूर्वक सत्यापित हो गया है। अब आपकी credit profile खोली जा रही है।"
+            result.zero_knowledge
+              ? result.message || "Identity verified via Aadhaar QR cryptographic seal. Continuing to your credit profile."
+              : "OTP verified successfully. Continuing to your credit profile.",
+            result.zero_knowledge
+              ? result.message || "Aadhaar QR cryptographic seal के माध्यम से identity verify हो गई है। अब आपकी credit profile खोली जा रही है।"
+              : "OTP सफलतापूर्वक सत्यापित हो गया है। अब आपकी credit profile खोली जा रही है।"
           )
         );
         const extractedPan = pendingCreditPan || panKycData?.pan_number || verifyResultPanFromState();
@@ -1200,6 +1211,20 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     try {
       const aadhaarResult = await callKycAadhaarExtractAPI(file);
       setAadhaarKycData(aadhaarResult.extracted_fields);
+
+      const qrVerification = aadhaarResult.qr_verification as AadhaarQrVerification | undefined;
+      if (qrVerification?.qr_found) {
+        addBotMessage(
+          kycText(
+            qrVerification.mobile_hash_available
+              ? "Aadhaar QR decoded successfully. Mobile hash verification is available as an additional offline check."
+              : "Aadhaar QR decoded successfully. Secure QR metadata was extracted for offline verification.",
+            qrVerification.mobile_hash_available
+              ? "Aadhaar QR सफलतापूर्वक decode हो गया। Mobile hash verification एक अतिरिक्त offline check के रूप में उपलब्ध है।"
+              : "Aadhaar QR सफलतापूर्वक decode हो गया। Secure QR metadata offline verification के लिए निकाला गया है।"
+          )
+        );
+      }
 
       const aadhaarIssues: string[] = aadhaarResult.validation?.issues || [];
       const missingFields: string[] = aadhaarResult.validation?.missing_fields || [];
@@ -2751,28 +2776,6 @@ ${guidance.repayment_history_impact || ""}`.trim(),
             </Button>
             <div className="mt-2 text-[11px] text-muted-foreground">
               {kycText("or drag file here", "या फ़ाइल यहां drag करें")}
-            </div>
-          </div>
-        )}
-
-        {aadhaarKycData && (
-          <div className="max-w-md rounded-xl border border-yellow-500/40 bg-gradient-to-br from-card to-card/80 p-4 shadow-lg shadow-yellow-500/10">
-            <div className="mb-2 flex items-center gap-2 text-base font-semibold text-yellow-400">
-              <CheckCircle2 className="h-4 w-4" />
-              {kycText("Aadhaar OCR Detected", "Aadhaar OCR मिला")}
-            </div>
-            <div className="space-y-1.5 text-sm text-foreground">
-              {aadhaarKycData.name && <div className="font-medium">{aadhaarKycData.name}</div>}
-              {aadhaarKycData.aadhaar_last4 && <div>{kycText("Aadhaar ending", "Aadhaar के अंतिम अंक")}: {aadhaarKycData.aadhaar_last4}</div>}
-              {aadhaarKycData.date_of_birth && <div>{aadhaarKycData.date_of_birth}{aadhaarKycData.age ? ` (Age: ${aadhaarKycData.age})` : ""}</div>}
-              {aadhaarKycData.gender && <div>{aadhaarKycData.gender}</div>}
-              {aadhaarKycData.mobile_number ? (
-                <div>{kycText("Mobile", "मोबाइल")}: {aadhaarKycData.mobile_number}</div>
-              ) : (
-                <div className="text-muted-foreground">
-                  {kycText("Mobile number not detected in OCR", "OCR में मोबाइल नंबर नहीं मिला")}
-                </div>
-              )}
             </div>
           </div>
         )}

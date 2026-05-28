@@ -4,13 +4,14 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadFile
 from PIL import UnidentifiedImageError
 from pydantic import BaseModel
 
 from core.config import settings
+from core.limiter import limiter
 from core.session import session_store
-from services.otp_service import otp_store
+from services.otp_service import resend as resend_otp_via_twilio, send as send_otp_via_twilio, verify as verify_otp_via_twilio
 from services.vlm_kyc import (
     cross_validate,
     extract_aadhaar,
@@ -39,6 +40,7 @@ class AadhaarExtractResponse(BaseModel):
     validation: Dict[str, Any]
     confidence_score: float
     processing_time_ms: int
+    qr_verification: Dict[str, Any] | None = None
 
 
 class OtpSendRequest(BaseModel):
@@ -66,6 +68,9 @@ class OtpVerifyResponse(BaseModel):
     mobile_last4: str
     expires_in_seconds: int
     reason: str | None = None
+    message: str | None = None
+    method: str | None = None
+    zero_knowledge: bool | None = None
 
 
 class VerifyRequest(BaseModel):
@@ -80,6 +85,25 @@ class VerifyResponse(BaseModel):
     overall_kyc_passed: bool
     kyc_reference_id: str
     timestamp: str
+
+
+def _get_aadhaar_mobile(session_id: str) -> str:
+    session = session_store.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    mobile_number = session.get("data", {}).get("aadhaar_mobile")
+    if not mobile_number:
+        aadhaar_data = session.get("data", {}).get("aadhaar_data", {})
+        mobile_number = aadhaar_data.get("mobile_number")
+
+    if not mobile_number:
+        raise HTTPException(
+            status_code=400,
+            detail="Aadhaar mobile number not found. Please upload the full Aadhaar card with the mobile number visible.",
+        )
+
+    return mobile_number
 
 
 def _assert_upload_constraints(file: UploadFile, file_bytes: bytes) -> None:
@@ -129,7 +153,9 @@ async def kyc_health():
 
 
 @router.post("/extract/pan", response_model=PanExtractResponse)
+@limiter.limit("10/minute")
 async def extract_pan_endpoint(
+    request: Request,
     document: UploadFile = File(...),
     session_id: str = Form(...),
     language: str = Form("en"),
@@ -251,7 +277,9 @@ async def extract_pan_endpoint(
 
 
 @router.post("/extract/aadhaar", response_model=AadhaarExtractResponse)
+@limiter.limit("10/minute")
 async def extract_aadhaar_endpoint(
+    request: Request,
     document: UploadFile = File(...),
     session_id: str = Form(...),
     language: str = Form("en"),
@@ -302,6 +330,9 @@ async def extract_aadhaar_endpoint(
 
         _ensure_vlm_ready()
         vlm_result = await extract_aadhaar(file_bytes, document.filename or "aadhaar.jpg")
+        qr_data = vlm_result.pop("_qr_data_for_session", None)
+        if qr_data and session_id:
+            session_store.update_data(session_id, "aadhaar_qr_data", qr_data)
         aadhaar_data = vlm_result.get("extracted_fields") or {}
         confidence = float(vlm_result.get("confidence_score") or 0.0)
 
@@ -347,6 +378,7 @@ async def extract_aadhaar_endpoint(
             },
             confidence_score=confidence,
             processing_time_ms=processing_time,
+            qr_verification=vlm_result.get("qr_verification"),
         )
 
     except HTTPException:
@@ -363,7 +395,9 @@ async def extract_aadhaar_endpoint(
 
 
 @router.post("/extract/auto")
+@limiter.limit("10/minute")
 async def extract_auto(
+    request: Request,
     document: UploadFile = File(...),
     session_id: str | None = Form(None),
     language: str = Form("en"),
@@ -408,14 +442,16 @@ async def extract_auto(
 
 
 @router.post("/verify", response_model=VerifyResponse)
+@limiter.limit("20/minute")
 async def verify_kyc(
-    request: VerifyRequest | None = Body(default=None),
+    request: Request,
+    payload: VerifyRequest | None = Body(default=None),
     session_id: str | None = Form(default=None),
     pan: UploadFile | None = File(default=None),
     aadhaar: UploadFile | None = File(default=None),
 ):
     try:
-        resolved_session_id = request.session_id if request is not None else session_id
+        resolved_session_id = payload.session_id if payload is not None else session_id
 
         if pan is not None and aadhaar is not None:
             _ensure_vlm_ready()
@@ -495,28 +531,16 @@ async def verify_kyc(
 
 
 @router.post("/send-otp", response_model=OtpResponse)
-async def send_otp_endpoint(request: OtpSendRequest):
-    session = session_store.get(request.session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+@limiter.limit("3/minute")
+async def send_otp_endpoint(request: Request, payload: OtpSendRequest):
+    mobile_number = _get_aadhaar_mobile(payload.session_id)
 
-    mobile_number = session.get("data", {}).get("aadhaar_mobile")
-    if not mobile_number:
-        aadhaar_data = session.get("data", {}).get("aadhaar_data", {})
-        mobile_number = aadhaar_data.get("mobile_number")
-
-    if not mobile_number:
-        raise HTTPException(
-            status_code=400,
-            detail="Aadhaar mobile number not found. Please upload the full Aadhaar card with the mobile number visible.",
-        )
-
-    result = otp_store.send_otp(request.session_id, mobile_number)
-    session_store.update_stage(request.session_id, "KYC_OTP_PENDING")
-    session_store.update_data(request.session_id, "aadhaar_mobile", mobile_number)
-    session_store.update_data(request.session_id, "aadhaar_otp_pending", True)
+    result = await send_otp_via_twilio(payload.session_id, mobile_number)
+    session_store.update_stage(payload.session_id, "KYC_OTP_PENDING")
+    session_store.update_data(payload.session_id, "aadhaar_mobile", mobile_number)
+    session_store.update_data(payload.session_id, "aadhaar_otp_pending", True)
     session_store.log_agent(
-        request.session_id,
+        payload.session_id,
         {
             "agent": "KYCVerificationAgent",
             "action": "OTP_SENT",
@@ -526,36 +550,61 @@ async def send_otp_endpoint(request: OtpSendRequest):
         },
     )
 
-    if not result["sent"] and not settings.DEMO_MODE:
+    if not result["sent"] and not result.get("fallback_active") and not settings.DEMO_MODE:
         raise HTTPException(status_code=502, detail="Unable to send OTP right now. Please try again.")
 
     return OtpResponse(**result)
 
 
 @router.post("/resend-otp", response_model=OtpResponse)
-async def resend_otp_endpoint(request: OtpSendRequest):
-    try:
-        result = otp_store.resend_otp(request.session_id)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="OTP session not found") from None
-    except ValueError as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
+@limiter.limit("3/minute")
+async def resend_otp_endpoint(request: Request, payload: OtpSendRequest):
+    mobile_number = _get_aadhaar_mobile(payload.session_id)
+    result = await resend_otp_via_twilio(payload.session_id, mobile_number)
 
     return OtpResponse(**result)
 
 
 @router.post("/verify-otp", response_model=OtpVerifyResponse)
-async def verify_otp_endpoint(request: OtpVerifyRequest):
-    try:
-        result = otp_store.verify_otp(request.session_id, request.otp)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="OTP session not found") from None
+@limiter.limit("10/minute")
+async def verify_otp_endpoint(request: Request, payload: OtpVerifyRequest):
+    mobile_number = _get_aadhaar_mobile(payload.session_id)
+    session = session_store.get(payload.session_id)
+    data = (session or {}).get("data", {})
+    qr_data = data.get("aadhaar_qr_data")
+    aadhaar_last4 = data.get("aadhaar_data", {}).get("aadhaar_last4", "")
+
+    if qr_data and qr_data.get("mobile_hash") and mobile_number:
+        from services.aadhaar_qr import verify_mobile_against_qr
+
+        qr_verify = verify_mobile_against_qr(mobile_number, qr_data, aadhaar_last4)
+        if qr_verify.get("verified"):
+            session_store.update_stage(payload.session_id, "KYC_VERIFIED")
+            session_store.update_data(payload.session_id, "aadhaar_otp_verified", True)
+            session_store.update_data(payload.session_id, "mobile_verified", True)
+            session_store.update_data(payload.session_id, "verification_method", "AADHAAR_QR_HASH")
+
+            return OtpVerifyResponse(
+                verified=True,
+                terminated=False,
+                attempts_remaining=3,
+                mobile_last4=mobile_number[-4:],
+                expires_in_seconds=600,
+                reason=None,
+                message="Identity verified via Aadhaar cryptographic seal - no OTP required.",
+                method="QR_HASH",
+                zero_knowledge=True,
+            )
+
+    result = await verify_otp_via_twilio(payload.session_id, payload.otp, mobile_number)
 
     if result["verified"]:
-        session_store.update_stage(request.session_id, "KYC_VERIFIED")
-        session_store.update_data(request.session_id, "aadhaar_otp_verified", True)
+        session_store.update_stage(payload.session_id, "KYC_VERIFIED")
+        session_store.update_data(payload.session_id, "aadhaar_otp_verified", True)
+        session_store.update_data(payload.session_id, "mobile_verified", True)
+        session_store.update_data(payload.session_id, "verification_method", "OTP_SMS")
         session_store.log_agent(
-            request.session_id,
+            payload.session_id,
             {
                 "agent": "KYCVerificationAgent",
                 "action": "OTP_VERIFIED",
@@ -565,10 +614,10 @@ async def verify_otp_endpoint(request: OtpVerifyRequest):
             },
         )
     elif result["terminated"]:
-        session_store.update_stage(request.session_id, "KYC_TERMINATED")
-        session_store.update_data(request.session_id, "aadhaar_otp_failed", True)
+        session_store.update_stage(payload.session_id, "KYC_TERMINATED")
+        session_store.update_data(payload.session_id, "aadhaar_otp_failed", True)
         session_store.log_agent(
-            request.session_id,
+            payload.session_id,
             {
                 "agent": "KYCVerificationAgent",
                 "action": "OTP_FAILED",
