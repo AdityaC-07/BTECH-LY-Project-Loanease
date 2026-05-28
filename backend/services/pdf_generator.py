@@ -1,6 +1,7 @@
 import io
 import os
 from datetime import datetime
+from typing import Optional
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle

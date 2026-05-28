@@ -1,0 +1,39 @@
+[
+  {
+    "index": 0,
+    "timestamp": "2026-05-28T11:19:56.821134+00:00",
+    "transaction_data": {
+      "message": "LoanEase Genesis Block - Audit Ledger Initialized",
+      "creator": "LoanEase AI System",
+      "version": "1.0.0"
+    },
+    "previous_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "hash": "753c877dc34901687c87094920e8a4f4f1dd5ca632178415ab2501d38f7130bf",
+    "nonce": 0,
+    "merkle_root": "bbbb13391757415bb5a59fb97c249de072c0a32ec03adad53efc73d8def3cafc"
+  },
+  {
+    "index": 1,
+    "timestamp": "2026-05-28T11:20:01.387922+00:00",
+    "transaction_data": {
+      "test": true,
+      "transaction_id": "SELFTEST-001"
+    },
+    "previous_hash": "753c877dc34901687c87094920e8a4f4f1dd5ca632178415ab2501d38f7130bf",
+    "hash": "00ccde80ad22acc6cf07849b0c208bbe71e28b8069cfe7931399b1c2ef4a9473",
+    "nonce": 334,
+    "merkle_root": "16c203a5bc1061d834b18e96014f31672ba87ff544e6b6170ee3bb6463bf35bd"
+  },
+  {
+    "index": 2,
+    "timestamp": "2026-05-28T11:20:39.474799+00:00",
+    "transaction_data": {
+      "test": true,
+      "transaction_id": "SELFTEST-001"
+    },
+    "previous_hash": "00ccde80ad22acc6cf07849b0c208bbe71e28b8069cfe7931399b1c2ef4a9473",
+    "hash": "004d88b1db1a996bcb5fb111c97ea0a06ce532980708c70a72b42cadb52c42d6",
+    "nonce": 114,
+    "merkle_root": "16c203a5bc1061d834b18e96014f31672ba87ff544e6b6170ee3bb6463bf35bd"
+  }
+]
