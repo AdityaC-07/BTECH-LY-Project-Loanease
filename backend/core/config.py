@@ -1,8 +1,15 @@
+from pathlib import Path
+
+from dotenv import load_dotenv
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-class Settings(BaseSettings):
-    # Groq
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_ENV_FILE = _BACKEND_DIR / ".env"
+load_dotenv(_ENV_FILE, override=False)
+
+
+class Settings(BaseSettings):    # Groq
     GROQ_API_KEY: str = ""
     GROQ_MODEL_PRIMARY: str = "llama-3.3-70b-versatile"
     GROQ_MODEL_FALLBACK: str = "llama-3.1-8b-instant"
@@ -45,8 +52,16 @@ class Settings(BaseSettings):
         ]
     )
     
-    # OCR
+    # OCR / VLM KYC
     MAX_UPLOAD_BYTES: int = 5 * 1024 * 1024  # 5MB
+    VLM_PROVIDER: str = "bedrock"  # bedrock | gemini
+    GEMINI_API_KEY: str = ""
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: str = ""
+    AWS_REGION: str = "us-east-1"
+    VLM_PRIMARY: str = "us.meta.llama3-2-11b-instruct-v1:0"
+    VLM_FALLBACK: str = "us.meta.llama3-2-11b-instruct-v1:0"
+    VLM_TIMEOUT: int = 60
 
     # OTP verification
     OTP_EXPIRY_MINUTES: int = 5
@@ -66,6 +81,9 @@ class Settings(BaseSettings):
     
     # Demo mode — bypass OCR, use hardcoded scores, add artificial delays
     DEMO_MODE: bool = False
+
+    # Run heavy checks (Groq ping, XGBoost predict) in background after server is up
+    STARTUP_SELFTEST: bool = True
     
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
@@ -74,6 +92,11 @@ class Settings(BaseSettings):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
-    model_config = SettingsConfigDict(env_file=".env")
+    model_config = SettingsConfigDict(
+        env_file=str(_ENV_FILE),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
 
 settings = Settings()

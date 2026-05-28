@@ -12,10 +12,10 @@ from typing import Optional
 logger = logging.getLogger("loanease.fallback")
 
 FALLBACK_MAP = {
-    "ocr_engine": {
-        "primary": "rapidocr",
-        "fallback": "demo_mode_static_data",
-        "trigger": "RapidOCR returns None or raises exception",
+    "vlm_kyc_engine": {
+        "primary": "amazon-bedrock-llama-3.2-11b-vision",
+        "fallback": "amazon-bedrock-llama-3.2-11b-vision",
+        "trigger": "Bedrock Converse returns error or raises exception",
     },
     "groq_api": {
         "primary": "llama-3.3-70b-versatile",

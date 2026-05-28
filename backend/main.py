@@ -1,6 +1,11 @@
 from contextlib import asynccontextmanager
+import asyncio
 import logging
+import os
 from typing import Any, Dict
+
+# Avoid joblib/loky hanging on some Windows setups during model self-test
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", "4")
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 # Import all routers
-from agents.kyc_agent.main import router as kyc_router
+from agents.kyc import router as kyc_router
 from agents.underwriting_agent.main import router as underwriting_router
 from agents.negotiation_agent.main import router as negotiation_router
 from agents.blockchain_agent.main import router as blockchain_router
@@ -18,7 +23,7 @@ from routers.demo_router import router as demo_router
 from startup_selftest import run_startup_selftest
 from services.groq_service import GroqService
 from services.memory import ConversationMemory
-from services.ocr import init_ocr, ocr_ready
+from services.vlm_kyc import init_vlm, vlm_ready
 from core.config import settings
 from core.session import session_store
 from slowapi import _rate_limit_exceeded_handler
@@ -52,15 +57,15 @@ class EscalationPreferenceRequest(BaseModel):
 async def lifespan(app: FastAPI):
     logger.info("LoanEase backend starting")
 
-    # 0) OCR engine (best effort; degraded mode if unavailable)
+    # 0) VLM KYC engine (best effort; degraded mode if unavailable)
     try:
-        init_ocr()
-        if ocr_ready():
-            logger.info("OCR engine initialized")
+        init_vlm()
+        if vlm_ready():
+            logger.info("VLM KYC engine initialized")
         else:
-            logger.warning("OCR engine unavailable; KYC OCR endpoints may return degraded status")
+            logger.warning("VLM KYC engine unavailable; KYC extraction endpoints may return degraded status")
     except Exception as exc:
-        logger.warning("OCR initialization failed; continuing in degraded mode: %s", str(exc))
+        logger.warning("VLM KYC initialization failed; continuing in degraded mode: %s", str(exc))
 
     # 1) Groq service.
     app.state.groq_service = GroqService(
@@ -69,7 +74,7 @@ async def lifespan(app: FastAPI):
         fallback_model=settings.GROQ_MODEL_FALLBACK,
         timeout=settings.GROQ_TIMEOUT,
     )
-    await app.state.groq_service.verify_connection()
+    # Groq connectivity is verified lazily on first chat request (or in background self-test).
 
     # 2) Redis (optional) with graceful fallback.
     redis_client: Any = None
@@ -90,8 +95,11 @@ async def lifespan(app: FastAPI):
     app.state.saved_sessions: Dict[str, Dict[str, Any]] = {}
     app.state.escalation_preferences: Dict[str, Dict[str, Any]] = {}
 
-    # ── Startup self-test ────────────────────────────────────────
-    await run_startup_selftest(app)
+    # ── Startup self-test (background — do not block server ready) ─
+    if settings.STARTUP_SELFTEST:
+        asyncio.create_task(run_startup_selftest(app))
+    else:
+        logger.info("Startup self-test skipped (STARTUP_SELFTEST=false)")
 
     yield
 

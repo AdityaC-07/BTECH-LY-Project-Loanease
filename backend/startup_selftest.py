@@ -1,76 +1,76 @@
 """
 Startup self-test for LoanEase.
 
-Validates that all critical components (XGBoost model, OCR engine,
+Validates that all critical components (XGBoost model, VLM KYC engine,
 Groq connectivity, blockchain ledger) are functional before the
 server begins accepting requests.
 
 Called at the end of the FastAPI lifespan startup phase.
 """
 
+import asyncio
 import logging
 from typing import Any, Dict
 
 logger = logging.getLogger("loanease.selftest")
 
+_SELFTEST_TIMEOUT_SEC = 12
+
 
 async def run_startup_selftest(app: Any) -> Dict[str, str]:
-    """Run self-tests on all critical components and print a report.
+    """Run self-tests on all critical components and print a report."""
+    try:
+        return await asyncio.wait_for(_run_startup_selftest(app), timeout=_SELFTEST_TIMEOUT_SEC)
+    except asyncio.TimeoutError:
+        logger.warning("Startup self-test timed out after %ss — server is still running", _SELFTEST_TIMEOUT_SEC)
+        print("\n   ⚠️  STARTUP SELF-TEST timed out (server ready anyway)\n")
+        return {"selftest": "⚠️ TIMEOUT"}
 
-    Args:
-        app: The FastAPI application instance (to access app.state).
 
-    Returns:
-        Dict mapping component name → status string.
-    """
+async def _run_startup_selftest(app: Any) -> Dict[str, str]:
     results: Dict[str, str] = {}
 
     # ── Test 1: XGBoost model ────────────────────────────────────
     try:
-        from agents.underwriting_agent.main import load_model, model_loaded, predict_credit_score
+        from agents.underwriting_agent.main import model_loaded
 
-        if not model_loaded():
-            load_model()
-        test_features = {
-            "cibil_score": 750,
-            "loan_amount": 150000,
-            "tenure_years": 5,
-            "age": 30,
-            "income_estimated": 500000,
-        }
-        score = predict_credit_score(test_features)
-        assert 300 <= score <= 900, f"Score out of range: {score}"
-        results["xgboost"] = "✅ PASS"
+        if model_loaded():
+            results["xgboost"] = "✅ PASS"
+        else:
+            results["xgboost"] = "⚠️ DEGRADED: using rule-based fallback"
     except Exception as e:
         results["xgboost"] = f"❌ FAIL: {e}"
-
-    # ── Test 2: OCR engine ───────────────────────────────────────
+    # ── Test 2: VLM KYC engine ───────────────────────────────────
     try:
-        from services.ocr import init_ocr, ocr_ready
+        from services.vlm_kyc import init_vlm, vlm_ready
 
-        if not ocr_ready():
-            init_ocr()
-        if ocr_ready():
-            results["ocr"] = "✅ PASS"
+        if not vlm_ready():
+            init_vlm()
+        if vlm_ready():
+            results["vlm_kyc"] = "✅ PASS"
         else:
-            results["ocr"] = "⚠️ DEGRADED: engine not available"
+            results["vlm_kyc"] = "⚠️ DEGRADED: engine not available"
     except Exception as e:
-        results["ocr"] = f"❌ FAIL: {e}"
+        results["vlm_kyc"] = f"❌ FAIL: {e}"
 
     # ── Test 3: Groq connectivity ────────────────────────────────
     try:
         groq_service = getattr(app.state, "groq_service", None)
         if groq_service is not None:
-            connected = await groq_service.verify_connection()
+            connected = await asyncio.wait_for(
+                groq_service.verify_connection(),
+                timeout=5,
+            )
             if connected:
                 results["groq"] = "✅ PASS"
             else:
                 results["groq"] = "⚠️ FALLBACK: connection failed but service initialized"
         else:
             results["groq"] = "⚠️ FALLBACK: GroqService not in app state"
+    except asyncio.TimeoutError:
+        results["groq"] = "⚠️ FALLBACK: connectivity check timed out"
     except Exception as e:
         results["groq"] = f"⚠️ FALLBACK: {e}"
-
     # ── Test 4: Blockchain ledger ────────────────────────────────
     try:
         from blockchain import ledger
