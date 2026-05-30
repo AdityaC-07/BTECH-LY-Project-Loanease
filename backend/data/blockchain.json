@@ -35,5 +35,89 @@
     "hash": "004d88b1db1a996bcb5fb111c97ea0a06ce532980708c70a72b42cadb52c42d6",
     "nonce": 114,
     "merkle_root": "16c203a5bc1061d834b18e96014f31672ba87ff544e6b6170ee3bb6463bf35bd"
+  },
+  {
+    "index": 3,
+    "timestamp": "2026-05-30T05:57:42.486915+00:00",
+    "transaction_data": {
+      "test": true,
+      "transaction_id": "SELFTEST-001"
+    },
+    "previous_hash": "004d88b1db1a996bcb5fb111c97ea0a06ce532980708c70a72b42cadb52c42d6",
+    "hash": "0070166986a9d2d81c30f5d4418a4cc142c31711a8b95b3bfa79ee933acfd4c0",
+    "nonce": 668,
+    "merkle_root": "16c203a5bc1061d834b18e96014f31672ba87ff544e6b6170ee3bb6463bf35bd"
+  },
+  {
+    "index": 4,
+    "timestamp": "2026-05-30T06:01:25.025901+00:00",
+    "transaction_data": {
+      "test": true,
+      "transaction_id": "SELFTEST-001"
+    },
+    "previous_hash": "0070166986a9d2d81c30f5d4418a4cc142c31711a8b95b3bfa79ee933acfd4c0",
+    "hash": "00337574498fd2bd03a422a22a1492a0ebf3777b1c0143bd5f476e3e2fb2c30e",
+    "nonce": 263,
+    "merkle_root": "16c203a5bc1061d834b18e96014f31672ba87ff544e6b6170ee3bb6463bf35bd"
+  },
+  {
+    "index": 5,
+    "timestamp": "2026-05-30T06:23:56.284483+00:00",
+    "transaction_data": {
+      "test": true,
+      "transaction_id": "SELFTEST-001"
+    },
+    "previous_hash": "00337574498fd2bd03a422a22a1492a0ebf3777b1c0143bd5f476e3e2fb2c30e",
+    "hash": "009e9ad6ba440054006aa0b33089e54abc1353f1efe11d75fef1f0c5e86405b7",
+    "nonce": 78,
+    "merkle_root": "16c203a5bc1061d834b18e96014f31672ba87ff544e6b6170ee3bb6463bf35bd"
+  },
+  {
+    "index": 6,
+    "timestamp": "2026-05-30T06:29:39.719807+00:00",
+    "transaction_data": {
+      "test": true,
+      "transaction_id": "SELFTEST-001"
+    },
+    "previous_hash": "009e9ad6ba440054006aa0b33089e54abc1353f1efe11d75fef1f0c5e86405b7",
+    "hash": "003dee5877721efa05ab67b4b60dd39f042159b40aa6efb94a95ceea325932ed",
+    "nonce": 194,
+    "merkle_root": "16c203a5bc1061d834b18e96014f31672ba87ff544e6b6170ee3bb6463bf35bd"
+  },
+  {
+    "index": 7,
+    "timestamp": "2026-05-30T06:45:21.249195+00:00",
+    "transaction_data": {
+      "test": true,
+      "transaction_id": "SELFTEST-001"
+    },
+    "previous_hash": "003dee5877721efa05ab67b4b60dd39f042159b40aa6efb94a95ceea325932ed",
+    "hash": "004948628f9b649e47b96352f14fb211781c0554c1f5ac2af9f4ae55008c3aeb",
+    "nonce": 201,
+    "merkle_root": "16c203a5bc1061d834b18e96014f31672ba87ff544e6b6170ee3bb6463bf35bd"
+  },
+  {
+    "index": 8,
+    "timestamp": "2026-05-30T06:58:21.198430+00:00",
+    "transaction_data": {
+      "test": true,
+      "transaction_id": "SELFTEST-001"
+    },
+    "previous_hash": "004948628f9b649e47b96352f14fb211781c0554c1f5ac2af9f4ae55008c3aeb",
+    "hash": "00425c0b84cc57a5f72b8736c67c8e9e04b2aebcfba30bd35c8853b122f9b7e6",
+    "nonce": 146,
+    "merkle_root": "16c203a5bc1061d834b18e96014f31672ba87ff544e6b6170ee3bb6463bf35bd"
+  },
+  {
+    "index": 9,
+    "timestamp": "2026-05-30T07:06:24.827109+00:00",
+    "transaction_data": {
+      "test": true,
+      "transaction_id": "SELFTEST-001"
+    },
+    "previous_hash": "00425c0b84cc57a5f72b8736c67c8e9e04b2aebcfba30bd35c8853b122f9b7e6",
+    "hash": "004eb28ed5b1216ed5ad4f5b2b2318ebf46ccbe2f9541273cac272ce8e291c27",
+    "nonce": 296,
+    "merkle_root": "16c203a5bc1061d834b18e96014f31672ba87ff544e6b6170ee3bb6463bf35bd"
   }
 ]

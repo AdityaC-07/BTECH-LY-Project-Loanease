@@ -3,6 +3,7 @@ import asyncio
 import contextvars
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 # Avoid joblib/loky hanging on some Windows setups during model self-test
