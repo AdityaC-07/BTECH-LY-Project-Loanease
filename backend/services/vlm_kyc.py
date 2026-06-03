@@ -5,6 +5,7 @@ import os
 import fitz  # pymupdf
 import logging
 import asyncio
+from datetime import datetime, date
 from PIL import Image
 from io import BytesIO
 from typing import Optional
@@ -92,6 +93,79 @@ def _model_label() -> str:
     return "bedrock-llama-vlm" if _vlm_provider == "bedrock" else "gemini-vlm"
 
 
+def calculate_age_from_dob(dob_string: str) -> dict:
+    """
+    Calculate exact age from a DOB string using the current real-world date.
+    Supports common date formats and year-only values.
+    """
+    today = date.today()
+
+    if not dob_string:
+        return {
+            "age": None,
+            "age_eligible": None,
+            "dob_formatted": None,
+        }
+
+    dob_string = dob_string.strip()
+
+    formats = [
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%Y-%m-%d",
+        "%d %b %Y",
+        "%d %B %Y",
+        "%b %d, %Y",
+        "%d/%m/%y",
+        "%d.%m.%Y",
+    ]
+
+    parsed_dob = None
+    for fmt in formats:
+        try:
+            parsed_dob = datetime.strptime(dob_string, fmt).date()
+            break
+        except ValueError:
+            continue
+
+    if not parsed_dob:
+        year_match = re.search(r"\b(19|20)\d{2}\b", dob_string)
+        if year_match:
+            birth_year = int(year_match.group())
+            age = today.year - birth_year
+            return {
+                "age": age,
+                "age_eligible": 21 <= age <= 65,
+                "dob_formatted": dob_string,
+                "age_approximate": True,
+                "calculated_at": today.isoformat(),
+            }
+        return {
+            "age": None,
+            "age_eligible": None,
+            "dob_formatted": dob_string,
+        }
+
+    age = today.year - parsed_dob.year
+    try:
+        birthday_this_year = date(today.year, parsed_dob.month, parsed_dob.day)
+    except ValueError:
+        birthday_this_year = date(today.year, 3, 1)
+    if today < birthday_this_year:
+        age -= 1
+
+    return {
+        "age": age,
+        "age_eligible": 21 <= age <= 65,
+        "dob_formatted": parsed_dob.strftime("%d/%m/%Y"),
+        "birth_year": parsed_dob.year,
+        "birth_month": parsed_dob.month,
+        "birth_day": parsed_dob.day,
+        "calculated_at": today.isoformat(),
+        "age_approximate": False,
+    }
+
+
 # Compatibility aliases for drop-in migration from services.ocr
 init_ocr = init_vlm
 ocr_ready = vlm_ready
@@ -171,7 +245,7 @@ Respond ONLY with this exact JSON. No explanation, no markdown, just JSON:
   "name": "FULL NAME or null",
   "fathers_name": "FATHERS NAME or null",
   "date_of_birth": "DD/MM/YYYY or null",
-  "age": <integer or null>,
+    "age": null,
   "document_type_confirmed": true/false,
   "confidence": <0.0 to 1.0>,
   "extraction_notes": "any issues noticed"
@@ -248,28 +322,13 @@ def _validate_pan_data(data: dict) -> dict:
     else:
         issues.append("PAN number not found")
 
-    dob = data.get("date_of_birth")
-    age = data.get("age")
-    age_eligible = None
+    age_data = calculate_age_from_dob(data.get("date_of_birth"))
+    age = age_data["age"]
+    age_eligible = age_data["age_eligible"]
+    dob = age_data["dob_formatted"]
 
-    if dob and not age:
-        try:
-            from datetime import datetime
-
-            for fmt in ["%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"]:
-                try:
-                    dt = datetime.strptime(dob, fmt)
-                    age = (datetime.now() - dt).days // 365
-                    break
-                except ValueError:
-                    continue
-        except Exception:
-            pass
-
-    if age:
-        age_eligible = 21 <= age <= 65
-        if not age_eligible:
-            issues.append(f"Age {age} not eligible (must be 21-65)")
+    if age is not None and not age_eligible:
+        issues.append(f"Age {age} not eligible (must be 21-65)")
 
     return {
         "success": pan is not None,
@@ -281,6 +340,7 @@ def _validate_pan_data(data: dict) -> dict:
             "date_of_birth": dob,
             "age": age,
             "age_eligible": age_eligible,
+            "age_calculated_at": age_data.get("calculated_at"),
         },
         "validation": {
             "overall_valid": pan is not None and not issues,
@@ -330,7 +390,7 @@ Respond ONLY with this exact JSON:
   "name": "Full Name or null",
   "date_of_birth": "DD/MM/YYYY or null",
   "year_of_birth": <YYYY integer or null>,
-  "age": <integer or null>,
+    "age": null,
   "gender": "Male/Female/Other or null",
   "address": {
     "full": "complete address or null",
@@ -356,23 +416,28 @@ async def extract_aadhaar(contents: bytes, filename: str) -> dict:
         img = _file_to_pil(contents, filename)
         img_part = _pil_to_image_part(img)
 
-        vlm_task = asyncio.create_task(
-            _call_vlm_with_fallback(
-                prompt=AADHAAR_PROMPT,
-                image_part=img_part,
-                task="Aadhaar extraction",
-            )
+        vlm_result_raw = await _call_vlm_with_fallback(
+            prompt=AADHAAR_PROMPT,
+            image_part=img_part,
+            task="Aadhaar extraction",
         )
-        qr_task = asyncio.create_task(process_aadhaar_with_qr(contents, filename, img))
 
-        vlm_result_raw, qr_result = await asyncio.gather(vlm_task, qr_task, return_exceptions=True)
-
-        if isinstance(vlm_result_raw, Exception):
-            logger.error(f"VLM failed: {vlm_result_raw}")
-            vlm_result_raw = "{}"
-        if isinstance(qr_result, Exception):
-            logger.error(f"QR failed: {qr_result}")
-            qr_result = {"qr_found": False}
+        qr_result = {"qr_found": False}
+        try:
+            qr_result = await asyncio.wait_for(
+                process_aadhaar_with_qr(contents, filename, img),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Aadhaar QR scan timed out - continuing without QR")
+            qr_result = {
+                "qr_found": False,
+                "timed_out": True,
+                "message": "QR scan timed out. Proceeding with VLM extraction only.",
+            }
+        except Exception as exc:
+            logger.error(f"QR failed: {exc}")
+            qr_result = {"qr_found": False, "error": str(exc)}
 
         data = _parse_json_response(vlm_result_raw)
         validated = _validate_aadhaar_data(data)
@@ -435,27 +500,12 @@ def _validate_aadhaar_data(data: dict) -> dict:
 
     last4 = aadhaar[-4:] if aadhaar else data.get("aadhaar_last4")
 
-    age = data.get("age")
-    dob = data.get("date_of_birth")
+    dob_raw = (data.get("date_of_birth") or str(data.get("year_of_birth", ""))).strip()
+    age_data = calculate_age_from_dob(dob_raw)
+    age = age_data["age"]
+    age_eligible = age_data["age_eligible"]
+    dob = age_data["dob_formatted"] if data.get("date_of_birth") else None
     yob = data.get("year_of_birth")
-    age_eligible = None
-
-    if not age:
-        if dob:
-            try:
-                from datetime import datetime
-
-                dt = datetime.strptime(dob, "%d/%m/%Y")
-                age = (datetime.now() - dt).days // 365
-            except Exception:
-                pass
-        elif yob:
-            from datetime import datetime
-
-            age = datetime.now().year - yob
-
-    if age:
-        age_eligible = 21 <= age <= 65
 
     mobile = data.get("mobile_number")
     if mobile:
@@ -480,6 +530,7 @@ def _validate_aadhaar_data(data: dict) -> dict:
             "year_of_birth": yob,
             "age": age,
             "age_eligible": age_eligible,
+            "age_calculated_at": age_data.get("calculated_at"),
             "gender": data.get("gender"),
             "address": data.get("address", {}),
             "mobile_number": mobile,
@@ -496,6 +547,18 @@ def _validate_aadhaar_data(data: dict) -> dict:
         "confidence_score": data.get("confidence", 0.0),
         "model_used": _model_label(),
     }
+
+
+def test_age_calculation() -> None:
+    """Verify DOB-to-age conversion uses the current date."""
+    result = calculate_age_from_dob("06/03/2005")
+    today = date.today()
+    expected_min = today.year - 2005 - 1
+    expected_max = today.year - 2005
+    assert expected_min <= result["age"] <= expected_max, (
+        f"Age calculation wrong: {result['age']} for DOB 06/03/2005"
+    )
+    print(f"Age test PASS: 06/03/2005 -> age {result['age']} (today: {today})")
 
 
 # ─── CROSS VALIDATION ───────────────────

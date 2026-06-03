@@ -46,6 +46,18 @@ interface Message {
   variant?: "system";
 }
 
+interface QuickEligibilityPreview {
+  loanAmount: number;
+  monthlyIncome: number;
+  tenureMonths: number;
+  assumedRate: number;
+  estimatedEmi: number;
+  emiToIncomeRatio: number;
+  maxAffordableEmi: number;
+  status: "Strong" | "Conditional" | "Needs review";
+  note: string;
+}
+
 interface ChatInterfaceProps {
   onClose: () => void;
 }
@@ -112,7 +124,154 @@ const missingFieldMessage = (fields: string[]) => {
   return fields.length === 1 ? `${joined} is missing` : `${joined} are missing`;
 };
 
+const MONEY_PATTERN = /(?:₹|rs\.?|inr)?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*(lakh|lakhs|lac|lacs|crore|cr|k|thousand)?/i;
+
+const extractApplicantNameFromMessage = (message: string, existingName?: string) => {
+  if (existingName) return existingName;
+
+  const text = message.trim().toLowerCase();
+  if (!text) return null;
+
+  const patterns = [
+    /\bmy name is ([a-z][a-z\s]{1,40})\b/i,
+    /\bi am ([a-z][a-z\s]{1,40})\b/i,
+    /\bi'm ([a-z][a-z\s]{1,40})\b/i,
+    /\bmera naam ([a-z][a-z\s]{1,40})\b/i,
+    /\bmai(n)? ([a-z][a-z\s]{1,40})\b/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match?.[1]) continue;
+
+    const candidate = match[1].trim().replace(/\b(apply|want|need|for|to|loan|please|help)\b.*$/i, "").trim();
+    if (candidate && candidate.split(/\s+/).length <= 4) {
+      return candidate
+        .split(/\s+/)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ");
+    }
+  }
+
+  return null;
+};
+
+const parseMoneyAmount = (value: string): number | null => {
+  const match = value.match(MONEY_PATTERN);
+  if (!match?.[1]) return null;
+
+  const numericValue = Number.parseFloat(match[1].replace(/,/g, ""));
+  if (!Number.isFinite(numericValue)) return null;
+
+  const suffix = (match[2] || "").toLowerCase();
+  let amount = numericValue;
+
+  if (suffix === "lakh" || suffix === "lakhs" || suffix === "lac" || suffix === "lacs") {
+    amount *= 100000;
+  } else if (suffix === "crore" || suffix === "cr") {
+    amount *= 10000000;
+  } else if (suffix === "k" || suffix === "thousand") {
+    amount *= 1000;
+  }
+
+  return Math.round(amount);
+};
+
+const parseMoneyAmounts = (value: string): number[] => {
+  const regex = new RegExp(MONEY_PATTERN.source, "gi");
+  const results: number[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(value)) !== null) {
+    if (!match[1]) continue;
+
+    const numericValue = Number.parseFloat(match[1].replace(/,/g, ""));
+    if (!Number.isFinite(numericValue)) continue;
+
+    const suffix = (match[2] || "").toLowerCase();
+    let amount = numericValue;
+
+    if (suffix === "lakh" || suffix === "lakhs" || suffix === "lac" || suffix === "lacs") {
+      amount *= 100000;
+    } else if (suffix === "crore" || suffix === "cr") {
+      amount *= 10000000;
+    } else if (suffix === "k" || suffix === "thousand") {
+      amount *= 1000;
+    }
+
+    results.push(Math.round(amount));
+  }
+
+  return results;
+};
+
+const extractMoneyByKeywords = (message: string, keywords: string[], allowFallback = false) => {
+  const lower = message.toLowerCase();
+
+  for (const keyword of keywords) {
+    const keywordIndex = lower.indexOf(keyword);
+    if (keywordIndex < 0) continue;
+
+    const afterSlice = message.slice(keywordIndex, Math.min(message.length, keywordIndex + 90));
+    const afterMatches = parseMoneyAmounts(afterSlice);
+    if (afterMatches.length) {
+      return afterMatches[0];
+    }
+
+    const beforeStart = Math.max(0, keywordIndex - 50);
+    const beforeSlice = message.slice(beforeStart, keywordIndex + keyword.length);
+    const beforeMatches = parseMoneyAmounts(beforeSlice);
+    if (beforeMatches.length) {
+      return beforeMatches[beforeMatches.length - 1];
+    }
+  }
+
+  return allowFallback ? parseMoneyAmount(message) : null;
+};
+
+const extractLoanAmountFromMessage = (message: string, allowFallback = false): number | null =>
+  extractMoneyByKeywords(message, ["loan", "amount", "borrow", "need", "require", "apply", "finance"], allowFallback);
+
+const extractMonthlyIncomeFromMessage = (message: string, allowFallback = false): number | null =>
+  extractMoneyByKeywords(message, ["income", "salary", "monthly", "per month", "per-month", "take home", "take-home", "in-hand", "ctc"], allowFallback);
+
+const buildQuickEligibilityPreview = (loanAmount: number, monthlyIncome: number): QuickEligibilityPreview => {
+  const tenureMonths = 60;
+  const assumedRate = 11.5;
+  const monthlyRate = assumedRate / 1200;
+  const base = monthlyRate === 0
+    ? loanAmount / tenureMonths
+    : (loanAmount * monthlyRate * Math.pow(1 + monthlyRate, tenureMonths)) / (Math.pow(1 + monthlyRate, tenureMonths) - 1);
+  const estimatedEmi = Math.max(1, Math.round(base));
+  const maxAffordableEmi = Math.round(monthlyIncome * 0.4);
+  const emiToIncomeRatio = monthlyIncome > 0 ? estimatedEmi / monthlyIncome : 1;
+
+  let status: QuickEligibilityPreview["status"] = "Needs review";
+  let note = "This request may need a smaller amount or a longer tenure to stay within a safe EMI range.";
+
+  if (emiToIncomeRatio <= 0.33) {
+    status = "Strong";
+    note = "This looks comfortably affordable on a standard repayment profile.";
+  } else if (emiToIncomeRatio <= 0.4) {
+    status = "Conditional";
+    note = "This is workable, but the final credit check may tighten the approved terms.";
+  }
+
+  return {
+    loanAmount,
+    monthlyIncome,
+    tenureMonths,
+    assumedRate,
+    estimatedEmi,
+    emiToIncomeRatio,
+    maxAffordableEmi,
+    status,
+    note,
+  };
+};
+
 const OCR_REQUEST_TIMEOUT_MS = 120000;
+const AADHAAR_REQUEST_TIMEOUT_MS = 20000;
 
 interface CreditScoreData {
   credit_score: number;
@@ -211,6 +370,8 @@ interface UserData {
   name: string;
   pan: string;
   creditScore: number;
+  preKycLoanAmount?: number;
+  preKycMonthlyIncome?: number;
   selectedLoan: {
     amount: number;
     interest: number;
@@ -265,6 +426,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [showPanUploadCard, setShowPanUploadCard] = useState(false);
   const [showAadhaarUploadCard, setShowAadhaarUploadCard] = useState(false);
   const [showAadhaarQrUploadCard, setShowAadhaarQrUploadCard] = useState(false);
+  const [aadhaarQrAttempts, setAadhaarQrAttempts] = useState(0);
   const [isKycProcessing, setIsKycProcessing] = useState(false);
   const [kycProcessingText, setKycProcessingText] = useState("");
   const [kycProgress, setKycProgress] = useState(0);
@@ -336,6 +498,14 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [isRepeatBorrower, setIsRepeatBorrower] = useState(false);
   const [repeatBorrowerData, setRepeatBorrowerData] = useState<RepeatBorrowerData | null>(null);
 
+  const quickEligibilityPreview = useMemo(() => {
+    if (!userData.preKycLoanAmount || !userData.preKycMonthlyIncome) {
+      return null;
+    }
+
+    return buildQuickEligibilityPreview(userData.preKycLoanAmount, userData.preKycMonthlyIncome);
+  }, [userData.preKycLoanAmount, userData.preKycMonthlyIncome]);
+
   const handleViewAnalytics = () => {
     window._analyticsSessionId = userData.sessionId;
     localStorage.setItem("loanease_session_id", userData.sessionId);
@@ -357,6 +527,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     setShowPanUploadCard(false);
     setShowAadhaarUploadCard(false);
     setShowAadhaarQrUploadCard(false);
+    setAadhaarQrAttempts(0);
     setShowPanConfirmCard(false);
     setShowKycVerifiedCard(false);
     setShowOtpCard(false);
@@ -366,6 +537,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       name: "",
       pan: "",
       creditScore: 0,
+      preKycLoanAmount: undefined,
+      preKycMonthlyIncome: undefined,
       selectedLoan: { amount: 0, interest: 0, tenure: 0, emi: 0 },
       assessmentId: "",
       sessionId: nextSessionId,
@@ -540,6 +713,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     if (userData.stage === "credit") return "Your score is ready. How would you like to proceed?";
     if (userData.stage === "offer") return "Tell me your loan amount or ask to compare offers...";
     if (userData.stage === "negotiate") return "Ask for a better rate or accept the current offer...";
+    if (quickEligibilityPreview && !showPanUploadCard) return "Update the loan amount or monthly income, or proceed to KYC";
     return "Type your message...";
   };
 
@@ -680,6 +854,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     setPendingOffer(null);
     setShowKfsCard(false);
     setKfsAcknowledged(false);
+    setAadhaarQrAttempts(0);
     setSelectedHolidayMonths(0);
     setEmiHolidayOption(null);
     toast.info("Started a new session.");
@@ -707,11 +882,11 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           setShowLoanOffers(true);
         }, 1500);
       } else {
-        activateAgent("KYC Verification Agent", "Let's begin your application.");
+        activateAgent("Master Agent", "Let's begin with a quick eligibility preview before KYC.");
         addBotMessage(
           kycText(
-            "Hello! I'm your Loan Assistant. What is your full name?",
-            "नमस्ते! मैं आपका Loan Assistant हूँ। आपका पूरा नाम क्या है?"
+            "Hello! Share your name, desired loan amount, and monthly income. I'll show a quick eligibility preview before KYC.",
+            "नमस्ते! अपना नाम, desired loan amount, और monthly income share करें। मैं KYC से पहले एक quick eligibility preview दिखाऊँगा।"
           )
         );
       }
@@ -756,6 +931,17 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         variant: "system",
       },
     ]);
+  };
+
+  const handleProceedToKyc = () => {
+    setShowPanUploadCard(true);
+    activateAgent("KYC Verification Agent", "Quick eligibility preview completed. Starting document verification.");
+    addBotMessage(
+      kycText(
+        "Great. Please upload your PAN card to continue with KYC.",
+        "बहुत बढ़िया। KYC जारी रखने के लिए अपना PAN कार्ड अपलोड करें।"
+      )
+    );
   };
 
   const DEVANAGARI_DIGIT_MAP: Record<string, string> = {
@@ -970,7 +1156,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       const response = await fetch(ENDPOINTS.kyc_aadhaar, {
         method: "POST",
         body: form,
-        signal: AbortSignal.timeout(OCR_REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(AADHAAR_REQUEST_TIMEOUT_MS),
       });
 
       if (!response.ok) {
@@ -1341,8 +1527,11 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     } catch (error) {
       stopKycProgress(timer);
       const msg = error instanceof Error
-        ? (error.name === "TimeoutError"
-            ? kycText("Scan timed out. Try a smaller or clearer image.", "स्कैन timeout हो गया। छोटी या स्पष्ट छवि आज़माएं।")
+        ? (error.name === "TimeoutError" || error.name === "AbortError"
+            ? kycText(
+                "Aadhaar scan took too long. QR verification will be skipped and OTP will be used instead.",
+                "Aadhaar स्कैन में अधिक समय लगा। QR verification छोड़ी जाएगी और OTP verification का उपयोग होगा।"
+              )
             : error.message.includes("fetch")
               ? kycText("Could not connect to server. Check your connection.", "सर्वर से कनेक्ट नहीं हो सका। कनेक्शन जांचें।")
               : `${error.message}`)
@@ -1516,14 +1705,41 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       stopKycProgress(timer);
 
       if (!qrResult?.qr_parsed || qrResult?.uidai_signed === false) {
-        addBotMessage(
-          kycText(
-            "Aadhaar QR could not be cryptographically verified. Please upload a clearer Aadhaar card.",
-            "Aadhaar QR cryptographically verify नहीं हो सका। कृपया एक स्पष्ट Aadhaar card upload करें।"
-          )
+        setAadhaarQrAttempts((current) => current + 1);
+
+        const fallbackMessage = kycText(
+          "I couldn't verify the Aadhaar QR signature from this image, so I’m moving ahead with OTP to finish KYC.",
+          "इस image से Aadhaar QR signature verify नहीं हो सका, इसलिए KYC पूरा करने के लिए मैं OTP से आगे बढ़ रहा हूँ।"
         );
-        setShowAadhaarQrUploadCard(true);
-        return;
+
+        addBotMessage(fallbackMessage);
+
+        resetOtpFlow();
+        try {
+          const otpResult = await callKycSendOtpAPI();
+          const mobileLast4 = otpResult.mobile_last4 || aadhaarKycData?.mobile_last4 || "";
+          setOtpSentToLast4(mobileLast4);
+          setOtpAttemptsRemaining(3);
+          setOtpSecondsRemaining(Number(otpResult.expires_in_seconds || 300));
+          setOtpResendCooldown(60);
+          setOtpDigits(Array(6).fill(""));
+          setShowOtpCard(true);
+          setOtpStatusMessage(
+            kycText(
+              `OTP sent to mobile ending ${mobileLast4}. Enter the 6-digit code to continue.`,
+              `OTP मोबाइल नंबर के अंतिम ${mobileLast4} अंक पर भेजा गया है। आगे बढ़ने के लिए 6-digit code दर्ज करें।`
+            )
+          );
+          if (otpResult.demo_otp) {
+            addBotMessage(kycText(`Demo OTP: ${otpResult.demo_otp}`, `Demo OTP: ${otpResult.demo_otp}`));
+          }
+          return;
+        } catch (otpError) {
+          const otpMessage = otpError instanceof Error ? otpError.message : kycText("Unable to continue to OTP verification.", "OTP verification आगे नहीं बढ़ सकी।");
+          addBotMessage(otpMessage);
+          setShowAadhaarQrUploadCard(true);
+          return;
+        }
       }
 
       setKycFactors((prev) => ({ ...prev, fa2: true, current: 3 }));
@@ -1562,6 +1778,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
               : error.message)
         : kycText("Aadhaar QR scan failed. Please try again.", "Aadhaar QR scan विफल। पुनः प्रयास करें।");
       addBotMessage(msg);
+      setAadhaarQrAttempts((current) => current + 1);
       setShowAadhaarQrUploadCard(true);
     }
   };
@@ -1710,6 +1927,61 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
     setTimeout(async () => {
       let botResponse = "";
+
+      const isPreKycFlow = !showPanUploadCard && !showAadhaarUploadCard && !showPanConfirmCard && !showKycVerifiedCard && !showAadhaarQrUploadCard && !showOtpCard && !showCreditScoreCard && !showLoanOffers && !showSanction;
+
+      if (isPreKycFlow) {
+        if (userMessage.toLowerCase().includes("human") || userMessage.toLowerCase().includes("talk to agent")) {
+          handleEscalationTrigger();
+          setIsTyping(false);
+          return;
+        }
+
+        const capturedName = extractApplicantNameFromMessage(userMessage, userData.name);
+        const currentLoanAmount = userData.preKycLoanAmount;
+        const currentMonthlyIncome = userData.preKycMonthlyIncome;
+        const capturedLoanAmount = extractLoanAmountFromMessage(userMessage, currentLoanAmount == null);
+        const capturedMonthlyIncome = extractMonthlyIncomeFromMessage(userMessage, currentMonthlyIncome == null);
+
+        const nextUserData = {
+          ...userData,
+          name: capturedName || userData.name,
+          preKycLoanAmount: capturedLoanAmount ?? currentLoanAmount,
+          preKycMonthlyIncome: capturedMonthlyIncome ?? currentMonthlyIncome,
+        };
+
+        setUserData(nextUserData);
+
+        const hasAmount = nextUserData.preKycLoanAmount != null;
+        const hasIncome = nextUserData.preKycMonthlyIncome != null;
+
+        if (hasAmount && hasIncome) {
+          activateAgent("Master Agent", "Quick eligibility preview prepared from loan amount and income.");
+          botResponse = language === "en"
+            ? "Your quick eligibility preview is ready below. Review it, then tap Proceed to KYC when you're comfortable."
+            : "आपका quick eligibility preview नीचे तैयार है। इसे देखें, फिर comfortable होने पर Proceed to KYC दबाएँ।";
+        } else {
+          const missingFields = [] as string[];
+          if (!hasAmount) missingFields.push(language === "en" ? "loan amount" : "loan amount");
+          if (!hasIncome) missingFields.push(language === "en" ? "monthly income" : "monthly income");
+
+          const missingText = missingFieldMessage(missingFields);
+          botResponse = language === "en"
+            ? `Thanks${nextUserData.name ? `, ${nextUserData.name}` : ""}. Please share your ${missingText} so I can show a quick eligibility preview before KYC.`
+            : `${nextUserData.name ? `${nextUserData.name}, ` : ""}कृपया अपना ${missingText} share करें ताकि मैं KYC से पहले quick eligibility preview दिखा सकूँ।`;
+        }
+
+        const newMsg: Message = { id: prevMessages.length + 1, text: botResponse, isBot: true };
+        setMessages((prev) => {
+          const updated = sourceMessageId
+            ? prev.map((message) => (message.id === sourceMessageId ? { ...message, status: "responded" as const } : message))
+            : prev;
+          return [...updated, newMsg];
+        });
+        saveSession([...prevMessages, newMsg], nextUserData.stage, nextUserData);
+        setIsTyping(false);
+        return;
+      }
 
       switch (conversationStep.current) {
         case 0:
@@ -2906,6 +3178,59 @@ ${guidance.repayment_history_impact || ""}`.trim(),
             </>
           )}
 
+        {quickEligibilityPreview && !showPanUploadCard && (
+          <div className="w-full max-w-md rounded-2xl border border-emerald-500/30 bg-gradient-to-br from-emerald-500/12 via-card to-card/95 p-5 shadow-[0_14px_34px_rgba(16,185,129,0.12)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-emerald-200">Quick Eligibility Preview</p>
+                <h3 className="mt-1 text-lg font-black text-foreground">{quickEligibilityPreview.status}</h3>
+              </div>
+              <span className={cn(
+                "rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em]",
+                quickEligibilityPreview.status === "Strong"
+                  ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200"
+                  : quickEligibilityPreview.status === "Conditional"
+                    ? "border-amber-400/40 bg-amber-400/10 text-amber-200"
+                    : "border-rose-400/40 bg-rose-400/10 text-rose-200"
+              )}>
+                {quickEligibilityPreview.status}
+              </span>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-xl border border-border/70 bg-background/60 p-3">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Requested Loan</div>
+                <div className="mt-1 text-base font-bold text-foreground">{formatIndianRupees(quickEligibilityPreview.loanAmount)}</div>
+              </div>
+              <div className="rounded-xl border border-border/70 bg-background/60 p-3">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Monthly Income</div>
+                <div className="mt-1 text-base font-bold text-foreground">{formatIndianRupees(quickEligibilityPreview.monthlyIncome)}</div>
+              </div>
+              <div className="rounded-xl border border-border/70 bg-background/60 p-3">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Estimated EMI</div>
+                <div className="mt-1 text-base font-bold text-foreground">{formatIndianRupees(quickEligibilityPreview.estimatedEmi)}</div>
+                <div className="mt-1 text-[11px] text-muted-foreground">Assumes {quickEligibilityPreview.assumedRate.toFixed(1)}% for {quickEligibilityPreview.tenureMonths} months</div>
+              </div>
+              <div className="rounded-xl border border-border/70 bg-background/60 p-3">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">EMI / Income</div>
+                <div className="mt-1 text-base font-bold text-foreground">{Math.round(quickEligibilityPreview.emiToIncomeRatio * 100)}%</div>
+                <div className="mt-1 text-[11px] text-muted-foreground">Target safe cap: {formatIndianRupees(quickEligibilityPreview.maxAffordableEmi)}</div>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/8 px-4 py-3 text-sm text-foreground/90">
+              {quickEligibilityPreview.note}
+            </div>
+
+            <Button
+              className="mt-4 w-full bg-[#F5C518] font-bold text-black hover:bg-[#e6b800]"
+              onClick={handleProceedToKyc}
+            >
+              Proceed to KYC →
+            </Button>
+          </div>
+        )}
+
         {isKycProcessing && (
           <div className="max-w-md rounded-xl border border-yellow-500/40 bg-card p-4 shadow-lg shadow-yellow-500/10 animate-in fade-in zoom-in duration-300">
             <div className="flex items-start gap-4">
@@ -3051,10 +3376,10 @@ ${guidance.repayment_history_impact || ""}`.trim(),
           <div className="w-full max-w-md self-start rounded-xl border-2 border-dashed border-cyan-500/70 bg-gradient-to-br from-card to-card/85 p-5 shadow-lg shadow-cyan-500/10">
             <div className="mb-1 flex items-center gap-2 text-base font-semibold text-foreground">
               <ShieldCheck className="h-4 w-4 text-cyan-400" />
-              {kycText("Upload Aadhaar Again for QR Scan", "QR scan के लिए Aadhaar फिर से अपलोड करें")}
+              {kycText("Re-upload Aadhaar for QR Scan", "QR scan के लिए Aadhaar दोबारा अपलोड करें")}
             </div>
             <div className="mb-3 text-xs text-muted-foreground">
-              {kycText("FA2: Secure QR verification and Verhoeff-backed validation", "FA2: Secure QR verification और Verhoeff-backed validation")}
+              {kycText("If QR verification fails again, I’ll continue with OTP automatically.", "अगर QR verification फिर fail हो, तो मैं automatically OTP से आगे बढ़ जाऊँगा।")}
             </div>
             <input
               ref={aadhaarInputRef}

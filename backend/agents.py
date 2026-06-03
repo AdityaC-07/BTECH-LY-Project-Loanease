@@ -23,6 +23,8 @@ from typing import Any, Callable
 from dotenv import load_dotenv
 from groq import Groq
 
+from core.config import settings
+
 load_dotenv()
 
 
@@ -185,7 +187,7 @@ class BaseAgent(ABC):
         """
         try:
             response = self.groq_client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model=settings.GROQ_MODEL_PRIMARY,
                 messages=[
                     {"role": "system", "content": self.system_prompt},
                     {

@@ -27,7 +27,7 @@ from startup_selftest import run_startup_selftest
 from services.groq_service import GroqService
 from services.memory import ConversationMemory
 from services.otp_service import init_twilio
-from services.vlm_kyc import init_vlm, vlm_ready
+from services.vlm_kyc import init_vlm, vlm_ready, test_age_calculation
 from core.config import settings
 from core.session import session_store
 from slowapi import _rate_limit_exceeded_handler
@@ -89,6 +89,7 @@ async def lifespan(app: FastAPI):
         init_vlm()
         if vlm_ready():
             logger.info("VLM KYC engine initialized")
+            test_age_calculation()
         else:
             logger.warning("VLM KYC engine unavailable; KYC extraction endpoints may return degraded status")
     except Exception as exc:
@@ -222,10 +223,26 @@ async def root():
 # Master health check across all agents
 @app.get("/health")
 async def health():
+    groq_service = getattr(app.state, "groq_service", None)
+    groq_status = groq_service.status() if groq_service is not None else {
+        "connected": False,
+        "model": None,
+        "fallback_used": False,
+        "fallback_activations": 0,
+        "last_successful_call": None,
+        "primary_model": settings.GROQ_MODEL_PRIMARY,
+        "fallback_model": settings.GROQ_MODEL_FALLBACK,
+    }
     return {
         "status": "ok",
         "version": app.version,
-        "groq": "connected",
+        "groq": {
+            "status": groq_status,
+            "model": settings.GROQ_MODEL_PRIMARY,
+            "api_key_set": bool(settings.GROQ_API_KEY or os.getenv("GROQ_API_KEY")),
+            "last_successful_call": groq_status.get("last_successful_call"),
+            "fallback_activations": groq_status.get("fallback_activations", 0),
+        },
     }
 
 

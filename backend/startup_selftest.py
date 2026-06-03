@@ -63,6 +63,7 @@ async def _run_startup_selftest(app: Any) -> Dict[str, str]:
             )
             if connected:
                 results["groq"] = "✅ PASS"
+                await test_groq(groq_service)
             else:
                 results["groq"] = "⚠️ FALLBACK: connection failed but service initialized"
         else:
@@ -107,3 +108,18 @@ async def _run_startup_selftest(app: Any) -> Dict[str, str]:
     print("=" * 44 + "\n")
 
     return results
+
+
+async def test_groq(groq_service: Any) -> bool:
+    try:
+        resp, _trace = await groq_service.chat(
+            system_prompt="Reply: OK",
+            messages=[{"role": "user", "content": "Reply: OK"}],
+            max_tokens=5,
+        )
+        if "ok" in (resp or "").lower():
+            logger.info("✅ Groq LLaMA 70B: Active")
+            return True
+    except Exception as e:
+        logger.warning(f"⚠️ Groq test failed: {e}")
+    return False

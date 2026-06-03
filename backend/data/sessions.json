@@ -310,5 +310,238 @@
       },
       "kyc_pan_done": true
     }
+  },
+  "LE-2026-71171": {
+    "id": "LE-2026-71171",
+    "created_at": "2026-06-03T05:39:08.414359",
+    "expires_at": "2026-06-04T05:39:08.414411",
+    "stage": "INITIATED",
+    "agent_log": [
+      {
+        "agent": "MasterOrchestratorAgent",
+        "action": "INITIATED_SESSION",
+        "reasoning": "New loan inquiry received. Starting orchestration.",
+        "status": "SUCCESS"
+      }
+    ],
+    "data": {
+      "pan_data": {
+        "pan_number": "IODPD3228A",
+        "name": "AGNIV DUTTA",
+        "fathers_name": "KINGSHUK DUTTA",
+        "date_of_birth": "06/03/2005",
+        "age": 19,
+        "age_eligible": false
+      },
+      "kyc_pan_done": true
+    }
+  },
+  "LE-2026-56820": {
+    "id": "LE-2026-56820",
+    "created_at": "2026-06-03T05:46:58.181840",
+    "expires_at": "2026-06-04T05:46:58.181869",
+    "stage": "INITIATED",
+    "agent_log": [
+      {
+        "agent": "MasterOrchestratorAgent",
+        "action": "INITIATED_SESSION",
+        "reasoning": "New loan inquiry received. Starting orchestration.",
+        "status": "SUCCESS"
+      }
+    ],
+    "data": {
+      "pan_data": {
+        "pan_number": "IODPD3228A",
+        "name": "AGNIV DUTTA",
+        "fathers_name": "KINGSHUK DUTTA",
+        "date_of_birth": "06/03/2005",
+        "age": 19,
+        "age_eligible": false
+      },
+      "kyc_pan_done": true
+    }
+  },
+  "LE-2026-62648": {
+    "id": "LE-2026-62648",
+    "created_at": "2026-06-03T06:36:39.910600",
+    "expires_at": "2026-06-04T06:36:39.910611",
+    "stage": "KYC_QR_PENDING",
+    "agent_log": [
+      {
+        "agent": "MasterOrchestratorAgent",
+        "action": "INITIATED_SESSION",
+        "reasoning": "New loan inquiry received. Starting orchestration.",
+        "status": "SUCCESS"
+      },
+      {
+        "agent": "kyc",
+        "action": "pan_extraction",
+        "success": true,
+        "confidence": 0.98,
+        "processing_time_ms": 11276
+      },
+      {
+        "agent": "kyc",
+        "action": "aadhaar_extraction",
+        "success": true,
+        "confidence": 0.98,
+        "processing_time_ms": 6574
+      },
+      {
+        "agent": "kyc",
+        "action": "verification",
+        "success": true,
+        "kyc_status": "VERIFIED",
+        "reference_id": "KYC-2026-00004"
+      }
+    ],
+    "data": {
+      "pan_data": {
+        "pan_number": "IODPD3228A",
+        "name": "AGNIV DUTTA",
+        "fathers_name": "KINGSHUK DUTTA",
+        "date_of_birth": "06/03/2005",
+        "age": 21,
+        "age_eligible": true,
+        "age_calculated_at": "2026-06-03"
+      },
+      "kyc_pan_done": true,
+      "aadhaar_verhoeff_validation": {
+        "valid": true,
+        "reason": "VALID",
+        "message": "Aadhaar number passes Verhoeff checksum validation",
+        "algorithm": "Verhoeff (UIDAI)",
+        "last4": "4290",
+        "masked": "XXXX XXXX 4290"
+      },
+      "aadhaar_mobile": "8108706627",
+      "aadhaar_mobile_last4": "6627",
+      "aadhaar_data": {
+        "aadhaar_last4": "4290",
+        "aadhaar_number": "732487454290",
+        "name": "Agniv Dutta",
+        "date_of_birth": "06/03/2005",
+        "year_of_birth": 2005,
+        "age": 21,
+        "age_eligible": true,
+        "age_calculated_at": "2026-06-03",
+        "gender": "Male",
+        "address": {
+          "full": "T4/504, SPRING GROVE TOWERS, AKURLI ROAD, LOKHANDWALA CIRCLE, LOKHANDWALA TOWNSHIP, KANDIVALI EAST, VTC: Mumbai, PO: Kandivali East, District: Mumbai Suburban, State: Maharashtra, PIN Code: 400101",
+          "pincode": "400101",
+          "city": "Mumbai",
+          "state": "Maharashtra"
+        },
+        "mobile_number": "8108706627",
+        "mobile_last4": "6627",
+        "mobile_found": true
+      },
+      "kyc_aadhaar_done": true,
+      "kyc_cross_validated": true,
+      "fa1_document_passed": true,
+      "kyc_reference": "KYC-2026-00004"
+    }
+  },
+  "LE-2026-46932": {
+    "id": "LE-2026-46932",
+    "created_at": "2026-06-03T06:41:58.851908",
+    "expires_at": "2026-06-04T06:41:58.851932",
+    "stage": "INITIATED",
+    "agent_log": [
+      {
+        "agent": "MasterOrchestratorAgent",
+        "action": "INITIATED_SESSION",
+        "reasoning": "New loan inquiry received. Starting orchestration.",
+        "status": "SUCCESS"
+      },
+      {
+        "agent": "kyc",
+        "action": "pan_extraction",
+        "success": true,
+        "confidence": 0.98,
+        "processing_time_ms": 4583
+      },
+      {
+        "agent": "kyc",
+        "action": "aadhaar_extraction",
+        "success": true,
+        "confidence": 0.98,
+        "processing_time_ms": 7896
+      },
+      {
+        "agent": "kyc",
+        "action": "verification",
+        "success": true,
+        "kyc_status": "VERIFIED",
+        "reference_id": "KYC-2026-00004"
+      },
+      {
+        "agent": "MasterOrchestratorAgent",
+        "action": "INITIATED_SESSION",
+        "reasoning": "New loan inquiry received. Starting orchestration.",
+        "status": "SUCCESS"
+      }
+    ],
+    "data": {
+      "pan_data": {
+        "pan_number": "IODPD3228A",
+        "name": "AGNIV DUTTA",
+        "fathers_name": "KINGSHUK DUTTA",
+        "date_of_birth": "06/03/2005",
+        "age": 21,
+        "age_eligible": true,
+        "age_calculated_at": "2026-06-03"
+      },
+      "kyc_pan_done": true,
+      "aadhaar_verhoeff_validation": {
+        "valid": true,
+        "reason": "VALID",
+        "message": "Aadhaar number passes Verhoeff checksum validation",
+        "algorithm": "Verhoeff (UIDAI)",
+        "last4": "4290",
+        "masked": "XXXX XXXX 4290"
+      },
+      "aadhaar_mobile": "8108706627",
+      "aadhaar_mobile_last4": "6627",
+      "aadhaar_data": {
+        "aadhaar_last4": "4290",
+        "aadhaar_number": "732487454290",
+        "name": "Agniv Dutta",
+        "date_of_birth": "06/03/2005",
+        "year_of_birth": 2005,
+        "age": 21,
+        "age_eligible": true,
+        "age_calculated_at": "2026-06-03",
+        "gender": "Male",
+        "address": {
+          "full": "T4/504, SPRING GROVE TOWERS, AKURLI ROAD, LOKHANDWALA CIRCLE, LOKHANDWALA TOWNSHIP, KANDIVALI EAST, VTC: Mumbai, PO: Kandivali East, District: Mumbai Suburban, State: Maharashtra, PIN Code: 400101",
+          "pincode": "400101",
+          "city": "Mumbai",
+          "state": "Maharashtra"
+        },
+        "mobile_number": "8108706627",
+        "mobile_last4": "6627",
+        "mobile_found": true
+      },
+      "kyc_aadhaar_done": true,
+      "kyc_cross_validated": true,
+      "fa1_document_passed": true,
+      "kyc_reference": "KYC-2026-00004"
+    }
+  },
+  "LE-2026-20528": {
+    "id": "LE-2026-20528",
+    "created_at": "2026-06-03T07:11:36.902233",
+    "expires_at": "2026-06-04T07:11:36.902247",
+    "stage": "INITIATED",
+    "agent_log": [
+      {
+        "agent": "MasterOrchestratorAgent",
+        "action": "INITIATED_SESSION",
+        "reasoning": "New loan inquiry received. Starting orchestration.",
+        "status": "SUCCESS"
+      }
+    ],
+    "data": {}
   }
 }

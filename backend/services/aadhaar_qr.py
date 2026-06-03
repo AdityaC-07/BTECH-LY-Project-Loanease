@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import base64
+import asyncio
+import concurrent.futures
 import hashlib
 import json
 import logging
+import os
 import re
 import zlib
 from dataclasses import dataclass
@@ -17,38 +20,41 @@ from PIL import Image, UnidentifiedImageError
 
 logger = logging.getLogger("aadhaar_qr")
 
+QR_ENABLED = os.getenv("QR_SCAN_ENABLED", "true").lower() == "true"
+_qr_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="qr_scan")
+
 try:
     from pyzbar import pyzbar
 
     PYZBAR_AVAILABLE = True
-except ImportError:
+except Exception as exc:
     PYZBAR_AVAILABLE = False
-    logger.warning("pyzbar not available - QR decode fallback disabled")
+    logger.warning("pyzbar import failed - QR decode fallback disabled: %s", exc)
 
 try:
     import zxingcpp  # type: ignore
 
     ZXING_AVAILABLE = True
-except ImportError:
+except Exception as exc:
     ZXING_AVAILABLE = False
-    logger.warning("zxingcpp not available - install zxing-cpp for an additional QR fallback")
+    logger.warning("zxingcpp not available - install zxing-cpp for an additional QR fallback: %s", exc)
 
 try:
     import fitz  # PyMuPDF
 
     PYMUPDF_AVAILABLE = True
-except ImportError:
+except Exception as exc:
     PYMUPDF_AVAILABLE = False
-    logger.warning("PyMuPDF not available - PDF pages cannot be rendered")
+    logger.warning("PyMuPDF not available - PDF pages cannot be rendered: %s", exc)
 
 try:
     from pyaadhaar.decode import AadhaarSecureQr, AadhaarOldQr
     from pyaadhaar.utils import AadhaarQrAuto, isSecureQr
 
     PYAADHAAR_AVAILABLE = True
-except ImportError:
+except Exception as exc:
     PYAADHAAR_AVAILABLE = False
-    logger.warning("pyaadhaar not installed. Run: pip install pyaadhaar")
+    logger.warning("pyaadhaar import failed, QR verification disabled: %s", exc)
 
 
 @dataclass
@@ -84,75 +90,30 @@ def _normalize_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
 
+def _resize_for_qr(image: np.ndarray, max_size: int = 1200) -> np.ndarray:
+    """Resize images before QR decode to cap RAM and CPU usage."""
+    height, width = image.shape[:2]
+    if max(height, width) <= max_size:
+        return image
+
+    scale = max_size / max(height, width)
+    new_width = int(width * scale)
+    new_height = int(height * scale)
+    return cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
+
+
 def _prepare_variants(img_array: np.ndarray) -> list[_DecodeCandidate]:
-    """Generate aggressive preprocessed variants for small QR codes."""
-    candidates: list[_DecodeCandidate] = []
+    """Generate a small set of cheap QR preprocessing variants."""
+    image = _resize_for_qr(img_array)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(gray)
+    otsu = cv2.threshold(clahe, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
 
-    original = img_array
-    gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY)
-
-    variants = [
-        ("original", original),
-        ("gray", cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)),
-        ("equalized", cv2.cvtColor(cv2.equalizeHist(gray), cv2.COLOR_GRAY2BGR)),
+    return [
+        _DecodeCandidate("gray", cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)),
+        _DecodeCandidate("clahe", cv2.cvtColor(clahe, cv2.COLOR_GRAY2BGR)),
+        _DecodeCandidate("otsu", cv2.cvtColor(otsu, cv2.COLOR_GRAY2BGR)),
     ]
-
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    clahe_gray = clahe.apply(gray)
-    variants.extend(
-        [
-            ("clahe", cv2.cvtColor(clahe_gray, cv2.COLOR_GRAY2BGR)),
-            ("denoise", cv2.cvtColor(cv2.fastNlMeansDenoising(clahe_gray, h=10), cv2.COLOR_GRAY2BGR)),
-        ]
-    )
-
-    thresh_adaptive = cv2.adaptiveThreshold(
-        clahe_gray,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        21,
-        11,
-    )
-    thresh_otsu = cv2.threshold(clahe_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-
-    sharpen_kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-    sharpened = cv2.filter2D(original, -1, sharpen_kernel)
-
-    variants.extend(
-        [
-            ("adaptive_threshold", cv2.cvtColor(thresh_adaptive, cv2.COLOR_GRAY2BGR)),
-            ("otsu_threshold", cv2.cvtColor(thresh_otsu, cv2.COLOR_GRAY2BGR)),
-            ("sharpened", sharpened),
-        ]
-    )
-
-    scale_factors = [2.0, 3.0, 4.0]
-    for scale in scale_factors:
-        scaled = cv2.resize(original, None, fx=scale, fy=scale, interpolation=cv2.INTER_LANCZOS4)
-        scaled_gray = cv2.cvtColor(scaled, cv2.COLOR_BGR2GRAY)
-        scaled_clahe = clahe.apply(scaled_gray)
-        scaled_thresh = cv2.adaptiveThreshold(
-            scaled_clahe,
-            255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY,
-            21,
-            11,
-        )
-        variants.extend(
-            [
-                (f"scaled_{scale:.1f}x", scaled),
-                (f"scaled_{scale:.1f}x_gray", cv2.cvtColor(scaled_gray, cv2.COLOR_GRAY2BGR)),
-                (f"scaled_{scale:.1f}x_clahe", cv2.cvtColor(scaled_clahe, cv2.COLOR_GRAY2BGR)),
-                (f"scaled_{scale:.1f}x_thresh", cv2.cvtColor(scaled_thresh, cv2.COLOR_GRAY2BGR)),
-            ]
-        )
-
-    for label, image in variants:
-        candidates.append(_DecodeCandidate(label=label, image=image))
-
-    return candidates
 
 
 def _decode_with_pyzbar(img_array: np.ndarray) -> Optional[str]:
@@ -602,44 +563,18 @@ def _run_secure_qr_decode(qr_text: str, mobile_to_verify: str | None = None) -> 
 
 
 def _extract_qr_from_image_bgr(img_array: np.ndarray, mobile_to_verify: str | None = None) -> dict:
-    """Attempt QR decode using OpenCV -> pyzbar -> zxingcpp on multiple variants and crops."""
-    variants = _prepare_variants(img_array)
+    """Attempt QR decode with a small, bounded set of cheap strategies."""
+    for variant in _prepare_variants(img_array):
+        text, _ = _decode_with_opencv(variant.image)
+        if text:
+            logger.info("QR detected with OpenCV on %s", variant.label)
+            return _run_secure_qr_decode(text, mobile_to_verify=mobile_to_verify)
 
-    # Scan the full image and the common Aadhaar QR regions.
-    scan_targets = [
-        _DecodeCandidate("full", img_array),
-        *_region_candidates(img_array),
-    ]
-
-    for target in scan_targets:
-        for variant in _prepare_variants(target.image):
-            text, points = _decode_with_opencv(variant.image)
-            if text:
-                logger.info("QR detected with OpenCV on %s / %s", target.label, variant.label)
-                return _run_secure_qr_decode(text, mobile_to_verify=mobile_to_verify)
-
-            bbox = _points_to_bbox(points, variant.image.shape)
-            if bbox is not None:
-                cropped = _crop_bbox(variant.image, bbox, padding=0.30)
-                for crop_variant in _prepare_variants(cropped):
-                    for decoder_name, decoder_fn in (
-                        ("opencv", lambda arr: _decode_with_opencv(arr)[0]),
-                        ("pyzbar", _decode_with_pyzbar),
-                        ("zxingcpp", _decode_with_zxingcpp),
-                    ):
-                        qr_text = decoder_fn(crop_variant.image)
-                        if qr_text:
-                            logger.info("QR detected on %s / %s using %s after crop", target.label, crop_variant.label, decoder_name)
-                            return _run_secure_qr_decode(qr_text, mobile_to_verify=mobile_to_verify)
-
-            for decoder_name, decoder_fn in (
-                ("pyzbar", _decode_with_pyzbar),
-                ("zxingcpp", _decode_with_zxingcpp),
-            ):
-                qr_text = decoder_fn(variant.image)
-                if qr_text:
-                    logger.info("QR detected with %s on %s / %s", decoder_name, target.label, variant.label)
-                    return _run_secure_qr_decode(qr_text, mobile_to_verify=mobile_to_verify)
+        for decoder_name, decoder_fn in (("pyzbar", _decode_with_pyzbar), ("zxingcpp", _decode_with_zxingcpp)):
+            qr_text = decoder_fn(variant.image)
+            if qr_text:
+                logger.info("QR detected with %s on %s", decoder_name, variant.label)
+                return _run_secure_qr_decode(qr_text, mobile_to_verify=mobile_to_verify)
 
     return {"qr_found": False, "message": "No QR code found"}
 
@@ -743,24 +678,40 @@ async def _decode_with_vlm_crop(pil_image: Image.Image, mobile_to_verify: str | 
     return {"qr_found": False, "message": "VLM localized QR area, but decoding still failed"}
 
 
-async def decode_aadhaar_qr_from_image(pil_image: Image.Image, mobile_to_verify: str | None = None) -> dict:
+def _sync_decode_qr(pil_image: Image.Image, mobile_to_verify: str | None = None) -> dict:
+    if not QR_ENABLED:
+        return {"qr_found": False, "reason": "QR scanning disabled", "fallback": "OTP verification active"}
+
+    if not PYAADHAAR_AVAILABLE or not PYZBAR_AVAILABLE:
+        return {"qr_found": False, "reason": "QR libraries unavailable", "fallback": "OTP verification active"}
+
+    cv2_img = _pil_to_cv2(pil_image)
+    result = _extract_qr_from_image_bgr(cv2_img, mobile_to_verify=mobile_to_verify)
+    if result.get("qr_found"):
+        return result
+
+    return {"qr_found": False, "message": "No QR code found in image"}
+
+
+async def decode_aadhaar_qr_from_image(
+    pil_image: Image.Image,
+    mobile_to_verify: str | None = None,
+    timeout_seconds: int = 15,
+) -> dict:
     """Decode Aadhaar QR from a single PIL image."""
-    if not PYAADHAAR_AVAILABLE:
-        return {"qr_found": False, "error": "pyaadhaar not installed", "install": "pip install pyaadhaar"}
-
     try:
-        cv2_img = _pil_to_cv2(pil_image)
-        result = _extract_qr_from_image_bgr(cv2_img, mobile_to_verify=mobile_to_verify)
-
-        if result.get("qr_found"):
-            return result
-
-        logger.info("OpenCV/pyzbar/zxingcpp failed; trying VLM QR localization")
-        vlm_result = await _decode_with_vlm_crop(pil_image, mobile_to_verify=mobile_to_verify)
-        if vlm_result.get("qr_found"):
-            return vlm_result
-
-        return {"qr_found": False, "message": "No QR code found in image"}
+        loop = asyncio.get_running_loop()
+        return await asyncio.wait_for(
+            loop.run_in_executor(_qr_executor, _sync_decode_qr, pil_image, mobile_to_verify),
+            timeout=timeout_seconds,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("QR scan timed out after %ss - skipping QR verification", timeout_seconds)
+        return {
+            "qr_found": False,
+            "timed_out": True,
+            "message": "QR scan timed out. Proceeding with VLM extraction only. OTP verification will be used for mobile check.",
+        }
     except Exception as exc:
         logger.error("QR decode error: %s", exc, exc_info=True)
         return {"qr_found": False, "error": str(exc)}
@@ -780,7 +731,7 @@ async def decode_aadhaar_qr_from_document(contents: bytes, filename: str, mobile
         last_message = None
         for page_number, page_image in pages:
             logger.info("Scanning Aadhaar QR on page %s", page_number)
-            result = await decode_aadhaar_qr_from_image(page_image, mobile_to_verify=mobile_to_verify)
+            result = await decode_aadhaar_qr_from_image(page_image, mobile_to_verify=mobile_to_verify, timeout_seconds=15)
             if result.get("qr_found"):
                 result["page_number"] = page_number
                 return result

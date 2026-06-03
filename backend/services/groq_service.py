@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Dict, Iterable, List, Optional, Tuple
 
@@ -52,6 +53,8 @@ class GroqService:
         self._timeout = timeout
         self._last_model: Optional[str] = None
         self._fallback_used = False
+        self._fallback_count = 0
+        self._last_successful_call: Optional[str] = None
 
     async def verify_connection(self) -> bool:
         """Verify Groq connectivity using a minimal test prompt."""
@@ -67,6 +70,8 @@ class GroqService:
             )
             self._connected = bool(result.text)
             self._last_model = result.model_used
+            if self._connected:
+                self._last_successful_call = datetime.now(timezone.utc).isoformat()
             return self._connected
         except Exception as exc:
             logger.warning("Groq connectivity check failed: %s", exc)
@@ -79,6 +84,10 @@ class GroqService:
             "connected": self._connected,
             "model": self._last_model,
             "fallback_used": self._fallback_used,
+            "fallback_activations": self._fallback_count,
+            "last_successful_call": self._last_successful_call,
+            "primary_model": self._primary_model,
+            "fallback_model": self._fallback_model,
         }
 
     async def chat(
@@ -109,6 +118,7 @@ class GroqService:
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
+            self._last_successful_call = datetime.now(timezone.utc).isoformat()
             return result.text, result.xai_trace
         except Exception as e:
             if settings.DEMO_MODE:
@@ -165,6 +175,9 @@ class GroqService:
                 self._connected = True
                 self._last_model = model
                 self._fallback_used = model != self._primary_model
+                if self._fallback_used:
+                    self._fallback_count += 1
+                self._last_successful_call = datetime.now(timezone.utc).isoformat()
                 break
             except Exception as exc:
                 status = _get_status_code(exc)
@@ -189,7 +202,7 @@ class GroqService:
     ) -> Dict[str, Any]:
         """Classify intent using a fast Groq model and return JSON-only payload."""
         result = await self._chat_completion(
-            model=self._fallback_model,
+            model=self._primary_model,
             system_prompt=system_prompt,
             messages=messages,
             temperature=temperature,
@@ -237,6 +250,9 @@ class GroqService:
                 self._connected = True
                 self._last_model = selected_model
                 self._fallback_used = selected_model != self._primary_model
+                if self._fallback_used:
+                    self._fallback_count += 1
+                self._last_successful_call = datetime.now(timezone.utc).isoformat()
 
                 return GroqResult(
                     text=clean_text,
