@@ -11,7 +11,6 @@ from io import BytesIO
 from typing import Optional
 
 from core.config import settings
-from services.aadhaar_qr import process_aadhaar_with_qr
 
 logger = logging.getLogger("vlm_kyc")
 
@@ -422,46 +421,8 @@ async def extract_aadhaar(contents: bytes, filename: str) -> dict:
             task="Aadhaar extraction",
         )
 
-        qr_result = {"qr_found": False}
-        try:
-            qr_result = await asyncio.wait_for(
-                process_aadhaar_with_qr(contents, filename, img),
-                timeout=15.0,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("Aadhaar QR scan timed out - continuing without QR")
-            qr_result = {
-                "qr_found": False,
-                "timed_out": True,
-                "message": "QR scan timed out. Proceeding with VLM extraction only.",
-            }
-        except Exception as exc:
-            logger.error(f"QR failed: {exc}")
-            qr_result = {"qr_found": False, "error": str(exc)}
-
         data = _parse_json_response(vlm_result_raw)
         validated = _validate_aadhaar_data(data)
-
-        if qr_result.get("qr_parsed") and qr_result.get("qr_data"):
-            qr_fields = qr_result["qr_data"]
-            extracted_fields = validated["extracted_fields"]
-
-            if not extracted_fields.get("name") and qr_fields.get("name"):
-                extracted_fields["name"] = qr_fields["name"]
-
-            if not extracted_fields.get("date_of_birth") and qr_fields.get("dob"):
-                extracted_fields["date_of_birth"] = qr_fields["dob"]
-
-            if qr_fields.get("mobile_hash"):
-                extracted_fields["mobile_hash_available"] = True
-
-        validated["qr_verification"] = {
-            "qr_found": qr_result.get("qr_found", False),
-            "qr_parsed": qr_result.get("qr_parsed", False),
-            "mobile_hash_available": bool(qr_result.get("qr_data", {}).get("mobile_hash")),
-            "data_source": "VLM + Aadhaar QR Decode" if qr_result.get("qr_found") else "VLM only",
-        }
-        validated["_qr_data_for_session"] = qr_result.get("qr_data")
 
         return validated
 

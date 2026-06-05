@@ -543,5 +543,23 @@
       }
     ],
     "data": {}
+  },
+  "LE-2026-43642": {
+    "id": "LE-2026-43642",
+    "created_at": "2026-06-03T07:55:02.675671",
+    "expires_at": "2026-06-04T07:55:02.675745",
+    "stage": "INITIATED",
+    "agent_log": [
+      {
+        "agent": "MasterOrchestratorAgent",
+        "action": "INITIATED_SESSION",
+        "reasoning": "New loan inquiry received. Starting orchestration.",
+        "status": "SUCCESS"
+      }
+    ],
+    "data": {
+      "pan_data": {},
+      "kyc_pan_done": false
+    }
   }
 }

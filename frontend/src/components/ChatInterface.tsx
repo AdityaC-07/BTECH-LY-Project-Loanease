@@ -113,9 +113,9 @@ interface KycFactorState {
 }
 
 const KYC_FACTORS: Array<{ key: KycFactorKey; label: string }> = [
-  { key: "fa1", label: "1 Doc Verification" },
-  { key: "fa2", label: "2 QR Scan" },
-  { key: "fa3", label: "3 OTP" },
+  { key: "fa1", label: "① Document & Match" },
+  { key: "fa2", label: "② ID Validation" },
+  { key: "fa3", label: "③ OTP" },
 ];
 
 const formatMissingFields = (fields: string[]) => fields.join(", ");
@@ -425,8 +425,6 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [underwritingResult, setUnderwritingResult] = useState<UnderwritingResultData | null>(null);
   const [showPanUploadCard, setShowPanUploadCard] = useState(false);
   const [showAadhaarUploadCard, setShowAadhaarUploadCard] = useState(false);
-  const [showAadhaarQrUploadCard, setShowAadhaarQrUploadCard] = useState(false);
-  const [aadhaarQrAttempts, setAadhaarQrAttempts] = useState(0);
   const [isKycProcessing, setIsKycProcessing] = useState(false);
   const [kycProcessingText, setKycProcessingText] = useState("");
   const [kycProgress, setKycProgress] = useState(0);
@@ -526,8 +524,6 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     setHasStartedConversation(false);
     setShowPanUploadCard(false);
     setShowAadhaarUploadCard(false);
-    setShowAadhaarQrUploadCard(false);
-    setAadhaarQrAttempts(0);
     setShowPanConfirmCard(false);
     setShowKycVerifiedCard(false);
     setShowOtpCard(false);
@@ -638,7 +634,6 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     // Update header stage text
     const stageLabels = {
       'KYC_PENDING': 'KYC',
-      'KYC_QR_PENDING': 'QR Scan',
       'KYC_OTP_PENDING': 'OTP',
       'KYC_VERIFIED': 'Credit Check',
       'OFFER_GENERATED': 'Offer',
@@ -650,6 +645,36 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     if (headerStageLabel) {
       headerStageLabel.textContent = stageLabels[stage as keyof typeof stageLabels] || stage;
     }
+  };
+
+  const updateFA = (factor: number, status: 'pending' | 'active' | 'passed' | 'failed') => {
+    const badge = document.getElementById(`fa${factor}-badge`);
+    if (!badge) return;
+    
+    badge.className = `fa-badge ${status}`;
+    
+    const labels: Record<number, Record<string, string>> = {
+      1: {
+        pending: '① Document & Match',
+        active: '① Scanning Docs...',
+        passed: '① Docs ✓',
+        failed: '① Docs ✗',
+      },
+      2: {
+        pending: '② ID Validation',
+        active: '② Validating...',
+        passed: '② Aadhaar Valid ✓',
+        failed: '② Invalid Aadhaar ✗',
+      },
+      3: {
+        pending: '③ OTP',
+        active: '③ OTP Sent...',
+        passed: '③ OTP ✓',
+        failed: '③ OTP ✗',
+      }
+    };
+    
+    badge.textContent = `${status === 'passed' ? '✓' : status === 'active' ? '⟳' : status === 'failed' ? '✗' : '○'} ${labels[factor][status]}`;
   };
 
   // Update pipeline tracker when userData.stage changes
@@ -666,7 +691,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [processingLog, setProcessingLog] = useState<string[]>([]);
 
   useEffect(() => {
-    if (!showOtpCard && !showAadhaarQrUploadCard) {
+    if (!showOtpCard) {
       return;
     }
 
@@ -683,7 +708,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [showOtpCard, showAadhaarQrUploadCard]);
+  }, [showOtpCard]);
 
   const showWelcomeState = messages.length === 0 && !showSessionBanner && !hasStartedConversation;
   const isInputLocked =
@@ -694,7 +719,6 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     isKycProcessing ||
     showPanUploadCard ||
     showAadhaarUploadCard ||
-    showAadhaarQrUploadCard ||
     showPanConfirmCard ||
     showOtpCard ||
     otpLocked ||
@@ -707,7 +731,6 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     if (!hasStartedConversation) return "Click 'Apply for a Loan' to start";
     if (otpLocked) return "OTP verification failed. Redirecting...";
     if (showOtpCard) return "Verify the OTP sent to your Aadhaar-linked mobile";
-    if (showAadhaarQrUploadCard) return "Upload Aadhaar again for secure QR verification";
     if (showSanction) return "Your sanction letter is ready. Ask a question or download it.";
     if (showLoanOffers) return "Type 'accept' or ask to negotiate the rate...";
     if (userData.stage === "credit") return "Your score is ready. How would you like to proceed?";
@@ -725,15 +748,6 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         "> REGEX_NER: PAN pattern found",
         "> VALIDATION: Format check passed",
         "> AWAITING: Cross-validation...",
-      ];
-    }
-
-    if (showAadhaarQrUploadCard) {
-      return [
-        "> KYC_AGENT: Secure QR verification pending...",
-        "> QR_ENGINE: Decoding UIDAI payload",
-        "> CRYPTO: Checking RSA-2048 signature",
-        "> CHECKSUM: Validating Verhoeff",
       ];
     }
 
@@ -766,7 +780,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     return [
       "> SYSTEM: Awaiting backend activity...",
     ];
-  }, [isBackendBusy, isKycProcessing, isTyping, showLoanOffers, userData.stage, showAadhaarQrUploadCard]);
+  }, [isBackendBusy, isKycProcessing, isTyping, showLoanOffers, userData.stage]);
 
   useEffect(() => {
     if (!isProcessing) {
@@ -854,7 +868,6 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     setPendingOffer(null);
     setShowKfsCard(false);
     setKfsAcknowledged(false);
-    setAadhaarQrAttempts(0);
     setSelectedHolidayMonths(0);
     setEmiHolidayOption(null);
     toast.info("Started a new session.");
@@ -993,7 +1006,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   }, [userData.sessionId]);
 
   useEffect(() => {
-    const modalOpen = showPanUploadCard || showAadhaarUploadCard || showAadhaarQrUploadCard;
+    const modalOpen = showPanUploadCard || showAadhaarUploadCard;
     if (modalOpen) {
       document.body.style.overflow = "hidden";
     } else {
@@ -1004,7 +1017,6 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       if (e.key === "Escape") {
         setShowPanUploadCard(false);
         setShowAadhaarUploadCard(false);
-        setShowAadhaarQrUploadCard(false);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1012,7 +1024,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [showPanUploadCard, showAadhaarUploadCard, showAadhaarQrUploadCard]);
+  }, [showPanUploadCard, showAadhaarUploadCard]);
 
   const addBotMessage = (text: string) => {
     setMessages((prev) => [
@@ -1194,34 +1206,6 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     }
   };
 
-  const callKycVerifyQrAPI = async (file: File) => {
-    setIsBackendBusy(true);
-    try {
-      const form = new FormData();
-      form.append("file", file);
-
-      const mobileNumber = aadhaarKycData?.mobile_number || "";
-      const query = new URLSearchParams({ session_id: userData.sessionId });
-      if (mobileNumber) {
-        query.set("mobile", mobileNumber);
-      }
-
-      const response = await fetch(`${ENDPOINTS.kyc_verify_qr}?${query.toString()}`, {
-        method: "POST",
-        body: form,
-      });
-
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => null);
-        throw new Error(errBody?.detail || "QR verification failed");
-      }
-
-      return response.json();
-    } finally {
-      setIsBackendBusy(false);
-    }
-  };
-
   const callKycSendOtpAPI = async () => {
     setIsBackendBusy(true);
     try {
@@ -1284,7 +1268,6 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
   const resetOtpFlow = () => {
     setShowOtpCard(false);
-    setShowAadhaarQrUploadCard(false);
     setOtpDigits(Array(6).fill(""));
     setOtpSentToLast4("");
     setOtpAttemptsRemaining(null);
@@ -1364,10 +1347,14 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       if (result.verified) {
         resetOtpFlow();
         setKycFactors((prev) => ({ ...prev, fa3: true, current: 3 }));
+        
+        // FA3 passed
+        updateFA(3, 'passed');
+        
         addBotMessage(
           kycText(
-            "✅ 3-Factor KYC Complete 🎉\nYour identity has been verified via:\n• AI Vision (Gemini)\n• UIDAI Cryptographic Seal\n• SMS OTP (Twilio)\n\nProceeding to credit assessment...",
-            "✅ 3-Factor KYC Complete 🎉\nआपकी identity verify हो गई है:\n• AI Vision (Gemini)\n• UIDAI Cryptographic Seal\n• SMS OTP (Twilio)\n\nअब credit assessment शुरू हो रहा है..."
+            "🎉 3-Factor KYC Complete\n\n① Document verification ✅\n② Aadhaar ID validation ✅\n③ Mobile OTP verification ✅\n\nYour identity has been verified.\nProceeding to credit assessment...",
+            "🎉 3-Factor KYC Complete\n\n① Document verification ✅\n② Aadhaar ID validation ✅\n③ Mobile OTP verification ✅\n\nआपकी identity verify हो गई है।\nअब credit assessment शुरू हो रहा है..."
           )
         );
         const extractedPan = pendingCreditPan || panKycData?.pan_number || verifyResultPanFromState();
@@ -1479,6 +1466,9 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     setShowPanUploadCard(false);
     setMessages((prev) => [...prev, { id: prev.length + 1, text: file.name, isBot: false }]);
 
+    // FA1: Start document verification
+    updateFA(1, 'active');
+
     const timer = startKycProgress(kycText("Scanning your PAN card...", "आपके PAN कार्ड को स्कैन किया जा रहा है..."));
     try {
       const result = await callKycPanExtractAPI(file);
@@ -1496,10 +1486,12 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       if (extractedPanNumber) {
         const extractedName = result.extracted_fields?.name || "";
         const extractedDob = result.extracted_fields?.date_of_birth || "";
+        const extractedFather = result.extracted_fields?.father_name || "";
+        
         addBotMessage(
           kycText(
-            `PAN OCR detected:\nPAN: ${extractedPanNumber}${extractedName ? `\nName: ${extractedName}` : ""}${extractedDob ? `\nDOB: ${extractedDob}` : ""}`,
-            `PAN OCR मिला:\nPAN: ${extractedPanNumber}${extractedName ? `\nनाम: ${extractedName}` : ""}${extractedDob ? `\nजन्म तिथि: ${extractedDob}` : ""}`
+            `✅ PAN card scanned successfully\n\nName: ${extractedName}\nPAN: ${extractedPanNumber}\nDOB: ${extractedDob}${extractedFather ? `\nFather: ${extractedFather}` : ""}\n\nNow please upload your Aadhaar card.`,
+            `✅ PAN कार्ड सफलतापूर्वक स्कैन हो गया\n\nनाम: ${extractedName}\nPAN: ${extractedPanNumber}\nजन्म तिथि: ${extractedDob}${extractedFather ? `\nपिता: ${extractedFather}` : ""}\n\nअब कृपया अपना Aadhaar कार्ड अपलोड करें।`
           )
         );
       }
@@ -1557,18 +1549,30 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       const aadhaarResult = await callKycAadhaarExtractAPI(file);
       setAadhaarKycData(aadhaarResult.extracted_fields);
 
-      const qrVerification = aadhaarResult.qr_verification as AadhaarQrVerification | undefined;
-      if (qrVerification?.qr_found) {
-        addBotMessage(
-          kycText(
-            qrVerification.mobile_hash_available
-              ? "Aadhaar QR decoded successfully. Mobile hash verification is available as an additional offline check."
-              : "Aadhaar QR decoded successfully. Secure QR metadata was extracted for offline verification.",
-            qrVerification.mobile_hash_available
-              ? "Aadhaar QR सफलतापूर्वक decode हो गया। Mobile hash verification एक अतिरिक्त offline check के रूप में उपलब्ध है।"
-              : "Aadhaar QR सफलतापूर्वक decode हो गया। Secure QR metadata offline verification के लिए निकाला गया है।"
-          )
-        );
+      // FA2: Verhoeff validation
+      const verhoeffResult = aadhaarResult.fa2_verhoeff as any;
+      if (verhoeffResult) {
+        if (verhoeffResult.valid) {
+          // FA2 passed, FA3 active
+          updateFA(2, 'passed');
+          updateFA(3, 'active');
+          
+          addBotMessage(
+            kycText(
+              "🔢 Aadhaar ID Validation\n✅ Valid — Verhoeff checksum passed\nYour Aadhaar number is mathematically verified as a genuine UIDAI-format identifier.",
+              "🔢 Aadhaar ID Validation\n✅ Valid — Verhoeff checksum passed\nआपका Aadhaar number गणितीय रूप से एक genuine UIDAI-format identifier के रूप में verify हो गया है।"
+            )
+          );
+        } else {
+          addBotMessage(
+            kycText(
+              `⚠️ Aadhaar ID Validation\n❌ Checksum failed\nThe Aadhaar number extracted does not pass the Verhoeff algorithm check.\nThis may mean:\n• OCR read a digit incorrectly\n• The document may be altered\nPlease upload a clearer image of your Aadhaar card.`,
+              `⚠️ Aadhaar ID Validation\n❌ Checksum failed\nExtracted Aadhaar number Verhoeff algorithm check pass नहीं कर पाया।\nइसका मतलब हो सकता है:\n• OCR ने digit गलत पढ़ा\n• Document altered हो सकता है\nकृपया अपने Aadhaar कार्ड की एक स्पष्ट image अपलोड करें।`
+            )
+          );
+          setShowAadhaarUploadCard(true);
+          return;
+        }
       }
 
       const aadhaarIssues: string[] = aadhaarResult.validation?.issues || [];
@@ -1653,69 +1657,31 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       setKycFactors((prev) => ({ ...prev, fa1: true, current: 2 }));
       setShowKycVerifiedCard(true);
 
+      // FA1 passed, FA2 active
+      updateFA(1, 'passed');
+      updateFA(2, 'active');
+
+      // Add cross-validation message
+      const nameScore = Number(verifyResult.cross_validation?.name_match_score ?? 0);
+      const dobMatch = Boolean(verifyResult.cross_validation?.dob_match);
+      addBotMessage(
+        kycText(
+          `✅ Document Cross-Check\nPAN name ↔ Aadhaar name: ${Math.round(nameScore)}% match ✓\nDate of Birth: ${dobMatch ? 'Match ✓' : 'Mismatch ✗'}\n\nProceeding to mobile verification...`,
+          `✅ Document Cross-Check\nPAN name ↔ Aadhaar name: ${Math.round(nameScore)}% match ✓\nजन्म तिथि: ${dobMatch ? 'Match ✓' : 'Mismatch ✗'}\n\nमोबाइल verification के लिए आगे बढ़ रहा हूँ...`
+        )
+      );
+
       setTimeout(async () => {
         setShowKycVerifiedCard(false);
         try {
           setShowAadhaarUploadCard(false);
-          setShowAadhaarQrUploadCard(true);
           addBotMessage(
             kycText(
-              "✅ Factor 1 Complete — Documents verified via AI Vision\n\nNow for enhanced security, please upload your Aadhaar again for QR code scanning.",
-              "✅ Factor 1 Complete — Documents verified via AI Vision\n\nअब enhanced security के लिए, कृपया QR code scanning के लिए अपना Aadhaar फिर से upload करें।"
+              "✅ Factor 1 Complete — Documents verified via AI Vision\n\nAadhaar number has been validated using Verhoeff checksum algorithm. Proceeding to OTP verification.",
+              "✅ Factor 1 Complete — Documents verified via AI Vision\n\nAadhaar number Verhoeff checksum algorithm से validate हो गया है। OTP verification के लिए आगे बढ़ रहा हूँ।"
             )
           );
-        } catch (otpError) {
-          const msg = otpError instanceof Error ? otpError.message : kycText("Unable to continue to QR verification.", "QR verification आगे नहीं बढ़ सकी।");
-          addBotMessage(msg);
-          setShowAadhaarUploadCard(true);
-        }
-      }, 1300);
-    } catch (error) {
-      stopKycProgress(timer);
-      const isTimeout = error instanceof Error && error.name === "TimeoutError";
-      const msg = error instanceof Error
-        ? (isTimeout
-            ? kycText(
-                "Aadhaar OCR is taking longer than usual. Please wait a moment, then retry with a smaller or clearer image if needed.",
-                "Aadhaar OCR सामान्य से अधिक समय ले रहा है। कृपया थोड़ा इंतज़ार करें, फिर ज़रूरत हो तो छोटी या स्पष्ट छवि के साथ पुनः प्रयास करें।"
-              )
-            : error.message.includes("fetch")
-              ? kycText("Could not connect to server. Check your connection.", "सर्वर से कनेक्ट नहीं हो सका। कनेक्शन जांचें।")
-              : `${error.message}`)
-        : kycText("Aadhaar scan failed. Please try again.", "Aadhaar स्कैन विफल। पुनः प्रयास करें।");
-      addBotMessage(msg);
-      setShowAadhaarUploadCard(true);
-    }
-  };
-
-  const handleAadhaarQrFileSelected = async (file?: File) => {
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error(kycText("File exceeds 5MB limit", "फ़ाइल 5MB सीमा से बड़ी है"));
-      return;
-    }
-
-    setAadhaarFile(file);
-    setShowAadhaarQrUploadCard(false);
-    setMessages((prev) => [...prev, { id: prev.length + 1, text: file.name, isBot: false }]);
-
-    const timer = startKycProgress(kycText("Scanning Aadhaar QR...", "Aadhaar QR स्कैन किया जा रहा है..."));
-    try {
-      const qrResult = await callKycVerifyQrAPI(file);
-      stopKycProgress(timer);
-
-      if (!qrResult?.qr_parsed || qrResult?.uidai_signed === false) {
-        setAadhaarQrAttempts((current) => current + 1);
-
-        const fallbackMessage = kycText(
-          "I couldn't verify the Aadhaar QR signature from this image, so I’m moving ahead with OTP to finish KYC.",
-          "इस image से Aadhaar QR signature verify नहीं हो सका, इसलिए KYC पूरा करने के लिए मैं OTP से आगे बढ़ रहा हूँ।"
-        );
-
-        addBotMessage(fallbackMessage);
-
-        resetOtpFlow();
-        try {
+          resetOtpFlow();
           const otpResult = await callKycSendOtpAPI();
           const mobileLast4 = otpResult.mobile_last4 || aadhaarKycData?.mobile_last4 || "";
           setOtpSentToLast4(mobileLast4);
@@ -1733,53 +1699,26 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           if (otpResult.demo_otp) {
             addBotMessage(kycText(`Demo OTP: ${otpResult.demo_otp}`, `Demo OTP: ${otpResult.demo_otp}`));
           }
-          return;
         } catch (otpError) {
-          const otpMessage = otpError instanceof Error ? otpError.message : kycText("Unable to continue to OTP verification.", "OTP verification आगे नहीं बढ़ सकी।");
-          addBotMessage(otpMessage);
-          setShowAadhaarQrUploadCard(true);
-          return;
+          const msg = otpError instanceof Error ? otpError.message : kycText("Unable to continue to OTP verification.", "OTP verification आगे नहीं बढ़ सकी।");
+          addBotMessage(msg);
         }
-      }
-
-      setKycFactors((prev) => ({ ...prev, fa2: true, current: 3 }));
-      addBotMessage(
-        kycText(
-          "✅ Factor 2 Complete — Aadhaar QR cryptographically verified ⛓️\nYour identity is UIDAI-signed.\n\nFinal step: OTP verification to your registered mobile.",
-          "✅ Factor 2 Complete — Aadhaar QR cryptographically verified ⛓️\nआपकी identity UIDAI-signed है।\n\nअंतिम चरण: registered mobile पर OTP verification."
-        )
-      );
-
-      resetOtpFlow();
-      const otpResult = await callKycSendOtpAPI();
-      const mobileLast4 = otpResult.mobile_last4 || aadhaarKycData?.mobile_last4 || "";
-      setOtpSentToLast4(mobileLast4);
-      setOtpAttemptsRemaining(3);
-      setOtpSecondsRemaining(Number(otpResult.expires_in_seconds || 300));
-      setOtpResendCooldown(60);
-      setOtpDigits(Array(6).fill(""));
-      setShowOtpCard(true);
-      setOtpStatusMessage(
-        kycText(
-          `OTP sent to mobile ending ${mobileLast4}. Enter the 6-digit code to continue.`,
-          `OTP मोबाइल नंबर के अंतिम ${mobileLast4} अंक पर भेजा गया है। आगे बढ़ने के लिए 6-digit code दर्ज करें।`
-        )
-      );
-      if (otpResult.demo_otp) {
-        addBotMessage(kycText(`Demo OTP: ${otpResult.demo_otp}`, `Demo OTP: ${otpResult.demo_otp}`));
-      }
+      }, 1300);
     } catch (error) {
       stopKycProgress(timer);
+      const isTimeout = error instanceof Error && error.name === "TimeoutError";
       const msg = error instanceof Error
-        ? (error.name === "TimeoutError"
-            ? kycText("QR scan timed out. Try a clearer Aadhaar image.", "QR scan timeout हो गया। कृपया एक स्पष्ट Aadhaar image के साथ प्रयास करें।")
+        ? (isTimeout
+            ? kycText(
+                "Aadhaar OCR is taking longer than usual. Please wait a moment, then retry with a smaller or clearer image if needed.",
+                "Aadhaar OCR सामान्य से अधिक समय ले रहा है। कृपया थोड़ा इंतज़ार करें, फिर ज़रूरत हो तो छोटी या स्पष्ट छवि के साथ पुनः प्रयास करें।"
+              )
             : error.message.includes("fetch")
               ? kycText("Could not connect to server. Check your connection.", "सर्वर से कनेक्ट नहीं हो सका। कनेक्शन जांचें।")
-              : error.message)
-        : kycText("Aadhaar QR scan failed. Please try again.", "Aadhaar QR scan विफल। पुनः प्रयास करें।");
+              : `${error.message}`)
+        : kycText("Aadhaar scan failed. Please try again.", "Aadhaar स्कैन विफल। पुनः प्रयास करें।");
       addBotMessage(msg);
-      setAadhaarQrAttempts((current) => current + 1);
-      setShowAadhaarQrUploadCard(true);
+      setShowAadhaarUploadCard(true);
     }
   };
 
@@ -1928,7 +1867,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     setTimeout(async () => {
       let botResponse = "";
 
-      const isPreKycFlow = !showPanUploadCard && !showAadhaarUploadCard && !showPanConfirmCard && !showKycVerifiedCard && !showAadhaarQrUploadCard && !showOtpCard && !showCreditScoreCard && !showLoanOffers && !showSanction;
+      const isPreKycFlow = !showPanUploadCard && !showAadhaarUploadCard && !showPanConfirmCard && !showKycVerifiedCard && !showOtpCard && !showCreditScoreCard && !showLoanOffers && !showSanction;
 
       if (isPreKycFlow) {
         if (userMessage.toLowerCase().includes("human") || userMessage.toLowerCase().includes("talk to agent")) {
@@ -2831,6 +2770,50 @@ ${guidance.repayment_history_impact || ""}`.trim(),
           0%, 100% { box-shadow: 0 0 0 0 rgba(245, 197, 24, 0.7); }
           50% { box-shadow: 0 0 0 8px rgba(245, 197, 24, 0); }
         }
+        
+        /* FA Badge styles */
+        .fa-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 14px;
+          border-radius: 20px;
+          font-size: 11px;
+          font-weight: 600;
+          font-family: 'DM Sans', sans-serif;
+          letter-spacing: 0.5px;
+          border: 1px solid transparent;
+          transition: all 0.3s ease;
+        }
+        .fa-badge.pending {
+          background: #111;
+          border-color: #2a2a2a;
+          color: #444;
+        }
+        .fa-badge.active {
+          background: rgba(245,197,24,0.1);
+          border-color: #F5C518;
+          color: #F5C518;
+          animation: badge-pulse 2s infinite;
+        }
+        .fa-badge.passed {
+          background: rgba(34,197,94,0.1);
+          border-color: #22c55e;
+          color: #22c55e;
+        }
+        .fa-badge.failed {
+          background: rgba(239,68,68,0.1);
+          border-color: #ef4444;
+          color: #ef4444;
+        }
+        @keyframes badge-pulse {
+          0%,100% { opacity: 1; }
+          50% { opacity: 0.6; }
+        }
+        .fa-connector {
+          color: #444;
+          margin: 0 4px;
+        }
       `}</style>
     <div className="fixed inset-0 bg-background z-50 flex flex-col">
       {!applicantMode && (
@@ -2980,26 +2963,21 @@ ${guidance.repayment_history_impact || ""}`.trim(),
 
         <div className="px-4 pb-3">
           <div className="mx-auto flex max-w-2xl flex-wrap items-center justify-center gap-2">
-            {KYC_FACTORS.map((factor) => {
+            {KYC_FACTORS.map((factor, idx) => {
               const passed = kycFactors[factor.key];
               const isCurrent = kycFactors.current === (factor.key === "fa1" ? 1 : factor.key === "fa2" ? 2 : 3);
+              const status = passed ? "passed" : isCurrent ? "active" : "pending";
 
               return (
-                <Badge
-                  key={factor.key}
-                  variant="outline"
-                  className={cn(
-                    "rounded-full px-3 py-1 text-[11px] font-semibold transition-all duration-300",
-                    passed
-                      ? "border-green-500/50 bg-green-500/10 text-green-300"
-                      : isCurrent
-                        ? "border-yellow-400/60 bg-yellow-400/15 text-yellow-300 animate-pulse"
-                        : "border-border bg-muted/30 text-muted-foreground"
-                  )}
-                >
-                  {passed ? <Check className="mr-1 h-3.5 w-3.5" /> : isCurrent ? <Clock className="mr-1 h-3.5 w-3.5" /> : <span className="mr-1">•</span>}
-                  {factor.label}
-                </Badge>
+                <React.Fragment key={factor.key}>
+                  <span
+                    id={`fa${idx + 1}-badge`}
+                    className={`fa-badge ${status}`}
+                  >
+                    {passed ? "✓" : isCurrent ? "⟳" : "○"} {factor.label}
+                  </span>
+                  {idx < KYC_FACTORS.length - 1 && <span className="fa-connector">→</span>}
+                </React.Fragment>
               );
             })}
           </div>
@@ -3353,7 +3331,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
               {kycText("Upload Aadhaar Card", "Aadhaar कार्ड अपलोड करें")}
             </div>
             <div className="mb-3 text-xs text-muted-foreground">
-              {kycText("Upload the full Aadhaar card so the mobile number is visible. JPG, PNG or PDF • Max 5MB", "मोबाइल नंबर दिखे ऐसा पूरा Aadhaar कार्ड अपलोड करें। JPG, PNG or PDF • Max 5MB")}
+              {kycText("JPG, PNG or PDF • Max 10MB\n\nTip: Ensure the 12-digit Aadhaar number is clearly visible.", "JPG, PNG or PDF • Max 10MB\n\nTip: 12-digit Aadhaar number स्पष्ट रूप से दिखे।")}
             </div>
             <input
               ref={aadhaarInputRef}
@@ -3372,32 +3350,6 @@ ${guidance.repayment_history_impact || ""}`.trim(),
           </div>
         )}
 
-        {showAadhaarQrUploadCard && (
-          <div className="w-full max-w-md self-start rounded-xl border-2 border-dashed border-cyan-500/70 bg-gradient-to-br from-card to-card/85 p-5 shadow-lg shadow-cyan-500/10">
-            <div className="mb-1 flex items-center gap-2 text-base font-semibold text-foreground">
-              <ShieldCheck className="h-4 w-4 text-cyan-400" />
-              {kycText("Re-upload Aadhaar for QR Scan", "QR scan के लिए Aadhaar दोबारा अपलोड करें")}
-            </div>
-            <div className="mb-3 text-xs text-muted-foreground">
-              {kycText("If QR verification fails again, I’ll continue with OTP automatically.", "अगर QR verification फिर fail हो, तो मैं automatically OTP से आगे बढ़ जाऊँगा।")}
-            </div>
-            <input
-              ref={aadhaarInputRef}
-              type="file"
-              accept=".jpg,.jpeg,.png,.pdf"
-              className="hidden"
-              onChange={(e) => handleAadhaarQrFileSelected(e.target.files?.[0])}
-            />
-            <Button variant="outline" className="w-full border-cyan-500/50 bg-background/60 hover:bg-cyan-500/10" onClick={() => aadhaarInputRef.current?.click()}>
-              <Upload className="mr-2 h-4 w-4" />
-              {kycText("Choose File", "फ़ाइल चुनें")}
-            </Button>
-            <div className="mt-2 text-[11px] text-muted-foreground">
-              {kycText("or drag file here", "या फ़ाइल यहां drag करें")}
-            </div>
-          </div>
-        )}
-
         {showKycVerifiedCard && (
           <div className="max-w-md rounded-xl border border-green-500/50 bg-gradient-to-br from-card to-card/85 p-4 shadow-lg shadow-green-500/10">
             <div className="mb-1 flex items-center gap-2 text-base font-semibold text-green-400">
@@ -3405,7 +3357,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
               {kycText("Factor 1 Complete", "Factor 1 Complete")}
             </div>
             <div className="text-sm text-foreground">{kycText("Documents verified via AI Vision", "AI Vision के माध्यम से दस्तावेज़ सत्यापित")}</div>
-            <div className="text-sm text-muted-foreground">{kycText("Next step: QR verification", "अगला चरण: QR verification")}</div>
+            <div className="text-sm text-muted-foreground">{kycText("Next step: OTP verification", "अगला चरण: OTP verification")}</div>
           </div>
         )}
 

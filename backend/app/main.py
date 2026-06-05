@@ -32,7 +32,6 @@ from app.credit_score import get_credit_score, get_credit_band, mask_pan
 from app.kyc_extractors import extract_pan, extract_aadhaar, cross_validate_kyc
 from app.kyc_preprocess import preprocess_image, run_ocr, MAX_UPLOAD_BYTES, UnsupportedDocumentError
 from services.otp_service import init_twilio, resend as resend_otp_via_twilio, send as send_otp_via_twilio, verify as verify_otp_via_twilio
-from services.aadhaar_qr import verify_mobile_against_qr
 from core.config import settings, get_band
 
 # Configure logging
@@ -920,29 +919,6 @@ async def verify_otp(payload: OtpVerifyRequest):
             status_code=400,
             detail="Aadhaar mobile number not found. Please upload the full Aadhaar card with the mobile number visible.",
         )
-
-    qr_data = session.get("data", {}).get("aadhaar_qr_data")
-    aadhaar_last4 = session.get("data", {}).get("aadhaar_data", {}).get("aadhaar_last4", "")
-
-    if qr_data and qr_data.get("mobile_hash"):
-        qr_verify = verify_mobile_against_qr(mobile_number, qr_data, aadhaar_last4)
-        if qr_verify.get("verified"):
-            session_store.update_stage(payload.session_id, "KYC_VERIFIED")
-            session_store.update_data(payload.session_id, "aadhaar_otp_verified", True)
-            session_store.update_data(payload.session_id, "mobile_verified", True)
-            session_store.update_data(payload.session_id, "verification_method", "AADHAAR_QR_HASH")
-
-            return OtpVerifyResponse(
-                verified=True,
-                terminated=False,
-                attempts_remaining=3,
-                mobile_last4=mobile_number[-4:],
-                expires_in_seconds=600,
-                reason=None,
-                message="Identity verified via Aadhaar cryptographic seal - no OTP required.",
-                method="QR_HASH",
-                zero_knowledge=True,
-            )
 
     result = await verify_otp_via_twilio(payload.session_id, payload.otp, mobile_number)
 

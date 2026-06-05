@@ -11,7 +11,6 @@ from pydantic import BaseModel
 from core.config import settings
 from core.limiter import limiter
 from core.session import session_store
-from services.aadhaar_qr import decode_aadhaar_qr_from_document
 from services.aadhaar_verhoeff import validate_aadhaar_number
 from services.otp_service import resend as resend_otp_via_twilio, send as send_otp_via_twilio, verify as verify_otp_via_twilio
 from services.vlm_kyc import (
@@ -42,7 +41,7 @@ class AadhaarExtractResponse(BaseModel):
     validation: Dict[str, Any]
     confidence_score: float
     processing_time_ms: int
-    qr_verification: Dict[str, Any] | None = None
+    fa2_verhoeff: Dict[str, Any] | None = None
     verhoeff_validation: Dict[str, Any] | None = None
 
 
@@ -127,12 +126,47 @@ def _assert_upload_constraints(file: UploadFile, file_bytes: bytes) -> None:
 
 def _ensure_vlm_ready() -> None:
     if not vlm_ready():
-        init_vlm()
-    if not vlm_ready():
-        raise HTTPException(
-            status_code=503,
-            detail="OCR service is initializing. Please retry in a few seconds.",
-        )
+        try:
+            init_vlm()
+        except Exception:
+            pass  # Will fall back to RapidOCR below
+
+
+def _use_vlm() -> bool:
+    """Returns True only if VLM is actually available."""
+    return vlm_ready()
+
+
+async def _extract_pan_ocr_fallback(file_bytes: bytes, filename: str) -> dict:
+    """Fall back to RapidOCR when VLM is unavailable."""
+    from services.ocr import preprocess_image, run_ocr, extract_pan as ocr_extract_pan, ocr_ready, init_ocr
+    if not ocr_ready():
+        init_ocr()
+    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else "jpg"
+    preprocessed = preprocess_image(file_bytes, extension)
+    ocr_text, confidence = run_ocr(preprocessed)
+    pan_data = ocr_extract_pan(ocr_text)
+    return {
+        "extracted_fields": pan_data,
+        "confidence_score": confidence,
+        "engine": "rapidocr_fallback",
+    }
+
+
+async def _extract_aadhaar_ocr_fallback(file_bytes: bytes, filename: str) -> dict:
+    """Fall back to RapidOCR when VLM is unavailable."""
+    from services.ocr import preprocess_image, run_ocr, extract_aadhaar as ocr_extract_aadhaar, ocr_ready, init_ocr
+    if not ocr_ready():
+        init_ocr()
+    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else "jpg"
+    preprocessed = preprocess_image(file_bytes, extension)
+    ocr_text, confidence = run_ocr(preprocessed)
+    aadhaar_data = ocr_extract_aadhaar(ocr_text)
+    return {
+        "extracted_fields": aadhaar_data,
+        "confidence_score": confidence,
+        "engine": "rapidocr_fallback",
+    }
 
 
 @router.get("/health")
@@ -150,7 +184,6 @@ async def kyc_health():
             "Aadhaar extraction",
             "Cross-document validation",
             "Aadhaar Verhoeff checksum validation",
-            "Aadhaar Secure QR cryptographic verification",
             "Hindi + English",
             "PDF + Image support",
             "Mobile number extraction",
@@ -165,7 +198,7 @@ def _build_three_factor_status(session_id: str) -> dict:
 
     data = session.get("data", {})
     fa1 = bool(data.get("kyc_pan_done")) and bool(data.get("kyc_aadhaar_done")) and bool(data.get("kyc_cross_validated"))
-    fa2 = bool(data.get("fa2_qr_passed"))
+    fa2 = bool(data.get("fa2_verhoeff_passed", False))
     fa3 = bool(data.get("mobile_verified"))
     all_passed = fa1 and fa2 and fa3
 
@@ -181,11 +214,12 @@ def _build_three_factor_status(session_id: str) -> dict:
             "aadhaar_done": data.get("kyc_aadhaar_done"),
             "cross_validated": data.get("kyc_cross_validated"),
         },
-        "fa2_qr_verification": {
+        "fa2_verhoeff_validation": {
             "passed": fa2,
-            "description": "Aadhaar Secure QR cryptographic decode + UIDAI RSA signature check",
-            "qr_scanned": data.get("fa2_qr_passed"),
-            "mobile_hash_available": bool(data.get("aadhaar_mobile_hash")),
+            "description": "Verhoeff algorithm checksum on 12-digit Aadhaar number — mathematical validity proof per UIDAI standard",
+            "algorithm": "Verhoeff D5",
+            "aadhaar_last4": data.get("aadhaar_data", {}).get("aadhaar_last4"),
+            "result": data.get("fa2_verhoeff_result", {}),
         },
         "fa3_otp_verification": {
             "passed": fa3,
@@ -202,7 +236,78 @@ def _build_three_factor_status(session_id: str) -> dict:
 @router.get("/kyc-status/{session_id}")
 async def get_kyc_status(session_id: str):
     """Returns complete 3FA KYC status."""
-    return _build_three_factor_status(session_id)
+    session = session_store.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    data = session.get("data", {})
+    
+    fa1 = (
+        bool(data.get("kyc_pan_done")) and
+        bool(data.get("kyc_aadhaar_done")) and
+        bool(data.get("kyc_cross_validated"))
+    )
+    
+    fa2 = bool(data.get("fa2_verhoeff_passed", False))
+    
+    fa3 = bool(data.get("mobile_verified", False))
+    
+    all_passed = fa1 and fa2 and fa3
+    
+    if all_passed:
+        session_store.update_stage(session_id, "KYC_VERIFIED")
+        if not data.get("kyc_reference"):
+            session_store.update_data(
+                session_id,
+                "kyc_reference",
+                f"KYC-{session_id[:6].upper()}"
+            )
+    
+    return {
+        "session_id": session_id,
+        "fa1_document_verification": {
+            "passed": fa1,
+            "description": (
+                "VLM document extraction + "
+                "PAN-Aadhaar name and DOB "
+                "cross-validation"
+            ),
+            "components": {
+                "pan_extracted": data.get("kyc_pan_done", False),
+                "aadhaar_extracted": data.get("kyc_aadhaar_done", False),
+                "cross_validated": data.get("kyc_cross_validated", False),
+            }
+        },
+        "fa2_verhoeff_validation": {
+            "passed": fa2,
+            "description": (
+                "Verhoeff algorithm checksum "
+                "on 12-digit Aadhaar number "
+                "— mathematical validity "
+                "proof per UIDAI standard"
+            ),
+            "algorithm": "Verhoeff D5",
+            "aadhaar_last4": data.get("aadhaar_data", {}).get("aadhaar_last4"),
+            "result": data.get("fa2_verhoeff_result", {}),
+        },
+        "fa3_otp_verification": {
+            "passed": fa3,
+            "description": (
+                "Twilio Verify SMS OTP to "
+                "Aadhaar-registered mobile"
+            ),
+            "mobile_on_file": bool(data.get("aadhaar_mobile")),
+            "verified": fa3,
+            "method": data.get("verification_method", "TWILIO_OTP"),
+        },
+        "summary": {
+            "factors_passed": sum([fa1, fa2, fa3]),
+            "total_factors": 3,
+            "overall_passed": all_passed,
+            "kyc_reference": data.get("kyc_reference"),
+            "percentage": f"{sum([fa1, fa2, fa3])*33}%",
+        }
+    }
 
 
 @router.post("/extract/pan", response_model=PanExtractResponse)
@@ -258,7 +363,11 @@ async def extract_pan_endpoint(
             )
 
         _ensure_vlm_ready()
-        vlm_result = await extract_pan(file_bytes, document.filename or "pan.jpg")
+        if _use_vlm():
+            vlm_result = await extract_pan(file_bytes, document.filename or "pan.jpg")
+        else:
+            logger.warning("VLM unavailable — using RapidOCR fallback for PAN extraction")
+            vlm_result = await _extract_pan_ocr_fallback(file_bytes, document.filename or "pan.jpg")
         pan_data = vlm_result.get("extracted_fields") or {}
         confidence = float(vlm_result.get("confidence_score") or 0.0)
 
@@ -383,19 +492,37 @@ async def extract_aadhaar_endpoint(
             )
 
         _ensure_vlm_ready()
-        vlm_result = await extract_aadhaar(file_bytes, document.filename or "aadhaar.jpg")
-        qr_data = vlm_result.pop("_qr_data_for_session", None)
-        if qr_data and session_id:
-            session_store.update_data(session_id, "aadhaar_qr_data", qr_data)
+        if _use_vlm():
+            vlm_result = await extract_aadhaar(file_bytes, document.filename or "aadhaar.jpg")
+        else:
+            logger.warning("VLM unavailable — using RapidOCR fallback for Aadhaar extraction")
+            vlm_result = await _extract_aadhaar_ocr_fallback(file_bytes, document.filename or "aadhaar.jpg")
         aadhaar_data = vlm_result.get("extracted_fields") or {}
         confidence = float(vlm_result.get("confidence_score") or 0.0)
 
-        verhoeff_validation = None
-        aadhaar_number = aadhaar_data.get("aadhaar_number")
-        if aadhaar_number:
-            verhoeff_validation = validate_aadhaar_number(aadhaar_number)
-            session_store.update_data(session_id, "aadhaar_verhoeff_validation", verhoeff_validation)
-            vlm_result["verhoeff_validation"] = verhoeff_validation
+        # FA2: Verhoeff validation - Run immediately on extracted number
+        aadhaar_raw = aadhaar_data.get("aadhaar_number")
+        verhoeff_result = {
+            "checked": False,
+            "valid": None,
+            "reason": "Aadhaar number not found"
+        }
+        
+        if aadhaar_raw:
+            verhoeff_result = validate_aadhaar_number(aadhaar_raw)
+            
+            if verhoeff_result["valid"]:
+                logger.info(f"FA2 Verhoeff PASS: XXXX XXXX {aadhaar_raw[-4:]}")
+            else:
+                logger.warning(f"FA2 Verhoeff FAIL: {verhoeff_result['reason']} — {aadhaar_raw}")
+                # Add to validation issues
+                result.setdefault("validation", {}).setdefault("issues", []).append(
+                    f"Aadhaar number failed Verhoeff checksum: {verhoeff_result['reason']}"
+                )
+        
+        # Attach Verhoeff result to response
+        vlm_result["fa2_verhoeff"] = verhoeff_result
+        vlm_result["fa2_passed"] = verhoeff_result.get("valid", False)
 
         mobile_number = aadhaar_data.get("mobile_number")
         if session_id and mobile_number:
@@ -414,15 +541,17 @@ async def extract_aadhaar_endpoint(
 
         processing_time = int((time.time() - start_time) * 1000)
         session_store.update_data(session_id, "aadhaar_data", aadhaar_data)
+        session_store.update_data(session_id, "fa2_verhoeff_passed", verhoeff_result.get("valid", False))
+        session_store.update_data(session_id, "fa2_verhoeff_result", verhoeff_result)
         session_store.update_data(session_id, "kyc_aadhaar_done", aadhaar_valid)
         session_store.log_agent(
             session_id,
             {
-                "agent": "kyc",
-                "action": "aadhaar_extraction",
-                "success": aadhaar_valid,
-                "confidence": confidence,
-                "processing_time_ms": processing_time,
+                "agent": "KYCAgent",
+                "action": "AADHAAR_EXTRACTED",
+                "fa1_vlm": "complete",
+                "fa2_verhoeff": "PASS" if verhoeff_result.get("valid") else "FAIL",
+                "fa3_otp": "pending",
             },
         )
 
@@ -440,8 +569,8 @@ async def extract_aadhaar_endpoint(
             },
             confidence_score=confidence,
             processing_time_ms=processing_time,
-            qr_verification=vlm_result.get("qr_verification"),
-            verhoeff_validation=vlm_result.get("verhoeff_validation"),
+            fa2_verhoeff=verhoeff_result,
+            verhoeff_validation=verhoeff_result,
         )
 
     except HTTPException:
@@ -529,11 +658,17 @@ async def verify_kyc(
             _assert_upload_constraints(pan, pan_bytes)
             _assert_upload_constraints(aadhaar, aadhaar_bytes)
 
-            pan_vlm = await extract_pan(pan_bytes, pan.filename or "pan.jpg")
-            pan_data = pan_vlm.get("extracted_fields") or {}
-
-            aadhaar_vlm = await extract_aadhaar(aadhaar_bytes, aadhaar.filename or "aadhaar.jpg")
-            aadhaar_data = aadhaar_vlm.get("extracted_fields") or {}
+            if _use_vlm():
+                pan_vlm = await extract_pan(pan_bytes, pan.filename or "pan.jpg")
+                pan_data = pan_vlm.get("extracted_fields") or {}
+                aadhaar_vlm = await extract_aadhaar(aadhaar_bytes, aadhaar.filename or "aadhaar.jpg")
+                aadhaar_data = aadhaar_vlm.get("extracted_fields") or {}
+            else:
+                logger.warning("VLM unavailable — using RapidOCR fallback for KYC verify")
+                pan_vlm = await _extract_pan_ocr_fallback(pan_bytes, pan.filename or "pan.jpg")
+                pan_data = pan_vlm.get("extracted_fields") or {}
+                aadhaar_vlm = await _extract_aadhaar_ocr_fallback(aadhaar_bytes, aadhaar.filename or "aadhaar.jpg")
+                aadhaar_data = aadhaar_vlm.get("extracted_fields") or {}
 
             mobile_number = aadhaar_data.get("mobile_number")
             if resolved_session_id and mobile_number:
@@ -557,8 +692,12 @@ async def verify_kyc(
             if not pan_data or not aadhaar_data:
                 raise HTTPException(status_code=400, detail="Both PAN and Aadhaar data required")
 
-        vlm_cross = await cross_validate(pan_data, aadhaar_data)
-        cross_validation = map_cross_validation_to_legacy(vlm_cross, pan_data, aadhaar_data)
+        if _use_vlm():
+            vlm_cross = await cross_validate(pan_data, aadhaar_data)
+            cross_validation = map_cross_validation_to_legacy(vlm_cross, pan_data, aadhaar_data)
+        else:
+            from services.ocr import cross_validate_kyc as ocr_cross_validate
+            cross_validation = ocr_cross_validate(pan_data, aadhaar_data)
         fa1_passed = bool(cross_validation.get("overall_kyc_passed"))
 
         timestamp = datetime.now(timezone.utc)
@@ -577,7 +716,7 @@ async def verify_kyc(
             session_store.update_data(resolved_session_id, "kyc_cross_validated", fa1_passed)
             session_store.update_data(resolved_session_id, "fa1_document_passed", fa1_passed)
             session_store.update_data(resolved_session_id, "kyc_reference", ref)
-            session_store.update_stage(resolved_session_id, "KYC_QR_PENDING" if fa1_passed else "KYC_PENDING")
+            session_store.update_stage(resolved_session_id, "KYC_OTP_PENDING" if fa1_passed else "KYC_PENDING")
             session_store.log_agent(
                 resolved_session_id,
                 {
@@ -589,15 +728,66 @@ async def verify_kyc(
                 },
             )
 
+        # Get session data for FA2/FA3 status
+        data = session_store.get(resolved_session_id).get("data", {}) if resolved_session_id else {}
+        
+        # FA2: Verhoeff result (already computed during upload)
+        verhoeff_passed = data.get("fa2_verhoeff_passed", False) if resolved_session_id else False
+        verhoeff_result = data.get("fa2_verhoeff_result", {}) if resolved_session_id else {}
+        
+        # FA3: OTP status
+        mobile_verified = data.get("mobile_verified", False) if resolved_session_id else False
+        
+        # Determine if ready for FA3 - FA2 must pass before FA3 prompt
+        fa2_blocks_progress = (
+            aadhaar_data.get("aadhaar_number") is not None and 
+            not verhoeff_passed
+        )
+
         return VerifyResponse(
             kyc_status=cross_validation["kyc_status"],
             pan_data=pan_data,
             aadhaar_data={**aadhaar_data, "mobile_number": None},
             cross_validation=cross_validation,
-            overall_kyc_passed=cross_validation["overall_kyc_passed"],
+            overall_kyc_passed=fa1_passed and verhoeff_passed and mobile_verified,
             kyc_reference_id=ref,
             timestamp=timestamp.isoformat(),
-            three_factor_status=_build_three_factor_status(resolved_session_id) if resolved_session_id else None,
+            three_factor_status={
+                "fa1_cross_validation": {
+                    "passed": fa1_passed,
+                    "name_match": cross_validation.get("name_match"),
+                    "name_similarity": cross_validation.get("name_similarity"),
+                    "dob_match": cross_validation.get("dob_match"),
+                    "pan_name": cross_validation.get("pan_name"),
+                    "aadhaar_name": cross_validation.get("aadhaar_name"),
+                },
+                "fa2_verhoeff": {
+                    "passed": verhoeff_passed,
+                    "algorithm": "Verhoeff (UIDAI)",
+                    "aadhaar_last4": aadhaar_data.get("aadhaar_last4"),
+                    "reason": verhoeff_result.get("reason"),
+                    "message": (
+                        "Aadhaar number is mathematically valid"
+                        if verhoeff_passed
+                        else verhoeff_result.get("message", "Aadhaar checksum failed")
+                    ),
+                },
+                "fa3_otp": {
+                    "passed": mobile_verified,
+                    "mobile_found": bool(data.get("aadhaar_mobile")) if resolved_session_id else False,
+                    "status": "verified" if mobile_verified else "pending",
+                },
+                "overall_kyc_passed": fa1_passed and verhoeff_passed and mobile_verified,
+                "blocks_on_fa2": fa2_blocks_progress,
+                "next_step": (
+                    "OTP_VERIFICATION" 
+                    if fa1_passed and verhoeff_passed and not mobile_verified
+                    else "COMPLETE" 
+                    if fa1_passed and verhoeff_passed and mobile_verified
+                    else "FAILED"
+                ),
+                "kyc_reference": ref,
+            } if resolved_session_id else None,
         )
 
     except HTTPException:
@@ -611,8 +801,8 @@ async def verify_kyc(
 @limiter.limit("3/minute")
 async def send_otp_endpoint(request: Request, payload: OtpSendRequest):
     session = session_store.get(payload.session_id)
-    if not session or not session.get("data", {}).get("fa2_qr_passed"):
-        raise HTTPException(status_code=409, detail="Complete QR verification before OTP verification.")
+    if not session or not session.get("data", {}).get("fa2_verhoeff_passed", False):
+        raise HTTPException(status_code=409, detail="Complete Aadhaar verification (Verhoeff checksum must pass) before OTP verification.")
 
     mobile_number = _get_aadhaar_mobile(payload.session_id)
 
@@ -641,8 +831,8 @@ async def send_otp_endpoint(request: Request, payload: OtpSendRequest):
 @limiter.limit("3/minute")
 async def resend_otp_endpoint(request: Request, payload: OtpSendRequest):
     session = session_store.get(payload.session_id)
-    if not session or not session.get("data", {}).get("fa2_qr_passed"):
-        raise HTTPException(status_code=409, detail="Complete QR verification before OTP verification.")
+    if not session or not session.get("data", {}).get("fa2_verhoeff_passed", False):
+        raise HTTPException(status_code=409, detail="Complete Aadhaar verification (Verhoeff checksum must pass) before OTP verification.")
 
     mobile_number = _get_aadhaar_mobile(payload.session_id)
     result = await resend_otp_via_twilio(payload.session_id, mobile_number)
@@ -654,8 +844,8 @@ async def resend_otp_endpoint(request: Request, payload: OtpSendRequest):
 @limiter.limit("10/minute")
 async def verify_otp_endpoint(request: Request, payload: OtpVerifyRequest):
     session = session_store.get(payload.session_id)
-    if not session or not session.get("data", {}).get("fa2_qr_passed"):
-        raise HTTPException(status_code=409, detail="Complete QR verification before OTP verification.")
+    if not session or not session.get("data", {}).get("fa2_verhoeff_passed", False):
+        raise HTTPException(status_code=409, detail="Complete Aadhaar verification (Verhoeff checksum must pass) before OTP verification.")
 
     mobile_number = _get_aadhaar_mobile(payload.session_id)
     data = (session or {}).get("data", {})
@@ -693,60 +883,3 @@ async def verify_otp_endpoint(request: Request, payload: OtpVerifyRequest):
         )
 
     return OtpVerifyResponse(**result)
-
-
-@router.post("/verify-qr")
-@limiter.limit("10/minute")
-async def verify_aadhaar_qr(
-    request: Request,
-    file: UploadFile = File(...),
-    session_id: str = Query(None),
-    mobile: str = Query(None),
-):
-    """
-    FA2: Scan Aadhaar Secure QR code from the uploaded image.
-    Extracts demographic data and verifies mobile hash if provided.
-    """
-    logger.info("QR verification: %s", file.filename)
-
-    contents = await file.read()
-
-    if not mobile and session_id:
-        session = session_store.get(session_id)
-        if session:
-            mobile = session.get("data", {}).get("aadhaar_mobile")
-
-    result = await decode_aadhaar_qr_from_document(contents, file.filename or "aadhaar.jpg", mobile)
-
-    if session_id and result.get("qr_parsed"):
-        session_store.update_data(session_id, "qr_verification_result", result)
-        session_store.update_data(session_id, "fa2_qr_passed", bool(result.get("qr_parsed") and result.get("uidai_signed", True)))
-
-        if result.get("mobile_hash"):
-            session_store.update_data(session_id, "aadhaar_mobile_hash", result["mobile_hash"])
-
-        session = session_store.get(session_id)
-        if session:
-            vlm_name = session.get("data", {}).get("aadhaar_data", {}).get("name", "")
-            qr_name = result.get("decoded_fields", {}).get("name", "")
-            if vlm_name and qr_name:
-                consistent = vlm_name.lower()[:4] in qr_name.lower() or qr_name.lower()[:4] in vlm_name.lower()
-                result["name_consistency"] = {
-                    "consistent": consistent,
-                    "vlm_name": vlm_name,
-                    "qr_name": qr_name,
-                }
-
-        session_store.update_stage(session_id, "KYC_OTP_PENDING")
-        session_store.log_agent(
-            session_id,
-            {
-                "agent": "KYCAgent",
-                "action": "QR_VERIFIED",
-                "qr_type": result.get("qr_type"),
-                "mobile_hash_available": result.get("mobile_hash_available"),
-                "uidai_signed": result.get("uidai_signed"),
-            },
-        )
-
-    return result
