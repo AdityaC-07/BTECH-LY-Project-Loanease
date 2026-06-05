@@ -5,6 +5,8 @@ export const ENDPOINTS = {
   session_get: `${API_BASE_URL}/session`,
   kyc_pan: `${API_BASE_URL}/kyc/extract/pan`,
   kyc_aadhaar: `${API_BASE_URL}/kyc/extract/aadhaar`,
+  kyc_validate_aadhaar: `${API_BASE_URL}/kyc/validate-aadhaar`,
+  kyc_audit_trail: `${API_BASE_URL}/kyc/audit-trail`,
   kyc_verify: `${API_BASE_URL}/kyc/verify`,
   kyc_status: `${API_BASE_URL}/kyc/kyc-status`,
   kyc_send_otp: `${API_BASE_URL}/kyc/send-otp`,

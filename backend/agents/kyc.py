@@ -191,6 +191,41 @@ async def kyc_health():
     }
 
 
+@router.get("/audit-trail/{session_id}")
+async def get_kyc_audit_trail(session_id: str):
+    """Return the full KYC audit trail with summary for a session."""
+    trail = session_store.get_kyc_audit_trail(session_id)
+    if trail is None:
+        session = session_store.get(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        trail = []
+
+    return {
+        "session_id": session_id,
+        "kyc_audit_trail": trail,
+        "summary": session_store.build_kyc_audit_summary(session_id, trail),
+    }
+
+
+@router.get("/validate-aadhaar/{number}")
+@limiter.limit("30/minute")
+async def validate_aadhaar_endpoint(request: Request, number: str):
+    """
+    Real-time Verhoeff validation for Aadhaar numbers.
+    Pure mathematical check — no session or authentication required.
+    """
+    result = validate_aadhaar_number(number)
+    return {
+        "input": number,
+        "valid": result["valid"],
+        "message": result["message"],
+        "masked": result.get("masked"),
+        "last4": result.get("aadhaar_last4") or result.get("last4"),
+        "reason": result.get("reason"),
+    }
+
+
 def _build_three_factor_status(session_id: str) -> dict:
     session = session_store.get(session_id)
     if not session:
@@ -348,6 +383,13 @@ async def extract_pan_endpoint(
                     "source": "DEMO_MODE",
                 },
             )
+            session_store.record_kyc_event(
+                session_id,
+                "FA1",
+                "PAN_EXTRACTED",
+                "success",
+                {"pan_last4": demo_pan_data["pan_number"][-4:], "confidence": 0.99, "source": "DEMO_MODE"},
+            )
             return PanExtractResponse(
                 extracted_fields=demo_pan_data,
                 validation={
@@ -396,6 +438,17 @@ async def extract_pan_endpoint(
                 "success": pan_valid,
                 "confidence": confidence,
                 "processing_time_ms": processing_time,
+            },
+        )
+        pan_number = pan_data.get("pan_number") or ""
+        session_store.record_kyc_event(
+            session_id,
+            "FA1",
+            "PAN_EXTRACTED",
+            "success" if pan_valid else "failed",
+            {
+                "pan_last4": pan_number[-4:] if len(pan_number) >= 4 else None,
+                "confidence": round(confidence, 2),
             },
         )
 
@@ -479,6 +532,13 @@ async def extract_aadhaar_endpoint(
                     "source": "DEMO_MODE",
                 },
             )
+            session_store.record_kyc_event(
+                session_id,
+                "FA1",
+                "AADHAAR_EXTRACTED",
+                "success",
+                {"aadhaar_last4": demo_aadhaar_data["aadhaar_last4"], "confidence": 0.99, "source": "DEMO_MODE"},
+            )
             return AadhaarExtractResponse(
                 extracted_fields=demo_aadhaar_data,
                 validation={
@@ -515,10 +575,6 @@ async def extract_aadhaar_endpoint(
                 logger.info(f"FA2 Verhoeff PASS: XXXX XXXX {aadhaar_raw[-4:]}")
             else:
                 logger.warning(f"FA2 Verhoeff FAIL: {verhoeff_result['reason']} — {aadhaar_raw}")
-                # Add to validation issues
-                result.setdefault("validation", {}).setdefault("issues", []).append(
-                    f"Aadhaar number failed Verhoeff checksum: {verhoeff_result['reason']}"
-                )
         
         # Attach Verhoeff result to response
         vlm_result["fa2_verhoeff"] = verhoeff_result
@@ -554,6 +610,35 @@ async def extract_aadhaar_endpoint(
                 "fa3_otp": "pending",
             },
         )
+
+        aadhaar_last4 = (
+            aadhaar_data.get("aadhaar_last4")
+            or (aadhaar_raw[-4:] if aadhaar_raw and len(str(aadhaar_raw)) >= 4 else None)
+        )
+        session_store.record_kyc_event(
+            session_id,
+            "FA1",
+            "AADHAAR_EXTRACTED",
+            "success" if aadhaar_valid else "failed",
+            {"aadhaar_last4": aadhaar_last4, "confidence": round(confidence, 2)},
+        )
+        if aadhaar_raw or aadhaar_last4:
+            verhoeff_valid = bool(verhoeff_result.get("valid"))
+            session_store.record_kyc_event(
+                session_id,
+                "FA2",
+                "PASSED" if verhoeff_valid else "FAILED",
+                verhoeff_result.get("message", ""),
+                {
+                    "algorithm": "Verhoeff D5",
+                    "aadhaar_last4": aadhaar_last4,
+                    "reason": verhoeff_result.get("reason"),
+                },
+            )
+        if verhoeff_result.get("valid") is False:
+            issues.append(
+                f"Aadhaar number failed Verhoeff checksum: {verhoeff_result.get('reason')}"
+            )
 
         return AadhaarExtractResponse(
             extracted_fields={
@@ -727,6 +812,18 @@ async def verify_kyc(
                     "reference_id": ref,
                 },
             )
+            session_store.record_kyc_event(
+                resolved_session_id,
+                "FA1",
+                "CROSS_VALIDATED",
+                "passed" if fa1_passed else "failed",
+                {
+                    "name_similarity": cross_validation.get("name_similarity"),
+                    "dob_match": cross_validation.get("dob_match"),
+                    "name_match": cross_validation.get("name_match"),
+                    "kyc_reference": ref,
+                },
+            )
 
         # Get session data for FA2/FA3 status
         data = session_store.get(resolved_session_id).get("data", {}) if resolved_session_id else {}
@@ -820,6 +917,13 @@ async def send_otp_endpoint(request: Request, payload: OtpSendRequest):
             "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     )
+    session_store.record_kyc_event(
+        payload.session_id,
+        "FA3",
+        "OTP_SENT",
+        "pending" if result["sent"] else "failed",
+        {"mobile_last4": mobile_number[-4:], "method": "TWILIO_VERIFY"},
+    )
 
     if not result["sent"] and not result.get("fallback_active") and not settings.DEMO_MODE:
         raise HTTPException(status_code=502, detail="Unable to send OTP right now. Please try again.")
@@ -866,6 +970,16 @@ async def verify_otp_endpoint(request: Request, payload: OtpVerifyRequest):
                 "reasoning": "Aadhaar-linked mobile OTP verified successfully.",
                 "status": "SUCCESS",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        session_store.record_kyc_event(
+            payload.session_id,
+            "FA3",
+            "OTP_VERIFIED",
+            "success",
+            {
+                "method": data.get("verification_method", "TWILIO_VERIFY"),
+                "mobile_last4": mobile_number[-4:],
             },
         )
     elif result["terminated"]:

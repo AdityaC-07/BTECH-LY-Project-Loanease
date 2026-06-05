@@ -11,12 +11,30 @@ export interface AgentTraceItem {
   timestamp: string;
 }
 
+export interface KycAuditEntry {
+  timestamp: string;
+  factor: string;
+  event: string;
+  result: string;
+  details?: Record<string, unknown>;
+}
+
+export interface KycAuditSummary {
+  fa1_events: number;
+  fa2_events: number;
+  fa3_events: number;
+  total_duration_seconds: number;
+  final_status: string;
+}
+
 interface AgentActivityPanelProps {
   trace: AgentTraceItem[];
   pipelineStatus: string;
   activeAgentLabel?: string | null;
   liveProcessing?: boolean;
   liveLogLines?: string[];
+  kycAuditTrail?: KycAuditEntry[];
+  kycAuditSummary?: KycAuditSummary | null;
 }
 
 const AGENT_ORDER = [
@@ -47,8 +65,31 @@ const STATUS_TO_AGENT: Record<string, string> = {
   "FAILED": "MasterOrchestratorAgent"
 };
 
-export const AgentActivityPanel = ({ trace, pipelineStatus, activeAgentLabel, liveProcessing = false, liveLogLines = [] }: AgentActivityPanelProps) => {
+const FACTOR_COLORS: Record<string, string> = {
+  FA1: "text-blue-400",
+  FA2: "text-purple-400",
+  FA3: "text-amber-400",
+};
+
+const formatAuditTime = (iso: string) => {
+  try {
+    return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  } catch {
+    return iso;
+  }
+};
+
+export const AgentActivityPanel = ({
+  trace,
+  pipelineStatus,
+  activeAgentLabel,
+  liveProcessing = false,
+  liveLogLines = [],
+  kycAuditTrail = [],
+  kycAuditSummary = null,
+}: AgentActivityPanelProps) => {
   const [collapsed, setCollapsed] = useState(true);
+  const [auditExpanded, setAuditExpanded] = useState(false);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [isInView, setIsInView] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -261,6 +302,64 @@ Demo
             );
           })}
         </div>
+
+        {kycAuditTrail.length > 0 && (
+          <div className="border-t border-border/50 bg-muted/10">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-muted/30 transition-colors"
+              onClick={() => setAuditExpanded((value) => !value)}
+            >
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-foreground">
+                  KYC Audit Trail
+                </div>
+                <div className="text-[10px] text-muted-foreground">
+                  {kycAuditTrail.length} events
+                  {kycAuditSummary ? ` • ${kycAuditSummary.final_status}` : ""}
+                </div>
+              </div>
+              <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", auditExpanded && "rotate-180")} />
+            </button>
+
+            {auditExpanded && (
+              <div className="max-h-52 overflow-y-auto px-3 pb-3 space-y-2 scrollbar-hide">
+                {kycAuditTrail.map((entry, index) => (
+                  <div key={`${entry.timestamp}-${entry.event}-${index}`} className="rounded-md border border-border/40 bg-card/60 p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={cn("text-[10px] font-bold", FACTOR_COLORS[entry.factor] || "text-foreground")}>
+                        {entry.factor}
+                      </span>
+                      <span className="text-[10px] font-mono text-muted-foreground">
+                        {formatAuditTime(entry.timestamp)}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs font-medium text-foreground">{entry.event}</div>
+                    <div className="text-[11px] text-muted-foreground break-words">{entry.result}</div>
+                    {entry.details && Object.keys(entry.details).length > 0 && (
+                      <div className="mt-1 text-[10px] font-mono text-muted-foreground/80 break-all">
+                        {Object.entries(entry.details)
+                          .filter(([, value]) => value !== null && value !== undefined && value !== "")
+                          .map(([key, value]) => `${key}: ${String(value)}`)
+                          .join(" • ")}
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {kycAuditSummary && (
+                  <div className="rounded-md border border-green-500/30 bg-green-500/5 p-2 text-[10px] text-muted-foreground">
+                    <div className="font-semibold text-green-400">{kycAuditSummary.final_status}</div>
+                    <div className="mt-1">
+                      FA1: {kycAuditSummary.fa1_events} • FA2: {kycAuditSummary.fa2_events} • FA3: {kycAuditSummary.fa3_events}
+                    </div>
+                    <div>Duration: {kycAuditSummary.total_duration_seconds}s</div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         
         {hasActiveAgent && (
           <div className="p-2 border-t border-border/50 bg-muted/10 flex items-center justify-between">

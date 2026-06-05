@@ -1,4 +1,4 @@
-# Core FastAPI dependencies
+﻿# Core FastAPI dependencies
 fastapi
 uvicorn[standard]
 pydantic-settings
@@ -20,7 +20,7 @@ numpy
 
 # OCR and image processing
 rapidocr-onnxruntime
-opencv-python
+opencv-python-headless
 Pillow
 PyMuPDF
 rapidfuzz
@@ -35,7 +35,3 @@ cryptography
 pydantic>=2.0.0
 httpx==0.27.0
 twilio
-pyaadhaar
-pyzbar
-python-stdnum
-zxing-cpp

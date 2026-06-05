@@ -244,21 +244,19 @@ If dependencies are not installed, run in each backend directory:
 pip install -r requirements.txt
 ```
 
-For the KYC stack, ensure the backend environment includes the OCR/QR and OTP packages used by the new flow:
+For the KYC stack, ensure the backend environment includes the OCR and OTP packages used by the flow:
 
 - `twilio`
-- `pyzbar`
-- `opencv-python`
-
-On Linux, `pyzbar` may also require `libzbar0`.
+- `opencv-python-headless`
+- `PyMuPDF` (PDF to image for document upload)
 
 ### KYC Verification Usage
 
 The KYC journey now runs in three layers:
 
 1. PAN extraction validates document text and identity fields.
-2. Aadhaar extraction decodes the Secure QR when present and stores QR metadata in session state.
-3. QR hash verification is attempted first; Twilio OTP is used when the QR hash check is unavailable or inconclusive.
+2. Aadhaar extraction runs VLM/OCR field extraction plus Verhoeff checksum validation (FA2).
+3. Twilio OTP verifies the mobile number on the Aadhaar card (FA3).
 
 Recommended environment variables:
 

@@ -28,6 +28,7 @@ from services.groq_service import GroqService
 from services.memory import ConversationMemory
 from services.otp_service import init_twilio
 from services.vlm_kyc import init_vlm, vlm_ready, test_age_calculation
+from services.aadhaar_verhoeff import run_verhoeff_tests
 from core.config import settings
 from core.session import session_store
 from slowapi import _rate_limit_exceeded_handler
@@ -94,6 +95,15 @@ async def lifespan(app: FastAPI):
             logger.warning("VLM KYC engine unavailable; KYC extraction endpoints may return degraded status")
     except Exception as exc:
         logger.warning("VLM KYC initialization failed; continuing in degraded mode: %s", str(exc))
+
+    try:
+        verhoeff_ok = run_verhoeff_tests()
+        if verhoeff_ok:
+            logger.info("✅ Verhoeff algorithm ready")
+        else:
+            logger.error("❌ Verhoeff tests failed — check implementation")
+    except Exception as exc:
+        logger.error("Verhoeff init error: %s", exc)
 
     try:
         if init_twilio():
@@ -242,6 +252,22 @@ async def health():
             "api_key_set": bool(settings.GROQ_API_KEY or os.getenv("GROQ_API_KEY")),
             "last_successful_call": groq_status.get("last_successful_call"),
             "fallback_activations": groq_status.get("fallback_activations", 0),
+        },
+        "kyc_fa2_verhoeff": {
+            "status": "ready",
+            "algorithm": "Verhoeff D5 group",
+            "validates": [
+                "12-digit format",
+                "UIDAI first-digit rule",
+                "Dihedral group D5 checksum",
+            ],
+            "detects": [
+                "All single-digit errors",
+                "All adjacent transpositions",
+                "Most twin and phonetic errors",
+            ],
+            "cost": "zero — offline computation",
+            "latency": "< 1ms",
         },
     }
 

@@ -2,8 +2,8 @@ import json
 import logging
 from pathlib import Path
 from threading import Lock
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Optional
 import uuid
 
 
@@ -136,6 +136,83 @@ class SessionStore:
         """Get the most recent system-wide agent activity"""
         with self._lock:
             return self._global_logs[:limit]
+
+    def record_kyc_event(
+        self,
+        session_id: str,
+        factor: str,
+        event: str,
+        result: str,
+        details: Optional[dict] = None,
+    ) -> None:
+        """
+        Record a KYC audit event.
+
+        factor: "FA1", "FA2", "FA3"
+        event: e.g. "PAN_EXTRACTED", "PASSED", "OTP_SENT"
+        result: human-readable outcome
+        """
+        audit_entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "factor": factor,
+            "event": event,
+            "result": result,
+            "details": details or {},
+        }
+
+        with self._lock:
+            if session_id in self._sessions:
+                audit_log = self._sessions[session_id].setdefault("kyc_audit_trail", [])
+                audit_log.append(audit_entry)
+                self._save_to_disk()
+
+    def get_kyc_audit_trail(self, session_id: str) -> Optional[list]:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if not session:
+                return None
+            return list(session.get("kyc_audit_trail", []))
+
+    def build_kyc_audit_summary(self, session_id: str, trail: list) -> dict[str, Any]:
+        fa1_events = sum(1 for entry in trail if entry.get("factor") == "FA1")
+        fa2_events = sum(1 for entry in trail if entry.get("factor") == "FA2")
+        fa3_events = sum(1 for entry in trail if entry.get("factor") == "FA3")
+
+        total_duration_seconds = 0
+        if len(trail) >= 2:
+            try:
+                first = datetime.fromisoformat(trail[0]["timestamp"].replace("Z", "+00:00"))
+                last = datetime.fromisoformat(trail[-1]["timestamp"].replace("Z", "+00:00"))
+                total_duration_seconds = max(0, int((last - first).total_seconds()))
+            except (KeyError, ValueError, TypeError):
+                total_duration_seconds = 0
+
+        final_status = "PENDING"
+        for entry in reversed(trail):
+            event = entry.get("event", "")
+            factor = entry.get("factor", "")
+            result = str(entry.get("result", "")).lower()
+            if factor == "FA3" and event == "OTP_VERIFIED" and result == "success":
+                final_status = "VERIFIED"
+                break
+            if event in {"FAILED", "OTP_FAILED"} or result == "failed":
+                final_status = "FAILED"
+                break
+
+        with self._lock:
+            session = self._sessions.get(session_id) or {}
+            stage = session.get("stage", "")
+            if final_status == "PENDING" and stage == "KYC_VERIFIED":
+                final_status = "VERIFIED"
+
+        return {
+            "fa1_events": fa1_events,
+            "fa2_events": fa2_events,
+            "fa3_events": fa3_events,
+            "total_duration_seconds": total_duration_seconds,
+            "final_status": final_status,
+        }
+
 
 # Single global instance
 session_store = SessionStore()
