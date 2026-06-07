@@ -599,5 +599,736 @@
         }
       }
     ]
+  },
+  "LE-2026-10448": {
+    "id": "LE-2026-10448",
+    "created_at": "2026-06-06T14:12:05.883714",
+    "expires_at": "2026-06-07T14:12:05.883714",
+    "stage": "KYC_OTP_PENDING",
+    "agent_log": [
+      {
+        "agent": "kyc",
+        "action": "pan_extraction",
+        "success": true,
+        "confidence": 0.98,
+        "processing_time_ms": 12959
+      },
+      {
+        "agent": "KYCAgent",
+        "action": "AADHAAR_EXTRACTED",
+        "fa1_vlm": "complete",
+        "fa2_verhoeff": "PASS",
+        "fa3_otp": "pending"
+      },
+      {
+        "agent": "kyc",
+        "action": "verification",
+        "success": true,
+        "kyc_status": "VERIFIED",
+        "reference_id": "KYC-2026-00003"
+      },
+      {
+        "agent": "KYCVerificationAgent",
+        "action": "OTP_SENT",
+        "reasoning": "Sending verification OTP to Aadhaar-linked mobile ending in 8133",
+        "status": "FAILED",
+        "timestamp": "2026-06-06T14:13:21.202522+00:00"
+      }
+    ],
+    "data": {
+      "pan_data": {
+        "pan_number": "DHNPC1510A",
+        "name": "ADITYA CHOUDHURI",
+        "fathers_name": "TARIT CHOUDHURI",
+        "date_of_birth": "18/02/2005",
+        "age": 21,
+        "age_eligible": true,
+        "age_calculated_at": "2026-06-06"
+      },
+      "kyc_pan_done": true,
+      "aadhaar_mobile": "9920248133",
+      "aadhaar_mobile_last4": "8133",
+      "aadhaar_data": {
+        "aadhaar_last4": "5321",
+        "aadhaar_number": "245276385321",
+        "name": "Aditya Choudhuri",
+        "date_of_birth": "18/02/2005",
+        "year_of_birth": 2005,
+        "age": 21,
+        "age_eligible": true,
+        "age_calculated_at": "2026-06-06",
+        "gender": "Male",
+        "address": {
+          "full": "S/O Tarit Choudhuri, EMP-30/303, Evershine Millenium Paradise, Thakur Village, Near Thakur Public School, VTC: Kandivali East, District: Mumbai, State: Maharashtra, PIN Code: 400101",
+          "pincode": "400101",
+          "city": "Mumbai",
+          "state": "Maharashtra"
+        },
+        "mobile_number": "9920248133",
+        "mobile_last4": "8133",
+        "mobile_found": true
+      },
+      "fa2_verhoeff_passed": true,
+      "fa2_verhoeff_result": {
+        "valid": true,
+        "checked": true,
+        "reason": "VALID",
+        "message": "Aadhaar number passes all validation checks. Format is correct and Verhoeff checksum is valid.",
+        "aadhaar_last4": "5321",
+        "last4": "5321",
+        "masked": "XXXX XXXX 5321",
+        "algorithm": "Verhoeff (UIDAI)"
+      },
+      "kyc_aadhaar_done": true,
+      "kyc_cross_validated": true,
+      "fa1_document_passed": true,
+      "kyc_reference": "KYC-2026-00003",
+      "aadhaar_otp_pending": true
+    },
+    "kyc_audit_trail": [
+      {
+        "timestamp": "2026-06-06T14:12:18.901340+00:00",
+        "factor": "FA1",
+        "event": "PAN_EXTRACTED",
+        "result": "success",
+        "details": {
+          "pan_last4": "510A",
+          "confidence": 0.98
+        }
+      },
+      {
+        "timestamp": "2026-06-06T14:12:46.679079+00:00",
+        "factor": "FA1",
+        "event": "AADHAAR_EXTRACTED",
+        "result": "success",
+        "details": {
+          "aadhaar_last4": "5321",
+          "confidence": 0.98
+        }
+      },
+      {
+        "timestamp": "2026-06-06T14:12:46.702121+00:00",
+        "factor": "FA2",
+        "event": "PASSED",
+        "result": "Aadhaar number passes all validation checks. Format is correct and Verhoeff checksum is valid.",
+        "details": {
+          "algorithm": "Verhoeff D5",
+          "aadhaar_last4": "5321",
+          "reason": "VALID"
+        }
+      },
+      {
+        "timestamp": "2026-06-06T14:13:14.393029+00:00",
+        "factor": "FA1",
+        "event": "CROSS_VALIDATED",
+        "result": "passed",
+        "details": {
+          "name_similarity": null,
+          "dob_match": true,
+          "name_match": null,
+          "kyc_reference": "KYC-2026-00003"
+        }
+      },
+      {
+        "timestamp": "2026-06-06T14:13:21.202522+00:00",
+        "factor": "FA3",
+        "event": "OTP_SENT",
+        "result": "failed",
+        "details": {
+          "mobile_last4": "8133",
+          "method": "TWILIO_VERIFY"
+        }
+      }
+    ]
+  },
+  "LE-2026-86479": {
+    "id": "LE-2026-86479",
+    "created_at": "2026-06-07T11:25:53.341131",
+    "expires_at": "2026-06-08T11:25:53.341131",
+    "stage": "KYC_OTP_PENDING",
+    "agent_log": [
+      {
+        "agent": "kyc",
+        "action": "pan_extraction",
+        "success": true,
+        "confidence": 0.98,
+        "processing_time_ms": 8478
+      },
+      {
+        "agent": "KYCAgent",
+        "action": "AADHAAR_EXTRACTED",
+        "fa1_vlm": "complete",
+        "fa2_verhoeff": "PASS",
+        "fa3_otp": "pending"
+      },
+      {
+        "agent": "kyc",
+        "action": "verification",
+        "success": true,
+        "kyc_status": "VERIFIED",
+        "reference_id": "KYC-2026-00003"
+      },
+      {
+        "agent": "KYCVerificationAgent",
+        "action": "OTP_SENT",
+        "reasoning": "Sending verification OTP to Aadhaar-linked mobile ending in 8133",
+        "status": "FAILED",
+        "timestamp": "2026-06-07T11:26:50.636597+00:00"
+      }
+    ],
+    "data": {
+      "pan_data": {
+        "pan_number": "DHNPC1510A",
+        "name": "ADITYA CHOUDHURI",
+        "fathers_name": "TARIT CHOUDHURI",
+        "date_of_birth": "18/02/2005",
+        "age": 21,
+        "age_eligible": true,
+        "age_calculated_at": "2026-06-07"
+      },
+      "kyc_pan_done": true,
+      "aadhaar_mobile": "9920248133",
+      "aadhaar_mobile_last4": "8133",
+      "aadhaar_data": {
+        "aadhaar_last4": "5321",
+        "aadhaar_number": "245276385321",
+        "name": "Aditya Choudhuri",
+        "date_of_birth": "18/02/2005",
+        "year_of_birth": 2005,
+        "age": 21,
+        "age_eligible": true,
+        "age_calculated_at": "2026-06-07",
+        "gender": "Male",
+        "address": {
+          "full": "S/O Tarit Choudhuri, EMP-30/303, Evershine Millenium Paradise, Thakur Village, Near Thakur Public School, VTC: Kandivali East, District: Mumbai, State: Maharashtra, PIN Code: 400101",
+          "pincode": "400101",
+          "city": "Mumbai",
+          "state": "Maharashtra"
+        },
+        "mobile_number": "9920248133",
+        "mobile_last4": "8133",
+        "mobile_found": true
+      },
+      "fa2_verhoeff_passed": true,
+      "fa2_verhoeff_result": {
+        "valid": true,
+        "checked": true,
+        "reason": "VALID",
+        "message": "Aadhaar number passes all validation checks. Format is correct and Verhoeff checksum is valid.",
+        "aadhaar_last4": "5321",
+        "last4": "5321",
+        "masked": "XXXX XXXX 5321",
+        "algorithm": "Verhoeff (UIDAI)"
+      },
+      "kyc_aadhaar_done": true,
+      "kyc_cross_validated": true,
+      "fa1_document_passed": true,
+      "kyc_reference": "KYC-2026-00003",
+      "aadhaar_otp_pending": true
+    },
+    "kyc_audit_trail": [
+      {
+        "timestamp": "2026-06-07T11:26:01.873601+00:00",
+        "factor": "FA1",
+        "event": "PAN_EXTRACTED",
+        "result": "success",
+        "details": {
+          "pan_last4": "510A",
+          "confidence": 0.98
+        }
+      },
+      {
+        "timestamp": "2026-06-07T11:26:26.026954+00:00",
+        "factor": "FA1",
+        "event": "AADHAAR_EXTRACTED",
+        "result": "success",
+        "details": {
+          "aadhaar_last4": "5321",
+          "confidence": 0.98
+        }
+      },
+      {
+        "timestamp": "2026-06-07T11:26:26.049308+00:00",
+        "factor": "FA2",
+        "event": "PASSED",
+        "result": "Aadhaar number passes all validation checks. Format is correct and Verhoeff checksum is valid.",
+        "details": {
+          "algorithm": "Verhoeff D5",
+          "aadhaar_last4": "5321",
+          "reason": "VALID"
+        }
+      },
+      {
+        "timestamp": "2026-06-07T11:26:44.988810+00:00",
+        "factor": "FA1",
+        "event": "CROSS_VALIDATED",
+        "result": "passed",
+        "details": {
+          "name_similarity": null,
+          "dob_match": true,
+          "name_match": null,
+          "kyc_reference": "KYC-2026-00003"
+        }
+      },
+      {
+        "timestamp": "2026-06-07T11:26:50.637628+00:00",
+        "factor": "FA3",
+        "event": "OTP_SENT",
+        "result": "failed",
+        "details": {
+          "mobile_last4": "8133",
+          "method": "TWILIO_VERIFY"
+        }
+      }
+    ]
+  },
+  "LE-2026-94599": {
+    "id": "LE-2026-94599",
+    "created_at": "2026-06-07T11:44:22.573102",
+    "expires_at": "2026-06-08T11:44:22.573102",
+    "stage": "BLOCKCHAIN_VERIFIED",
+    "agent_log": [
+      {
+        "agent": "MasterOrchestratorAgent",
+        "action": "INITIATED_SESSION",
+        "reasoning": "New loan inquiry received. Starting orchestration.",
+        "status": "SUCCESS"
+      },
+      {
+        "agent": "kyc",
+        "action": "pan_extraction",
+        "success": true,
+        "confidence": 0.98,
+        "processing_time_ms": 19983
+      },
+      {
+        "agent": "KYCAgent",
+        "action": "AADHAAR_EXTRACTED",
+        "fa1_vlm": "complete",
+        "fa2_verhoeff": "PASS",
+        "fa3_otp": "pending"
+      },
+      {
+        "agent": "kyc",
+        "action": "verification",
+        "success": true,
+        "kyc_status": "VERIFIED",
+        "reference_id": "KYC-2026-00004"
+      },
+      {
+        "agent": "KYCVerificationAgent",
+        "action": "OTP_SENT",
+        "reasoning": "Sending verification OTP to Aadhaar-linked mobile ending in 8133",
+        "status": "SUCCESS",
+        "timestamp": "2026-06-07T11:47:19.779433+00:00"
+      },
+      {
+        "agent": "KYCVerificationAgent",
+        "action": "OTP_VERIFIED",
+        "reasoning": "Aadhaar-linked mobile OTP verified successfully.",
+        "status": "SUCCESS",
+        "timestamp": "2026-06-07T11:47:57.461278+00:00"
+      },
+      {
+        "agent": "underwriting",
+        "action": "assessment",
+        "success": true,
+        "application_id": "APP-48BDFBA03414",
+        "credit_score": 584,
+        "decision": "APPROVED"
+      },
+      {
+        "agent": "negotiation",
+        "action": "start",
+        "negotiation_id": "NEG-A106F33E",
+        "initial_rate": 14.0,
+        "min_rate": 14.0
+      },
+      {
+        "agent": "BlockchainAuditAgent",
+        "action": "LOAN_SANCTIONED",
+        "transaction_id": "TXN-A39248446EC5",
+        "block_hash": "00c6dbea1a69a20fd906c780ae79d9f7467a0bf9e01939d1e7d0a52ff54e470e",
+        "reasoning": "Loan of \u20b9500000.0 at 11.0% p.a. sanctioned and recorded on ledger.",
+        "duration_ms": 1200,
+        "status": "SUCCESS"
+      }
+    ],
+    "data": {
+      "pan_data": {
+        "pan_number": "DHNPC1510A",
+        "name": "ADITYA CHOUDHURI",
+        "fathers_name": "TARIT CHOUDHURI",
+        "date_of_birth": "18/02/2005",
+        "age": 21,
+        "age_eligible": true,
+        "age_calculated_at": "2026-06-07"
+      },
+      "kyc_pan_done": true,
+      "aadhaar_mobile": "9920248133",
+      "aadhaar_mobile_last4": "8133",
+      "aadhaar_data": {
+        "aadhaar_last4": "5321",
+        "aadhaar_number": "245276385321",
+        "name": "Aditya Choudhuri",
+        "date_of_birth": "18/02/2005",
+        "year_of_birth": 2005,
+        "age": 21,
+        "age_eligible": true,
+        "age_calculated_at": "2026-06-07",
+        "gender": "Male",
+        "address": {
+          "full": "S/O Tarit Choudhuri, EMP-30/303, Evershine Millenium Paradise, Thakur Village, Near Thakur Public School, VTC: Kandivali East, District: Mumbai, State: Maharashtra, PIN Code: 400101",
+          "pincode": "400101",
+          "city": "Mumbai",
+          "state": "Maharashtra"
+        },
+        "mobile_number": "9920248133",
+        "mobile_last4": "8133",
+        "mobile_found": true
+      },
+      "fa2_verhoeff_passed": true,
+      "fa2_verhoeff_result": {
+        "valid": true,
+        "checked": true,
+        "reason": "VALID",
+        "message": "Aadhaar number passes all validation checks. Format is correct and Verhoeff checksum is valid.",
+        "aadhaar_last4": "5321",
+        "last4": "5321",
+        "masked": "XXXX XXXX 5321",
+        "algorithm": "Verhoeff (UIDAI)"
+      },
+      "kyc_aadhaar_done": true,
+      "kyc_cross_validated": true,
+      "fa1_document_passed": true,
+      "kyc_reference": "KYC-2026-00004",
+      "aadhaar_otp_pending": true,
+      "aadhaar_otp_verified": true,
+      "mobile_verified": true,
+      "verification_method": "OTP_SMS",
+      "fa3_otp_passed": true,
+      "underwriting_result": {
+        "application_id": "APP-48BDFBA03414",
+        "decision": "APPROVED",
+        "credit_score": 584,
+        "interest_rate": 14.0,
+        "risk_category": "HIGH",
+        "risk_score": 80,
+        "loan_amount": 500000.0,
+        "tenure_years": 5,
+        "monthly_income": 5000.0,
+        "employment_type": "salaried",
+        "employer_name": "TCS",
+        "loan_purpose": "general",
+        "alternative_score": null,
+        "alternative_eligible": null,
+        "alternative_details": null
+      },
+      "blockchain_data": {
+        "transaction_id": "TXN-A39248446EC5",
+        "block_hash": "00c6dbea1a69a20fd906c780ae79d9f7467a0bf9e01939d1e7d0a52ff54e470e",
+        "signature": "da9f1b7d5a8600d8a87a2d88e3c8726a74722665ac96447dee8dd5af3d01cd24c59f83ed76db2101dc2bfc95a27888330bce54e4f7bb572bdbd594804a937beb6ad2bac4fe664f352bc57046f3e9ea69a60a6d9b3cbdefdaa50a1be464475d5800242f2d4a907b4d4d6f7f87a07f54af2f67ab554e6b651eff6513d19bc9e3be2c9ebb0035d4d43a761504eefd841023b6dffdddde4f8a756288f7769ce5de4c50456f956b9ae35eb3908bc16cfb2addfb11b161b373556353a48c7c868333e3bb084bf8c52e18ce695311bb10ae4e6ad93bdb1eb33739c41f7da7cd3781a17aaa6d7205deb233a4c658bc6cff1be89ab49cfde4b3c96c171fc6c499bfd59e07"
+      }
+    },
+    "kyc_audit_trail": [
+      {
+        "timestamp": "2026-06-07T11:45:50.902514+00:00",
+        "factor": "FA1",
+        "event": "PAN_EXTRACTED",
+        "result": "success",
+        "details": {
+          "pan_last4": "510A",
+          "confidence": 0.98
+        }
+      },
+      {
+        "timestamp": "2026-06-07T11:46:43.567448+00:00",
+        "factor": "FA1",
+        "event": "AADHAAR_EXTRACTED",
+        "result": "success",
+        "details": {
+          "aadhaar_last4": "5321",
+          "confidence": 0.98
+        }
+      },
+      {
+        "timestamp": "2026-06-07T11:46:43.680098+00:00",
+        "factor": "FA2",
+        "event": "PASSED",
+        "result": "Aadhaar number passes all validation checks. Format is correct and Verhoeff checksum is valid.",
+        "details": {
+          "algorithm": "Verhoeff D5",
+          "aadhaar_last4": "5321",
+          "reason": "VALID"
+        }
+      },
+      {
+        "timestamp": "2026-06-07T11:47:09.605262+00:00",
+        "factor": "FA1",
+        "event": "CROSS_VALIDATED",
+        "result": "passed",
+        "details": {
+          "name_similarity": null,
+          "dob_match": true,
+          "name_match": null,
+          "kyc_reference": "KYC-2026-00004"
+        }
+      },
+      {
+        "timestamp": "2026-06-07T11:47:19.779433+00:00",
+        "factor": "FA3",
+        "event": "OTP_SENT",
+        "result": "pending",
+        "details": {
+          "mobile_last4": "8133",
+          "method": "TWILIO_VERIFY"
+        }
+      },
+      {
+        "timestamp": "2026-06-07T11:47:57.461278+00:00",
+        "factor": "FA3",
+        "event": "OTP_VERIFIED",
+        "result": "success",
+        "details": {
+          "method": "OTP_SMS",
+          "mobile_last4": "8133"
+        }
+      }
+    ]
+  },
+  "NEG-A106F33E": {
+    "id": "NEG-A106F33E",
+    "created_at": "2026-06-07T11:49:39.822034",
+    "expires_at": "2026-06-08T11:49:39.822034",
+    "stage": "INITIATED",
+    "agent_log": [
+      {
+        "agent": "MasterOrchestratorAgent",
+        "action": "INITIATED_SESSION",
+        "reasoning": "New loan inquiry received. Starting orchestration.",
+        "status": "SUCCESS"
+      }
+    ],
+    "data": {}
+  },
+  "LE-2026-70659": {
+    "id": "LE-2026-70659",
+    "created_at": "2026-06-07T11:55:55.572444",
+    "expires_at": "2026-06-08T11:55:55.573998",
+    "stage": "BLOCKCHAIN_VERIFIED",
+    "agent_log": [
+      {
+        "agent": "MasterOrchestratorAgent",
+        "action": "INITIATED_SESSION",
+        "reasoning": "New loan inquiry received. Starting orchestration.",
+        "status": "SUCCESS"
+      },
+      {
+        "agent": "kyc",
+        "action": "pan_extraction",
+        "success": true,
+        "confidence": 0.98,
+        "processing_time_ms": 42413
+      },
+      {
+        "agent": "KYCAgent",
+        "action": "AADHAAR_EXTRACTED",
+        "fa1_vlm": "complete",
+        "fa2_verhoeff": "PASS",
+        "fa3_otp": "pending"
+      },
+      {
+        "agent": "kyc",
+        "action": "verification",
+        "success": true,
+        "kyc_status": "VERIFIED",
+        "reference_id": "KYC-2026-00004"
+      },
+      {
+        "agent": "KYCVerificationAgent",
+        "action": "OTP_SENT",
+        "reasoning": "Sending verification OTP to Aadhaar-linked mobile ending in 8133",
+        "status": "SUCCESS",
+        "timestamp": "2026-06-07T12:00:14.670702+00:00"
+      },
+      {
+        "agent": "KYCVerificationAgent",
+        "action": "OTP_VERIFIED",
+        "reasoning": "Aadhaar-linked mobile OTP verified successfully.",
+        "status": "SUCCESS",
+        "timestamp": "2026-06-07T12:00:42.841485+00:00"
+      },
+      {
+        "agent": "underwriting",
+        "action": "assessment",
+        "success": true,
+        "application_id": "APP-0CCE6ECCB157",
+        "credit_score": 584,
+        "decision": "APPROVED"
+      },
+      {
+        "agent": "negotiation",
+        "action": "start",
+        "negotiation_id": "NEG-6689011C",
+        "initial_rate": 14.0,
+        "min_rate": 14.0
+      }
+    ],
+    "data": {
+      "pan_data": {
+        "pan_number": "DHNPC1510A",
+        "name": "ADITYA CHOUDHURI",
+        "fathers_name": "TARIT CHOUDHURI",
+        "date_of_birth": "18/02/2005",
+        "age": 21,
+        "age_eligible": true,
+        "age_calculated_at": "2026-06-07"
+      },
+      "kyc_pan_done": true,
+      "aadhaar_mobile": "9920248133",
+      "aadhaar_mobile_last4": "8133",
+      "aadhaar_data": {
+        "aadhaar_last4": "5321",
+        "aadhaar_number": "245276385321",
+        "name": "Aditya Choudhuri",
+        "date_of_birth": "18/02/2005",
+        "year_of_birth": 2005,
+        "age": 21,
+        "age_eligible": true,
+        "age_calculated_at": "2026-06-07",
+        "gender": "Male",
+        "address": {
+          "full": "S/O Tarit Choudhuri, EMP-30/303, Evershine Millenium Paradise, Thakur Village, Near Thakur Public School, VTC: Kandivali East, District: Mumbai, State: Maharashtra, PIN Code: 400101",
+          "pincode": "400101",
+          "city": "Mumbai",
+          "state": "Maharashtra"
+        },
+        "mobile_number": "9920248133",
+        "mobile_last4": "8133",
+        "mobile_found": true
+      },
+      "fa2_verhoeff_passed": true,
+      "fa2_verhoeff_result": {
+        "valid": true,
+        "checked": true,
+        "reason": "VALID",
+        "message": "Aadhaar number passes all validation checks. Format is correct and Verhoeff checksum is valid.",
+        "aadhaar_last4": "5321",
+        "last4": "5321",
+        "masked": "XXXX XXXX 5321",
+        "algorithm": "Verhoeff (UIDAI)"
+      },
+      "kyc_aadhaar_done": true,
+      "kyc_cross_validated": true,
+      "fa1_document_passed": true,
+      "kyc_reference": "KYC-2026-00004",
+      "aadhaar_otp_pending": true,
+      "aadhaar_otp_verified": true,
+      "mobile_verified": true,
+      "verification_method": "OTP_SMS",
+      "fa3_otp_passed": true,
+      "underwriting_result": {
+        "application_id": "APP-0CCE6ECCB157",
+        "decision": "APPROVED",
+        "credit_score": 584,
+        "interest_rate": 14.0,
+        "risk_category": "HIGH",
+        "risk_score": 80,
+        "loan_amount": 500000.0,
+        "tenure_years": 5,
+        "monthly_income": 5000.0,
+        "employment_type": "salaried",
+        "employer_name": "TCS",
+        "loan_purpose": "general",
+        "alternative_score": null,
+        "alternative_eligible": null,
+        "alternative_details": null
+      },
+      "blockchain_data": {
+        "transaction_id": "TXN-090DFA3266D8",
+        "block_hash": "00a5f4ad1c8b4357746d0fced2a6d28e3b1141b090e3f113b62db2237e6e0739",
+        "signature": "a7fb594b5a49980602233980e664bf0e80fe269fac8a6b1ba4ce3bcc282a5048b967d78aaa71cdee945c5966cd63cba65a1ac081744b3b4a00ef199894acd9fd2d5955730a38a3930e8a56f74d3802e61e2e4fadebd22d4aad605f5a48163adcb0c15597b364a859ea48615e4add1676beaceb8da3081bc38a4416ad61cab773d62b61ecad2883dabd6b52460dc1932bfef6a981b9553767fabca853bea30b5c6c822b6bfefc9810e412cbdf86e4402e9f177c3f8e22bb5b182473aadde7315330483eb7ff5019d7c4912a6d1e2c0fa6e82a7d23bbe9d1bee476d793ef159c577cf90e9f37d567a083881c010c2e1325fd0abb49aea1ba3125d0287e87f97219"
+      }
+    },
+    "kyc_audit_trail": [
+      {
+        "timestamp": "2026-06-07T11:57:50.086616+00:00",
+        "factor": "FA1",
+        "event": "PAN_EXTRACTED",
+        "result": "success",
+        "details": {
+          "pan_last4": "510A",
+          "confidence": 0.98
+        }
+      },
+      {
+        "timestamp": "2026-06-07T11:58:44.786617+00:00",
+        "factor": "FA1",
+        "event": "AADHAAR_EXTRACTED",
+        "result": "success",
+        "details": {
+          "aadhaar_last4": "5321",
+          "confidence": 0.98
+        }
+      },
+      {
+        "timestamp": "2026-06-07T11:58:45.001750+00:00",
+        "factor": "FA2",
+        "event": "PASSED",
+        "result": "Aadhaar number passes all validation checks. Format is correct and Verhoeff checksum is valid.",
+        "details": {
+          "algorithm": "Verhoeff D5",
+          "aadhaar_last4": "5321",
+          "reason": "VALID"
+        }
+      },
+      {
+        "timestamp": "2026-06-07T11:59:23.296001+00:00",
+        "factor": "FA1",
+        "event": "CROSS_VALIDATED",
+        "result": "passed",
+        "details": {
+          "name_similarity": null,
+          "dob_match": true,
+          "name_match": null,
+          "kyc_reference": "KYC-2026-00004"
+        }
+      },
+      {
+        "timestamp": "2026-06-07T12:00:14.774928+00:00",
+        "factor": "FA3",
+        "event": "OTP_SENT",
+        "result": "pending",
+        "details": {
+          "mobile_last4": "8133",
+          "method": "TWILIO_VERIFY"
+        }
+      },
+      {
+        "timestamp": "2026-06-07T12:00:42.841485+00:00",
+        "factor": "FA3",
+        "event": "OTP_VERIFIED",
+        "result": "success",
+        "details": {
+          "method": "OTP_SMS",
+          "mobile_last4": "8133"
+        }
+      }
+    ]
+  },
+  "NEG-6689011C": {
+    "id": "NEG-6689011C",
+    "created_at": "2026-06-07T12:01:23.113733",
+    "expires_at": "2026-06-08T12:01:23.114743",
+    "stage": "INITIATED",
+    "agent_log": [
+      {
+        "agent": "MasterOrchestratorAgent",
+        "action": "INITIATED_SESSION",
+        "reasoning": "New loan inquiry received. Starting orchestration.",
+        "status": "SUCCESS"
+      }
+    ],
+    "data": {}
   }
 }

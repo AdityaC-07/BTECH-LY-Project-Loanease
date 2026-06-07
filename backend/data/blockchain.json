@@ -371,5 +371,65 @@
     "hash": "00b883761f5e2c2752765c2ce4b5ff056ca88770b453b32930c3184033b5ee40",
     "nonce": 166,
     "merkle_root": "16c203a5bc1061d834b18e96014f31672ba87ff544e6b6170ee3bb6463bf35bd"
+  },
+  {
+    "index": 31,
+    "timestamp": "2026-06-06T14:11:49.795594+00:00",
+    "transaction_data": {
+      "test": true,
+      "transaction_id": "SELFTEST-001"
+    },
+    "previous_hash": "00b883761f5e2c2752765c2ce4b5ff056ca88770b453b32930c3184033b5ee40",
+    "hash": "00294c0a97a3ae943e17c5ce4a0989c5c0fd7d3717e410ce90d1415fdef83945",
+    "nonce": 752,
+    "merkle_root": "16c203a5bc1061d834b18e96014f31672ba87ff544e6b6170ee3bb6463bf35bd"
+  },
+  {
+    "index": 32,
+    "timestamp": "2026-06-07T11:25:44.473405+00:00",
+    "transaction_data": {
+      "test": true,
+      "transaction_id": "SELFTEST-001"
+    },
+    "previous_hash": "00294c0a97a3ae943e17c5ce4a0989c5c0fd7d3717e410ce90d1415fdef83945",
+    "hash": "001f700edcc727024d990172b6e71cc35eb02769833c7db10f05cf355fb3704b",
+    "nonce": 274,
+    "merkle_root": "16c203a5bc1061d834b18e96014f31672ba87ff544e6b6170ee3bb6463bf35bd"
+  },
+  {
+    "index": 33,
+    "timestamp": "2026-06-07T11:49:40.348918+00:00",
+    "transaction_data": {
+      "transaction_id": "TXN-A39248446EC5",
+      "applicant_name": "Applicant",
+      "pan_number": "DHNPC1510A",
+      "loan_amount": 500000.0,
+      "interest_rate": 11.0,
+      "tenure_years": 5,
+      "timestamp": "2026-06-07T11:49:40.348272+00:00",
+      "type": "SANCTION_LETTER"
+    },
+    "previous_hash": "001f700edcc727024d990172b6e71cc35eb02769833c7db10f05cf355fb3704b",
+    "hash": "00c6dbea1a69a20fd906c780ae79d9f7467a0bf9e01939d1e7d0a52ff54e470e",
+    "nonce": 444,
+    "merkle_root": "d8efe7c35bc87a7873a0831e03842383215b0adabb47494cdb6451f4d1de192f"
+  },
+  {
+    "index": 34,
+    "timestamp": "2026-06-07T12:01:23.226046+00:00",
+    "transaction_data": {
+      "transaction_id": "TXN-090DFA3266D8",
+      "applicant_name": "Applicant",
+      "pan_number": "DHNPC1510A",
+      "loan_amount": 500000.0,
+      "interest_rate": 11.0,
+      "tenure_years": 5,
+      "timestamp": "2026-06-07T12:01:23.224033+00:00",
+      "type": "SANCTION_LETTER"
+    },
+    "previous_hash": "00c6dbea1a69a20fd906c780ae79d9f7467a0bf9e01939d1e7d0a52ff54e470e",
+    "hash": "00a5f4ad1c8b4357746d0fced2a6d28e3b1141b090e3f113b62db2237e6e0739",
+    "nonce": 36,
+    "merkle_root": "aac3aaedfcd929a023f4c228a1a8137d03fa9462a02026a2b33f19daded117cb"
   }
 ]
