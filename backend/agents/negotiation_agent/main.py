@@ -123,11 +123,11 @@ def decide_concession(features: dict, session: dict) -> dict:
     global _analytics
     
     # HARD RULES (override ML always):
-    # Rule 1: Never go below floor rate
+    # Rule 1: Floor rate reached — escalate to human per flowchart spec
     if features.get("rate_headroom", 0) < 0.1:
         _analytics["decisions_by_engine"]["hard_rules"] += 1
         return {
-            "action": "HOLD_FIRM",
+            "action": "ESCALATE",
             "reason": "floor_rate_reached",
             "decided_by": "HARD_RULE"
         }
@@ -169,7 +169,7 @@ def decide_concession(features: dict, session: dict) -> dict:
         features.get("current_round", 1),
         features.get("rounds_remaining", 2),
         features.get("current_rate", 12.0),
-        features.get("floor_rate", 11.0),
+        features.get("floor_rate", settings.RATE_FLOOR),
         features.get("ceiling_rate", 13.0),
         features.get("rate_headroom", 1.0),
         features.get("counter_aggressiveness", 0.5),
@@ -292,7 +292,7 @@ async def start_negotiation(request: NegotiationStartRequest):
 
         # Resolve rate — from session underwriting result or direct field
         current_rate = request.desired_rate
-        risk_category = request.risk_tier or "MEDIUM"
+        risk_score_val = request.risk_score
 
         purpose = request.purpose
         if session:
@@ -303,10 +303,30 @@ async def start_negotiation(request: NegotiationStartRequest):
 
             if not current_rate:
                 current_rate = underwriting_result.get("interest_rate", 12.0)
-            risk_category = underwriting_result.get("risk_category", risk_category)
+            if risk_score_val is None:
+                risk_score_val = underwriting_result.get("risk_score")
 
         if not current_rate:
             current_rate = 12.0
+
+        # Derive risk_category from numeric risk_score using flowchart cutoffs (0/50/75).
+        # Fall back to the string risk_tier only when no numeric score is available.
+        if risk_score_val is not None:
+            if risk_score_val >= 75:
+                risk_category = "LOW"
+            elif risk_score_val >= 50:
+                risk_category = "MEDIUM"
+            else:
+                risk_category = "HIGH"
+        else:
+            # Normalise the incoming string to the keys expected by calculate_negotiation_params
+            _tier_str = (request.risk_tier or "MEDIUM").upper()
+            if "LOW" in _tier_str:
+                risk_category = "LOW"
+            elif "HIGH" in _tier_str:
+                risk_category = "HIGH"
+            else:
+                risk_category = "MEDIUM"
 
         neg_params = calculate_negotiation_params(
             current_rate,
@@ -327,6 +347,7 @@ async def start_negotiation(request: NegotiationStartRequest):
             "negotiation_steps": neg_params["negotiation_steps"],
             "customer_profile": request.customer_profile,
             "risk_category": risk_category,
+            "risk_score": risk_score_val,
             "purpose": purpose,
             "completed": False,
         }
@@ -422,9 +443,19 @@ async def counter_offer(request: NegotiationCounterRequest):
         else:
             aggressiveness = 0
             
+        # Resolve risk_score from session underwriting result; no fallback to Low Risk default
+        session_risk_score = None
+        if session:
+            uw_result = session.get("data", {}).get("underwriting_result", {})
+            session_risk_score = uw_result.get("risk_score")
+        # Use stored risk_score from negotiation record if session lookup failed
+        if session_risk_score is None:
+            stored_risk = negotiation.get("risk_score")
+            session_risk_score = stored_risk if stored_risk is not None else negotiation.get("risk_score", 75)
+
         features = {
-            "risk_score": 75,
-            "credit_score_norm": 0.75,
+            "risk_score": session_risk_score,
+            "credit_score_norm": session_risk_score / 100.0,
             "loan_to_income_ratio": 0.4,
             "employment_stability": 1,
             "current_round": step + 1,
@@ -437,11 +468,6 @@ async def counter_offer(request: NegotiationCounterRequest):
             "response_speed_seconds": 45,
             "rounds_without_acceptance": step
         }
-        
-        if session:
-            uw_result = session.get("data", {}).get("underwriting_result", {})
-            features["risk_score"] = uw_result.get("risk_score", 75)
-            features["credit_score_norm"] = features["risk_score"] / 100.0
 
         decision = decide_concession(features, session or {})
         action = decision["action"]
@@ -469,10 +495,9 @@ async def counter_offer(request: NegotiationCounterRequest):
             # Apply decision
             if action == "HOLD_FIRM":
                 counter_offer = current_rate
-            elif action == "SMALL_CONCESSION":
+            elif action in ("SMALL_CONCESSION", "LARGE_CONCESSION"):
+                # Fixed 0.25% step per flowchart spec — LARGE_CONCESSION maps to same step
                 counter_offer = max(min_rate, current_rate - 0.25)
-            elif action == "LARGE_CONCESSION":
-                counter_offer = max(min_rate, current_rate - 0.50)
             elif action == "ESCALATE" or action == "ESCALATE_TO_HUMAN":
                 counter_offer = current_rate
                 negotiation["completed"] = True
