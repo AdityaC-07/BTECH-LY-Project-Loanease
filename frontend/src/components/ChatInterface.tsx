@@ -380,6 +380,26 @@ interface RepeatBorrowerData {
   employer_name?: string;
 }
 
+interface NegotiationOffer {
+  rate: number;
+  interest_rate?: number;
+  loan_amount: number;
+  tenure_months: number;
+  emi: number;
+  monthly_emi?: number;
+  total_payable?: number;
+  total_interest?: number;
+  savings_vs_opening?: { per_month: number; total: number } | null;
+}
+
+interface NegotiationSummary {
+  opening_rate: number;
+  final_rate: number;
+  rate_reduction: number;
+  rounds_taken: number;
+  total_interest_savings: number;
+}
+
 interface UserData {
   name: string;
   pan: string;
@@ -516,6 +536,16 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   // Feature 5: Repeat Borrower
   const [isRepeatBorrower, setIsRepeatBorrower] = useState(false);
   const [repeatBorrowerData, setRepeatBorrowerData] = useState<RepeatBorrowerData | null>(null);
+
+  // Negotiation state machine
+  const [negotiationState, setNegotiationState] = useState<string | null>(null);
+  const [negotiationOffer, setNegotiationOffer] = useState<NegotiationOffer | null>(null);
+  const [negotiationNegId, setNegotiationNegId] = useState<string>("");
+  const [negotiationRoundsLeft, setNegotiationRoundsLeft] = useState<number>(0);
+  const [negotiationEscalationId, setNegotiationEscalationId] = useState<string>("");
+  const [negotiationSummary, setNegotiationSummary] = useState<NegotiationSummary | null>(null);
+  const [negotiationFloorRate, setNegotiationFloorRate] = useState<number>(10.5);
+  const [isNegotiationBusy, setIsNegotiationBusy] = useState(false);
 
   const quickEligibilityPreview = useMemo(() => {
     if (!userData.preKycLoanAmount || !userData.preKycMonthlyIncome) {
@@ -2148,6 +2178,174 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     handleLoanSelect(pendingOffer.rate, pendingOffer.tenure, pendingOffer.amount, selectedHolidayMonths);
   };
 
+  // ── Negotiation state machine ──────────────────────────────────────────────
+
+  const handleNegotiationResponse = (res: any) => {
+    if (!res) return;
+    const offer: NegotiationOffer | null = res.offer ?? res.opening_offer ?? res.current_offer ?? res.final_offer ?? null;
+    const negId: string = res.negotiation_id ?? res.session_id ?? "";
+    if (negId) setNegotiationNegId(negId);
+    if (offer) setNegotiationOffer(offer);
+    if (res.floor_rate) setNegotiationFloorRate(res.floor_rate);
+    if (res.escalation_id) setNegotiationEscalationId(res.escalation_id);
+    if (res.summary) setNegotiationSummary(res.summary);
+
+    // HIGH RISK: negotiation_permitted explicitly false
+    if (res.negotiation_permitted === false) {
+      setNegotiationState("HIGH_RISK");
+      setNegotiationRoundsLeft(0);
+      return;
+    }
+
+    const status: string = res.status ?? "ACTIVE";
+    setNegotiationState(status);
+    setNegotiationRoundsLeft(res.rounds_remaining ?? 0);
+  };
+
+  const handleNegotiationCounter = async () => {
+    if (!negotiationNegId || isNegotiationBusy) return;
+    setIsNegotiationBusy(true);
+    setIsTyping(true);
+    try {
+      const res = await fetch(ENDPOINTS.negotiate_counter, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: negotiationNegId,
+          negotiation_id: negotiationNegId,
+          applicant_message: "Can you reduce the rate further?",
+        }),
+      });
+      setIsTyping(false);
+      if (!res.ok) throw new Error("Counter request failed");
+      const data = await res.json();
+      handleNegotiationResponse(data);
+      if (data.message) addBotMessage(data.message);
+    } catch {
+      setIsTyping(false);
+      addBotMessage("There was an issue processing your counter. Please try again.");
+    } finally {
+      setIsNegotiationBusy(false);
+    }
+  };
+
+  const handleNegotiationAccept = async () => {
+    if (isNegotiationBusy) return;
+    setIsNegotiationBusy(true);
+    try {
+      const res = await fetch(ENDPOINTS.negotiate_accept, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: negotiationNegId || userData.sessionId,
+          negotiation_id: negotiationNegId,
+          holiday_months: selectedHolidayMonths,
+        }),
+      });
+      const data = res.ok ? await res.json() : null;
+      const finalOffer = data?.final_offer ?? negotiationOffer;
+      const finalRate  = finalOffer?.rate ?? finalOffer?.interest_rate ?? userData.selectedLoan.interest;
+      const finalAmt   = finalOffer?.loan_amount ?? userData.selectedLoan.amount;
+      const finalTen   = finalOffer?.tenure_months ?? userData.selectedLoan.tenure;
+      const finalEmi   = finalOffer?.emi ?? finalOffer?.monthly_emi ?? userData.selectedLoan.emi;
+
+      if (data?.summary) setNegotiationSummary(data.summary);
+      setNegotiationState("ACCEPTED");
+
+      setUserData(prev => ({
+        ...prev,
+        stage: "sanction",
+        selectedLoan: { amount: finalAmt, interest: finalRate, tenure: finalTen, emi: finalEmi },
+      }));
+
+      setMessages(prev => [...prev, {
+        id: prev.length + 1,
+        text: `KYC Verified ✓\nCredit Check Passed ✓\nNegotiation Complete ✓\n\n${TRANSLATIONS.approved[language]}`,
+        isBot: true,
+      }]);
+
+      // Blockchain sanction
+      let blockchainData: { transaction_id: string; block_hash: string } | undefined;
+      try {
+        setActiveAgent("Blockchain Audit Agent");
+        setPulseBadge(true);
+        const sanctionRes = await fetch(ENDPOINTS.blockchain_sanction, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: userData.sessionId,
+            applicant_name: userData.name || "Applicant",
+            pan_number: userData.pan || "ABCDE1234F",
+            loan_amount: finalAmt,
+            interest_rate: finalRate,
+            tenure_years: Math.max(1, Math.round(finalTen / 12)),
+          }),
+        });
+        if (sanctionRes.ok) {
+          const bData = await sanctionRes.json();
+          blockchainData = { transaction_id: bData.transaction_id, block_hash: bData.block_hash };
+          setUserData(prev => ({ ...prev, blockchainData }));
+        }
+      } catch (e) {
+        console.warn("Blockchain sanction (non-fatal):", e);
+      } finally {
+        setPulseBadge(false);
+      }
+
+      setMessages(prev => [...prev, {
+        id: prev.length + 1,
+        text: "Sanction details are being recorded with tamper-proof hash verification on our blockchain audit ledger.",
+        isBot: true,
+      }]);
+
+      setShowSanction(true);
+
+      const sanctionRef = blockchainData?.transaction_id ?? `APP-${Math.floor(1000 + Math.random() * 9000)}`;
+      const sanctionRecord = JSON.stringify({
+        sanction_reference: sanctionRef, reference: sanctionRef,
+        sanctioned_at: new Date().toISOString(),
+        amount: finalAmt, rate: finalRate,
+        preapproved_limit: Math.round(finalAmt * (isRepeatBorrower ? 1.25 : 1.0)),
+        holiday_months: selectedHolidayMonths,
+      });
+      localStorage.setItem("previous_sanction_reference", sanctionRecord);
+      localStorage.setItem("loanease_previous_sanction", sanctionRecord);
+    } catch (err) {
+      console.error("Negotiation accept error:", err);
+      addBotMessage("Something went wrong. Please try again.");
+    } finally {
+      setIsNegotiationBusy(false);
+    }
+  };
+
+  const handleNegotiationEscalate = async () => {
+    if (!negotiationNegId || isNegotiationBusy) return;
+    setIsNegotiationBusy(true);
+    try {
+      const res = await fetch(ENDPOINTS.negotiate_escalate, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: negotiationNegId,
+          negotiation_id: negotiationNegId,
+          reason: "floor_rate_reached",
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNegotiationState("ESCALATED");
+        if (data.escalation_id) setNegotiationEscalationId(data.escalation_id);
+        setIsEscalated(true);
+        addBotMessage(data.message ?? "Your case has been escalated to a senior loan officer. Expect a call within 2 business hours.");
+      }
+    } catch (err) {
+      console.error("Escalation error:", err);
+      addBotMessage("There was an issue escalating your case. Please try again.");
+    } finally {
+      setIsNegotiationBusy(false);
+    }
+  };
+
   // Feature 2: Bank Statement Upload Handler
   const handleBankStatementUpload = async (file: File | undefined) => {
     if (!file) return;
@@ -2341,100 +2539,9 @@ ${guidance.repayment_history_impact || ""}`.trim(),
           setEmiHolidayOption(negotiationResult.emi_holiday_option);
         }
 
-        // Accept negotiation (best-effort)
-        try {
-          await fetch(ENDPOINTS.negotiate_accept, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              session_id: negotiationResult?.session_id || userData.sessionId,
-              final_rate: interest,
-              holiday_months: selectedHolidayMonths,
-            }),
-          });
-        } catch {
-          // non-fatal
-        }
-
-        // Approval message
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: prev.length + 1,
-            text: `KYC Verified ✓\nCredit Check Passed ✓\nIncome Assessment Complete ✓\nRisk Analysis Completed ✓\n\n${TRANSLATIONS.approved[language]}`,
-            isBot: true,
-          },
-        ]);
-
-        // Update stage
-        setUserData((prev) => ({ ...prev, stage: "sanction" }));
-
-        // Blockchain sanction
-        let blockchainData: { transaction_id: string; block_hash: string } | undefined;
-        try {
-          setActiveAgent("Blockchain Audit Agent");
-          setPulseBadge(true);
-          const sanctionRes = await fetch(ENDPOINTS.blockchain_sanction, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              session_id: userData.sessionId,
-              applicant_name: userData.name || "Applicant",
-              pan_number: userData.pan || "ABCDE1234F",
-              loan_amount: amount,
-              interest_rate: interest,
-              tenure_years: Math.max(1, Math.round(tenure / 12)),
-            }),
-          });
-          if (sanctionRes.ok) {
-            const bData = await sanctionRes.json();
-            blockchainData = {
-              transaction_id: bData.transaction_id,
-              block_hash: bData.block_hash,
-            };
-            setUserData((prev) => ({ ...prev, blockchainData }));
-          }
-        } catch (e) {
-          console.warn("Blockchain sanction failed (non-fatal):", e);
-        } finally {
-          setPulseBadge(false);
-        }
-
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: prev.length + 1,
-            text: "Sanction details are being securely recorded with tamper-proof hash verification on our distributed audit ledger.",
-            isBot: true,
-          },
-        ]);
-
-        // Ensure selectedLoan has valid emi before showing sanction
-        setUserData((prev) => ({
-          ...prev,
-          stage: "sanction",
-          selectedLoan: {
-            amount,
-            interest,
-            tenure,
-            emi: prev.selectedLoan.emi || emi,
-          },
-        }));
-        setShowSanction(true);
-        
-        // Feature 5: Save sanction state for repeat borrower flow
-        const sanctionReference = blockchainData?.transaction_id || `APP-${Math.floor(1000 + Math.random() * 9000)}`;
-        const sanctionRecord = JSON.stringify({
-          sanction_reference: sanctionReference,
-          reference: sanctionReference,
-          sanctioned_at: new Date().toISOString(),
-          amount: amount,
-          rate: interest,
-          preapproved_limit: Math.round(amount * (isRepeatBorrower ? 1.25 : 1.0)),
-          holiday_months: selectedHolidayMonths,
-        });
-        localStorage.setItem("previous_sanction_reference", sanctionRecord);
-        localStorage.setItem("loanease_previous_sanction", sanctionRecord);
+        // Hand off to negotiation state machine — do NOT auto-accept
+        handleNegotiationResponse(negotiationResult);
+        return;
       } catch (err) {
         console.error("handleLoanSelect flow error:", err);
         setIsTyping(false);
@@ -3799,6 +3906,167 @@ ${guidance.repayment_history_impact || ""}`.trim(),
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── Negotiation Offer Card ─────────────────────────────────────── */}
+        {negotiationState && negotiationState !== "ACCEPTED" && (
+          <div className="rounded-2xl border border-[#2a2a2a] bg-[#0d0d0d] p-5 shadow-[0_14px_34px_rgba(0,0,0,0.28)]">
+
+            {/* Header row */}
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.22em] text-[#F5C518]">
+                  {negotiationState === "HIGH_RISK" && "Fixed Offer — No Negotiation"}
+                  {negotiationState === "ACTIVE" && `Negotiation Active — ${negotiationRoundsLeft} Round${negotiationRoundsLeft !== 1 ? "s" : ""} Remaining`}
+                  {negotiationState === "FINAL_OFFER" && "Final Offer — Last Chance"}
+                  {negotiationState === "FLOOR_REACHED" && "Rate Floor Reached"}
+                  {negotiationState === "ESCALATED" && "Escalated to Senior Officer"}
+                  {negotiationState === "CONCEDE" && `Rate Reduced — ${negotiationRoundsLeft} Round${negotiationRoundsLeft !== 1 ? "s" : ""} Left`}
+                </p>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  {negotiationState === "HIGH_RISK" && "Based on your risk profile, this is a non-negotiable rate."}
+                  {(negotiationState === "ACTIVE" || negotiationState === "CONCEDE") && "You may request a lower rate or accept the current offer."}
+                  {negotiationState === "FINAL_OFFER" && "No further reductions are possible. Accept or escalate."}
+                  {negotiationState === "FLOOR_REACHED" && `Rate is at the regulatory floor of ${negotiationFloorRate}%. Accept or escalate.`}
+                  {negotiationState === "ESCALATED" && "A senior officer will contact you within 2 business hours."}
+                </p>
+              </div>
+              <span className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${
+                negotiationState === "HIGH_RISK" ? "border-red-500/30 bg-red-500/10 text-red-300" :
+                negotiationState === "ESCALATED" ? "border-purple-500/30 bg-purple-500/10 text-purple-300" :
+                negotiationState === "FINAL_OFFER" || negotiationState === "FLOOR_REACHED" ? "border-yellow-500/30 bg-yellow-500/10 text-yellow-300" :
+                "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+              }`}>
+                {negotiationState === "CONCEDE" ? "ACTIVE" : negotiationState}
+              </span>
+            </div>
+
+            {/* Offer details */}
+            {negotiationOffer && (
+              <div className="grid gap-2 sm:grid-cols-3">
+                <div className="flex flex-col gap-0.5 rounded-lg border border-white/5 bg-white/5 px-3 py-2">
+                  <span className="text-[10px] uppercase tracking-widest text-slate-500">Interest Rate</span>
+                  <span className="text-lg font-bold text-slate-50">
+                    {(negotiationOffer.rate ?? negotiationOffer.interest_rate ?? 0).toFixed(2)}%
+                  </span>
+                </div>
+                <div className="flex flex-col gap-0.5 rounded-lg border border-white/5 bg-white/5 px-3 py-2">
+                  <span className="text-[10px] uppercase tracking-widest text-slate-500">Monthly EMI</span>
+                  <span className="text-lg font-bold text-slate-50">
+                    {formatIndianRupees(negotiationOffer.emi ?? negotiationOffer.monthly_emi ?? 0)}
+                  </span>
+                </div>
+                <div className="flex flex-col gap-0.5 rounded-lg border border-white/5 bg-white/5 px-3 py-2">
+                  <span className="text-[10px] uppercase tracking-widest text-slate-500">Total Payable</span>
+                  <span className="text-lg font-bold text-slate-50">
+                    {formatIndianRupees(negotiationOffer.total_payable ?? 0)}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Savings badge */}
+            {negotiationOffer?.savings_vs_opening?.total != null && negotiationOffer.savings_vs_opening.total > 0 && (
+              <div className="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
+                You save {formatIndianRupees(negotiationOffer.savings_vs_opening.total)} vs opening offer
+                ({formatIndianRupees(negotiationOffer.savings_vs_opening.per_month)}/month)
+              </div>
+            )}
+
+            {/* Escalation ref */}
+            {negotiationState === "ESCALATED" && negotiationEscalationId && (
+              <div className="mt-3 rounded-lg border border-purple-500/20 bg-purple-500/10 px-3 py-2 text-sm text-purple-200">
+                Reference: <span className="font-mono font-bold">{negotiationEscalationId}</span>
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div className="mt-4 flex flex-wrap gap-3">
+              {(negotiationState === "ACTIVE" || negotiationState === "CONCEDE") && (
+                <>
+                  <button
+                    disabled={isNegotiationBusy}
+                    onClick={handleNegotiationCounter}
+                    className="rounded-xl border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-sm font-semibold text-sky-200 transition hover:bg-sky-500/20 disabled:opacity-50"
+                  >
+                    {isNegotiationBusy ? "Processing..." : "Request Lower Rate"}
+                  </button>
+                  <button
+                    disabled={isNegotiationBusy}
+                    onClick={handleNegotiationAccept}
+                    className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/20 disabled:opacity-50"
+                  >
+                    Accept This Offer
+                  </button>
+                </>
+              )}
+
+              {(negotiationState === "FINAL_OFFER" || negotiationState === "HIGH_RISK") && (
+                <>
+                  <button
+                    disabled={isNegotiationBusy}
+                    onClick={handleNegotiationAccept}
+                    className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/20 disabled:opacity-50"
+                  >
+                    Accept Final Offer
+                  </button>
+                  {negotiationState === "FINAL_OFFER" && (
+                    <button
+                      disabled={isNegotiationBusy}
+                      onClick={handleNegotiationEscalate}
+                      className="rounded-xl border border-purple-500/40 bg-purple-500/10 px-4 py-2 text-sm font-semibold text-purple-200 transition hover:bg-purple-500/20 disabled:opacity-50"
+                    >
+                      Escalate to Human
+                    </button>
+                  )}
+                </>
+              )}
+
+              {negotiationState === "FLOOR_REACHED" && (
+                <>
+                  <button
+                    disabled={isNegotiationBusy}
+                    onClick={handleNegotiationAccept}
+                    className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-200 transition hover:bg-emerald-500/20 disabled:opacity-50"
+                  >
+                    Accept at Floor Rate
+                  </button>
+                  <button
+                    disabled={isNegotiationBusy}
+                    onClick={handleNegotiationEscalate}
+                    className="rounded-xl border border-purple-500/40 bg-purple-500/10 px-4 py-2 text-sm font-semibold text-purple-200 transition hover:bg-purple-500/20 disabled:opacity-50"
+                  >
+                    Escalate to Human
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Negotiation summary after ACCEPTED */}
+        {negotiationState === "ACCEPTED" && negotiationSummary && (
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-5">
+            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-emerald-400">Negotiation Summary</p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <div className="flex justify-between rounded-lg bg-white/5 px-3 py-2 text-sm">
+                <span className="text-slate-400">Opening Rate</span>
+                <span className="font-semibold text-slate-100">{negotiationSummary.opening_rate.toFixed(2)}%</span>
+              </div>
+              <div className="flex justify-between rounded-lg bg-white/5 px-3 py-2 text-sm">
+                <span className="text-slate-400">Final Rate</span>
+                <span className="font-semibold text-slate-100">{negotiationSummary.final_rate.toFixed(2)}%</span>
+              </div>
+              <div className="flex justify-between rounded-lg bg-white/5 px-3 py-2 text-sm">
+                <span className="text-slate-400">Rate Reduction</span>
+                <span className="font-semibold text-emerald-300">−{negotiationSummary.rate_reduction.toFixed(2)}%</span>
+              </div>
+              <div className="flex justify-between rounded-lg bg-white/5 px-3 py-2 text-sm">
+                <span className="text-slate-400">Total Savings</span>
+                <span className="font-semibold text-emerald-300">{formatIndianRupees(negotiationSummary.total_interest_savings)}</span>
+              </div>
+            </div>
           </div>
         )}
 
