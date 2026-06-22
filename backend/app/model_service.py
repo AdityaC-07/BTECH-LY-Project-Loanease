@@ -12,6 +12,83 @@ from sklearn.utils import resample
 from app.credit_score import get_credit_score, get_credit_band
 from app.risk_combiner import evaluate_applicant
 from services.shap_narrator import generate_shap_narration
+from core.config import settings
+
+
+# ---------------------------------------------------------------------------
+# Risk scoring helpers — implement the flowchart formulas exactly
+# ---------------------------------------------------------------------------
+
+def calculate_combined_risk_score(cibil_score: int, lgbm_probability: float) -> int:
+    """
+    Calculate final risk score (0-100).
+
+    S_final = (CIBIL_norm * 0.60) + (LightGBM_prob * 100 * 0.40)
+
+    CIBIL range 300-900 → normalised to 0-100.
+    Higher score = better applicant = higher risk_score.
+    """
+    cibil_norm = max(0.0, min(100.0, (cibil_score - 300) / 600 * 100))
+    lgbm_score = lgbm_probability * 100
+    return round((cibil_norm * 0.60) + (lgbm_score * 0.40))
+
+
+def classify_risk_tier(risk_score: int) -> dict:
+    """
+    Map a 0-100 risk_score to a risk tier.
+
+    Cutoffs match the negotiation flowchart exactly:
+      High Risk:   0-49  (score < 50)
+      Medium Risk: 50-74 (50 <= score < 75)
+      Low Risk:    75-100 (score >= 75)
+    """
+    if risk_score < 50:
+        return {
+            "tier": "HIGH",
+            "label": "High Risk",
+            "score_range": "0-49",
+            "rate_min": 13.5,
+            "rate_max": 14.0,
+            "starting_rate": 13.75,
+            "max_negotiation_rounds": 0,
+            "negotiation_permitted": False,
+        }
+    elif risk_score < 75:
+        return {
+            "tier": "MEDIUM",
+            "label": "Medium Risk",
+            "score_range": "50-74",
+            "rate_min": 12.0,
+            "rate_max": 13.0,
+            "starting_rate": 12.5,
+            "max_negotiation_rounds": 1,
+            "negotiation_permitted": True,
+        }
+    else:
+        return {
+            "tier": "LOW",
+            "label": "Low Risk",
+            "score_range": "75-100",
+            "rate_min": 10.5,
+            "rate_max": 11.5,
+            "starting_rate": 11.0,
+            "max_negotiation_rounds": 3,
+            "negotiation_permitted": True,
+        }
+
+
+def calculate_starting_rate(tier_data: dict, lgbm_probability: float) -> float:
+    """
+    Fine-tune the opening rate within a band using LightGBM probability.
+
+    Higher probability → better applicant within the band → lower rate.
+    Rate is snapped to the nearest 0.25% step and clamped within the band.
+    """
+    rate_min = tier_data["rate_min"]
+    rate_max = tier_data["rate_max"]
+    raw = rate_max - (lgbm_probability * (rate_max - rate_min))
+    snapped = round(raw * 4) / 4
+    return float(max(rate_min, min(rate_max, snapped)))
 
 
 REQUEST_TO_DATASET_COLUMN = {
@@ -317,14 +394,16 @@ class ModelService:
         xgboost_probability = probability
         waterfall, top_explanations = self._build_shap_breakdown(X_encoded, raw_row)
 
-        # Composite visibility score for explainability UI.
-        normalized_credit = (credit_score - 300) / 600 * 100
-        combined_score = round((normalized_credit * 0.60) + (xgboost_probability * 100 * 0.40))
+        # Combined risk score: 60% CIBIL + 40% LightGBM (flowchart formula)
+        combined_score = calculate_combined_risk_score(credit_score, xgboost_probability)
 
-        # Convert approval probability into model risk score (0 low risk, 100 high risk).
+        # Tier classification from the combined score using flowchart cutoffs (0/50/75)
+        tier_data = classify_risk_tier(combined_score)
+        final_risk_tier = tier_data["label"]   # "High Risk" / "Medium Risk" / "Low Risk"
+
+        # Keep risk_combiner for legacy interest-rate range; only used as fallback now
         xgb_risk_score = round((1.0 - xgboost_probability) * 100, 2)
         combined_risk = evaluate_applicant(credit_score=credit_score, xgb_risk_score=xgb_risk_score)
-        final_risk_tier = combined_risk["classification"]["final_risk"]
 
         confidence_width = round(confidence_upper - confidence_lower, 4)
         model_certainty = self._confidence_band(confidence_width)
@@ -377,18 +456,26 @@ class ModelService:
             language="en",
         )
 
-        rate_range = combined_risk["loan_decision"]["interest_rate_range"]
-        rate = combined_risk["loan_decision"]["suggested_interest_rate"]
+        # Fine-tune starting rate within the band using LightGBM probability
+        starting_rate = calculate_starting_rate(tier_data, xgboost_probability)
+        tier_data["starting_rate"] = starting_rate
 
-        if final_risk_tier == "Low Risk":
-            negotiation_allowed = True
-            max_negotiation_rounds = 3
-        elif final_risk_tier == "Medium Risk":
-            negotiation_allowed = True
-            max_negotiation_rounds = 1
-        else:
-            negotiation_allowed = False
-            max_negotiation_rounds = 0
+        # Negotiation parameters derived from tier — ready for negotiation agent
+        negotiation_block = {
+            "permitted": tier_data["negotiation_permitted"],
+            "max_rounds": tier_data["max_negotiation_rounds"],
+            "starting_rate": starting_rate,
+            "rate_min": tier_data["rate_min"],
+            "rate_max": tier_data["rate_max"],
+            "floor_rate": settings.RATE_FLOOR,
+            "concession_step": settings.CONCESSION_STEP,
+        }
+
+        # Backward-compat flat fields
+        negotiation_allowed = tier_data["negotiation_permitted"]
+        max_negotiation_rounds = tier_data["max_negotiation_rounds"]
+        rate = starting_rate
+        rate_range = f"{tier_data['rate_min']}% - {tier_data['rate_max']}%"
 
         self._record_prediction({
             **payload,
@@ -401,29 +488,45 @@ class ModelService:
 
         assessment = {
             "decision": final_decision,
-            "credit_score": credit_score,
+            # CIBIL / bureau score
+            "cibil_score": credit_score,
+            "cibil_score_out_of": 900,
+            "credit_score": credit_score,           # backward compat alias
             "credit_score_out_of": 900,
             "credit_band": credit_band["label"],
             "credit_band_color": credit_band["color"],
+            # Combined risk score (flowchart formula)
             "risk_score": combined_score,
             "risk_score_out_of": 100,
+            # LightGBM output
+            "lgbm_probability": round(xgboost_probability, 4),
+            "xgboost_probability": round(xgboost_probability, 4),  # backward compat
+            "xgboost_ran": True,
             "approval_probability": round(probability, 4),
             "confidence_lower": round(confidence_lower, 4),
             "confidence_upper": round(confidence_upper, 4),
             "confidence_width": confidence_width,
             "model_certainty": model_certainty,
-            "risk_tier": final_risk_tier,
+            # Tier classification (flowchart-aligned)
+            "risk_tier": tier_data["tier"],         # "LOW" / "MEDIUM" / "HIGH"
+            "risk_tier_label": tier_data["label"],  # "Low Risk" / "Medium Risk" / "High Risk"
+            # Rates
             "offered_rate": rate,
+            "interest_rate": rate,
             "rate_range": rate_range,
+            # Negotiation block — all fields the negotiation agent needs
+            "negotiation": negotiation_block,
+            # Backward-compat flat negotiation fields
             "negotiation_allowed": negotiation_allowed,
             "max_negotiation_rounds": max_negotiation_rounds,
-            "xgboost_probability": round(xgboost_probability, 2),
-            "xgboost_ran": True,
+            # Explainability
             "shap_explanation": top_explanations,
             "structured_shap_narration": structured_narration,
-            "threshold_used": self.threshold,
-            "raw_input": raw_row,
             "shap_waterfall": waterfall,
+            # Meta
+            "threshold_used": self.threshold,
+            "approved": final_decision in ("APPROVED", "APPROVED_WITH_CONDITIONS"),
+            "raw_input": raw_row,
             "income_reasonability": income_reasonability,
             "soft_reject_guidance": soft_reject_guidance,
             "model_drift_warning": self._drift_warning,

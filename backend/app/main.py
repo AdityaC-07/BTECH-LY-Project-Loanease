@@ -182,6 +182,18 @@ app = FastAPI(title="LoanEase Unified Backend API", version="2.0.0")
 from agents.blockchain_agent.main import router as blockchain_router
 app.include_router(blockchain_router, prefix="/blockchain", tags=["Blockchain Agent"])
 
+# Import new negotiation agent (replaces legacy negotiation_backend endpoints)
+from agents.negotiation_agent.main import (
+    start_negotiation as _neg_start,
+    counter_offer as _neg_counter,
+    accept_negotiation as _neg_accept,
+    escalate_to_human as _neg_escalate,
+    NegotiationStartRequest as NegStartReq,
+    NegotiationCounterRequest as NegCounterReq,
+    NegotiationAcceptRequest as NegAcceptReq,
+    NegotiateEscalateRequest as NegEscalateReq,
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -350,7 +362,7 @@ def get_credit_score_route() -> CreditScoreResponse:
 
 @app.post("/assess", response_model=AssessResponse)
 @limiter.limit("20/minute")
-def assess(request: Request, payload: AssessRequest) -> AssessResponse:
+async def assess(request: Request, payload: AssessRequest) -> AssessResponse:
     if service is None:
         raise HTTPException(status_code=503, detail="Model service not ready")
 
@@ -380,6 +392,15 @@ def assess(request: Request, payload: AssessRequest) -> AssessResponse:
         "timestamp": datetime.now(timezone.utc).isoformat()
     })
     session_store.update_stage(session_id, "CREDIT_ASSESSED")
+    session_store.update_data(session_id, "underwriting_result", result)
+
+    # ── Bridge: initialize negotiation session immediately after assessment ──
+    try:
+        loan_amount = float(payload.loan_amount or 500000)
+        tenure_months = int(payload.loan_amount_term or 60)
+        await handle_credit_to_negotiation(session_id, result, loan_amount, tenure_months)
+    except Exception as _bridge_err:
+        logger.warning("Negotiation bridge (non-fatal): %s", _bridge_err)
 
     # Build response with all fields from result
     response_data = {
@@ -418,9 +439,9 @@ def assess(request: Request, payload: AssessRequest) -> AssessResponse:
 
 # Route alias for frontend compatibility
 @app.post("/credit/assess", response_model=AssessResponse)
-def credit_assess(payload: AssessRequest) -> AssessResponse:
+async def credit_assess(request: Request, payload: AssessRequest) -> AssessResponse:
     """Alias for /assess endpoint for frontend compatibility"""
-    return assess(payload)
+    return await assess(request, payload)
 
 
 @app.post("/explain/{application_id}", response_model=ExplainResponse)
@@ -938,6 +959,56 @@ async def verify_otp(payload: OtpVerifyRequest):
 # NEGOTIATION ENDPOINTS (from negotiation_backend)
 # =============================================================================
 
+async def handle_credit_to_negotiation(
+    session_id: str,
+    credit_result: dict,
+    loan_amount: float,
+    tenure_months: int,
+) -> dict:
+    """
+    Bridge: Underwriting Agent → Negotiation Agent.
+
+    Called automatically after /assess succeeds.
+    Initializes the negotiation session so the frontend only needs to
+    call /negotiate/start with the session_id — all parameters are
+    already resolved from the underwriting output.
+    """
+    nego_params = credit_result.get("negotiation") or {}
+    risk_score = credit_result.get("risk_score")
+    risk_tier = credit_result.get("risk_tier", "HIGH")
+    applicant_name = (
+        (session_store.get(session_id) or {})
+        .get("data", {})
+        .get("applicant_name", "Applicant")
+    )
+
+    req = NegStartReq(
+        session_id=session_id,
+        applicant_name=applicant_name,
+        risk_score=risk_score,
+        risk_tier=str(risk_tier),
+        loan_amount=loan_amount,
+        tenure_months=tenure_months,
+        starting_rate=nego_params.get("starting_rate"),
+        lgbm_probability=credit_result.get("lgbm_probability"),
+    )
+    result = await _neg_start(req)
+    result_dict = result if isinstance(result, dict) else result.model_dump()
+
+    # Persist negotiation bootstrap in session for analytics
+    session_store.update_data(session_id, "negotiation_start", {
+        "risk_tier": str(risk_tier),
+        "risk_score": risk_score,
+        "starting_rate": result_dict.get("current_rate"),
+        "max_rounds": result_dict.get("total_steps"),
+        "loan_amount": loan_amount,
+        "tenure_months": tenure_months,
+        "negotiation_id": result_dict.get("negotiation_id"),
+    })
+    session_store.update_stage(session_id, "OFFER_GENERATED")
+    return result_dict
+
+
 @app.post("/negotiate/chat", response_model=negotiation_schemas.CounterResponse)
 def negotiate_chat(payload: CounterRequest) -> CounterResponse:
     # Log Negotiation action
@@ -952,22 +1023,14 @@ def negotiate_chat(payload: CounterRequest) -> CounterResponse:
     
     return negotiation_schemas.CounterResponse(**counter_session(payload.model_dump()))
 
-@app.post("/negotiate/start", response_model=negotiation_schemas.StartNegotiationResponse)
-def negotiate_start(payload: StartNegotiationRequest) -> StartNegotiationResponse:
-    session = start_session(payload.model_dump())
-    negotiation_store.create(session)
-
-    rounds_remaining = max(0, MAX_ROUNDS - session["rounds_completed"])
-
-    return negotiation_schemas.StartNegotiationResponse(
-        session_id=session["session_id"],
-        opening_offer=session["opening_offer"],
-        reasoning=session["history"][0]["reasoning"],
-        can_negotiate=session["can_negotiate"],
-        rounds_remaining=rounds_remaining,
-        negotiation_hint="You may request a rate reduction. Our system will evaluate your profile and respond.",
-        detected_intent="START",
-    )
+@app.post("/negotiate/start")
+async def negotiate_start(payload: NegStartReq):
+    """
+    Flowchart entry: 'Underwriting Agent sends Risk Score'.
+    Delegates to the new negotiation agent which enforces the flowchart
+    decision tree (HIGH/MEDIUM/LOW tier, 0/1/3 rounds, 0.25% step).
+    """
+    return await _neg_start(payload)
 
 
 @app.post("/negotiate/start-from-underwriting", response_model=negotiation_schemas.StartFromUnderwritingResponse)
@@ -1017,124 +1080,28 @@ def negotiate_start_from_underwriting(payload: StartFromUnderwritingRequest) -> 
     )
 
 
-@app.post("/negotiate/counter", response_model=negotiation_schemas.CounterResponse)
-def negotiate_counter(payload: CounterRequest) -> CounterResponse:
-    session = negotiation_store.get(payload.session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    if negotiation_store.mark_expired_if_needed(session):
-        raise HTTPException(status_code=410, detail="Session expired")
-
-    result = counter_session(session, payload.applicant_message, payload.requested_rate)
-    append_history(session, "counter", result["reasoning"], result["intent"])
-    negotiation_store.update(payload.session_id, session)
-
-    rounds_remaining = max(0, MAX_ROUNDS - session["rounds_completed"])
-
-    return negotiation_schemas.CounterResponse(
-        session_id=payload.session_id,
-        counter_offer=result["offer"],
-        reasoning=result["reasoning"],
-        rounds_remaining=rounds_remaining,
-        can_negotiate_further=result["can_negotiate_further"],
-        status=session["status"],
-        detected_intent=result["intent"],
-    )
+@app.post("/negotiate/counter")
+async def negotiate_counter(payload: NegCounterReq):
+    """
+    Flowchart: 'Applicant Counters?' — CONCEDE / FLOOR_REACHED / FINAL_OFFER.
+    """
+    return await _neg_counter(payload)
 
 
-@app.post("/negotiate/accept", response_model=negotiation_schemas.AcceptResponse)
-def negotiate_accept(payload: AcceptRequest) -> AcceptResponse:
-    session = negotiation_store.get(payload.session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    if negotiation_store.mark_expired_if_needed(session):
-        negotiation_store.update(payload.session_id, session)
-        expired_offer = build_offer(
-            session["loan_amount"],
-            session["tenure_months"],
-            session["current_rate"],
-            session["opening_offer"]["total_payable"],
-        )
-        return negotiation_schemas.AcceptResponse(
-            session_id=payload.session_id,
-            final_offer=expired_offer,
-            message="This negotiation session has expired after 48 hours. Please restart your negotiation.",
-            sanction_reference="NA",
-            status="expired",
-            detected_intent="ACCEPTANCE",
-        )
-
-    final_offer = build_offer(
-        session["loan_amount"],
-        session["tenure_months"],
-        session["current_rate"],
-        session["opening_offer"]["total_payable"],
-    )
-    sanction_reference = build_sanction_reference()
-
-    session["status"] = "completed"
-    append_history(
-        session,
-        "accept",
-        f"This concludes our negotiation. Your final approved rate is {session['current_rate']:.2f}% per annum. "
-        "This offer is valid for 48 hours. Shall I generate your sanction letter?",
-        "ACCEPTANCE",
-    )
-    negotiation_store.update(payload.session_id, session)
-
-    return negotiation_schemas.AcceptResponse(
-        session_id=payload.session_id,
-        final_offer=final_offer,
-        message=(
-            f"Congratulations! Your loan at {session['current_rate']:.2f}% per annum has been accepted. "
-            "Generating your digitally signed sanction letter now..."
-        ),
-        sanction_reference=sanction_reference,
-        status="completed",
-        detected_intent="ACCEPTANCE",
-    )
+@app.post("/negotiate/accept")
+async def negotiate_accept(payload: NegAcceptReq):
+    """
+    Flowchart: 'No (Accepts)' → triggers sanction letter + blockchain.
+    """
+    return await _neg_accept(payload)
 
 
-@app.post("/negotiate/escalate", response_model=negotiation_schemas.EscalateResponse)
-def negotiate_escalate(payload: EscalateRequest) -> EscalateResponse:
-    session = negotiation_store.get(payload.session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    if negotiation_store.mark_expired_if_needed(session):
-        negotiation_store.update(payload.session_id, session)
-        return negotiation_schemas.EscalateResponse(
-            session_id=payload.session_id,
-            message="Session expired before escalation could be processed. Please restart negotiation.",
-            escalation_id="NA",
-            status="expired",
-            detected_intent="ESCALATION_REQUEST",
-        )
-
-    escalation_id = build_escalation_reference()
-    sanction_reference = build_sanction_reference()
-    session["status"] = "escalated"
-    append_history(
-        session,
-        "escalate",
-        "You have reached the minimum rate available for your risk tier. Further reduction is not possible within automated limits. "
-        "Would you like me to escalate this to a human loan officer for a manual review?",
-        "ESCALATION_REQUEST",
-    )
-    negotiation_store.update(payload.session_id, session)
-
-    return negotiation_schemas.EscalateResponse(
-        session_id=payload.session_id,
-        message=(
-            "Your case has been escalated to a senior loan officer. You will receive a call within 2 business hours. "
-            f"Reference: {sanction_reference}."
-        ),
-        escalation_id=escalation_id,
-        status="escalated",
-        detected_intent="ESCALATION_REQUEST",
-    )
+@app.post("/negotiate/escalate")
+async def negotiate_escalate(payload: NegEscalateReq):
+    """
+    Flowchart: 'Escalate to Human?' YES → Human Loan Officer Takes Over.
+    """
+    return await _neg_escalate(payload)
 
 
 @app.get("/negotiate/history/{session_id}", response_model=negotiation_schemas.HistoryResponse)

@@ -1902,7 +1902,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     riskTier: string,
     loanAmount: number,
     tenureMonths: number,
-    maxNegotiationRounds: number
+    maxNegotiationRounds: number,
+    startingRate?: number,
   ) => {
     setIsBackendBusy(true);
     try {
@@ -1917,6 +1918,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           loan_amount: loanAmount,
           tenure_months: tenureMonths,
           max_negotiation_rounds: maxNegotiationRounds,
+          starting_rate: startingRate ?? undefined,
           top_positive_factor: "good credit history",
           customer_profile: isRepeatBorrower ? "EXCELLENT" : "STANDARD",
         }),
@@ -2333,6 +2335,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
           amount,
           tenure,
           assessmentResult.max_negotiation_rounds || 3,
+          assessmentResult.negotiation?.starting_rate,
         );
         if (negotiationResult?.emi_holiday_option) {
           setEmiHolidayOption(negotiationResult.emi_holiday_option);
