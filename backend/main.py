@@ -216,8 +216,8 @@ app.include_router(master_router, prefix="/pipeline/agent", tags=["Master Orches
 app.include_router(ai_router)
 app.include_router(demo_router, prefix="/demo", tags=["Demo Utilities"])
 
-# Root health check
-@app.get("/")
+# Root health check (Updated to handle both GET and HEAD requests)
+@app.api_route("/", methods=["GET", "HEAD"])
 async def root():
     return {
         "service": "LoanEase Agentic AI Backend",
