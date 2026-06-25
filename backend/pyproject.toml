@@ -1,0 +1,28 @@
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "unit: Unit tests for individual functions",
+    "integration: Integration tests for agent-to-agent communication",
+    "e2e: End-to-end tests for complete loan lifecycle",
+    "credit: Credit score and CIBIL tier tests",
+    "negotiation: Negotiation engine tests",
+    "blockchain: Blockchain and Merkle tree tests",
+    "validation: Input validation tests",
+    "security: Security and data masking tests",
+    "slow: Tests that take longer to run",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["services", "agents", "core"]
+omit = ["*/tests/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]

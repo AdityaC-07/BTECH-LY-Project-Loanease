@@ -25,8 +25,8 @@ def simulate_cibil_score(pan_number: str) -> int:
             logger.info("🎯 DEMO_MODE: Returning hardcoded CIBIL score %d for PAN %s", demo_score, pan_number)
             return demo_score
     
-    # Create hash from PAN
-    pan_hash = hashlib.md5(pan_number.encode()).hexdigest()
+    # Create hash from PAN (case-insensitive)
+    pan_hash = hashlib.md5(pan_number.upper().encode()).hexdigest()
     
     # Extract numeric value from hash
     hash_num = int(pan_hash[:8], 16)

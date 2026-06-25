@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from agents.prompts import get_system_prompt
 from services.conversation_memory import ConversationMemory, get_memory
+from services.conversation_state import ConversationState, IntakeResponse
 from services.groq_service import GroqService, get_groq_service
 from services.conversation_context import (
     build_context_updates,
@@ -52,6 +53,28 @@ class ChatResponse(BaseModel):
     response: str
     xai_trace: Dict[str, Any]
     quick_replies: list[Dict[str, str]] = Field(default_factory=list)
+
+
+class IntakeChatRequest(BaseModel):
+    message: str = Field(..., min_length=1)
+    session_id: Optional[str] = None
+
+
+_intake_sessions: Dict[str, ConversationState] = {}
+
+
+@router.post("/intake", response_model=IntakeResponse)
+async def process_intake(payload: IntakeChatRequest) -> IntakeResponse:
+    session_id = payload.session_id or str(uuid4())
+
+    if session_id in _intake_sessions:
+        state = _intake_sessions[session_id]
+    else:
+        state = ConversationState(session_id)
+        _intake_sessions[session_id] = state
+
+    result = state.process_message(payload.message)
+    return result
 
 
 class IntentResponse(BaseModel):

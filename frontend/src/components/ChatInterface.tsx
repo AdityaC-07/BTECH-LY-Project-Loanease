@@ -523,6 +523,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [intakeCompleted, setIntakeCompleted] = useState(false);
+  const [intakePreview, setIntakePreview] = useState<QuickEligibilityPreview | null>(null);
 
   // Feature 2: Bank Statement Analysis
   const [showBankStatementCard, setShowBankStatementCard] = useState(false);
@@ -548,12 +550,12 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [isNegotiationBusy, setIsNegotiationBusy] = useState(false);
 
   const quickEligibilityPreview = useMemo(() => {
+    if (intakePreview) return intakePreview;
     if (!userData.preKycLoanAmount || !userData.preKycMonthlyIncome) {
       return null;
     }
-
     return buildQuickEligibilityPreview(userData.preKycLoanAmount, userData.preKycMonthlyIncome);
-  }, [userData.preKycLoanAmount, userData.preKycMonthlyIncome]);
+  }, [intakePreview, userData.preKycLoanAmount, userData.preKycMonthlyIncome]);
 
   const handleViewAnalytics = () => {
     window._analyticsSessionId = userData.sessionId;
@@ -573,6 +575,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     setMessages([]);
     setInput("");
     setHasStartedConversation(false);
+    setIntakeCompleted(false);
+    setIntakePreview(null);
     setShowPanUploadCard(false);
     setShowAadhaarUploadCard(false);
     setShowPanConfirmCard(false);
@@ -936,6 +940,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const handleStartConversation = () => {
     if (!hasStartedConversation) {
       setHasStartedConversation(true);
+      setIntakeCompleted(false);
+      setIntakePreview(null);
       conversationStep.current = 0;
       setPendingOffer(null);
       setShowKfsCard(false);
@@ -1008,6 +1014,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
   const handleProceedToKyc = () => {
     setShowPanUploadCard(true);
+    conversationStep.current = 4;
     activateAgent("KYC Verification Agent", "Quick eligibility preview completed. Starting document verification.");
     addBotMessage(
       kycText(
@@ -2014,50 +2021,65 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           return;
         }
 
-        const capturedName = extractApplicantNameFromMessage(userMessage, userData.name);
-        const currentLoanAmount = userData.preKycLoanAmount;
-        const currentMonthlyIncome = userData.preKycMonthlyIncome;
-        const capturedLoanAmount = extractLoanAmountFromMessage(userMessage, currentLoanAmount == null);
-        const capturedMonthlyIncome = extractMonthlyIncomeFromMessage(userMessage, currentMonthlyIncome == null);
+        if (!intakeCompleted) {
+          try {
+            const response = await fetch(ENDPOINTS.intake, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                message: userMessage,
+                session_id: userData.sessionId,
+              }),
+            });
+            const data = await response.json();
 
-        const nextUserData = {
-          ...userData,
-          name: capturedName || userData.name,
-          preKycLoanAmount: capturedLoanAmount ?? currentLoanAmount,
-          preKycMonthlyIncome: capturedMonthlyIncome ?? currentMonthlyIncome,
-        };
+            botResponse = data.message;
 
-        setUserData(nextUserData);
+            if (data.proceed_to_kyc && data.eligibility_preview) {
+              const ep = data.eligibility_preview;
+              const statusMap: Record<string, "Strong" | "Conditional" | "Needs review"> = {
+                "Strong": "Strong",
+                "Moderate": "Conditional",
+                "Weak": "Needs review",
+              };
+              setIntakePreview({
+                loanAmount: ep.loan_amount,
+                monthlyIncome: ep.monthly_income,
+                tenureMonths: ep.tenure_months,
+                assumedRate: ep.assumed_rate,
+                estimatedEmi: ep.estimated_emi,
+                emiToIncomeRatio: ep.emi_to_income_ratio,
+                maxAffordableEmi: Math.round(ep.monthly_income * 0.4),
+                status: statusMap[ep.status] || "Needs review",
+                note: ep.status_text,
+              });
+              setIntakeCompleted(true);
+              conversationStep.current = 3;
+              setUserData((prev) => ({
+                ...prev,
+                name: ep.applicant_name || prev.name,
+                preKycLoanAmount: ep.loan_amount,
+                preKycMonthlyIncome: ep.monthly_income,
+              }));
+            }
+          } catch (error) {
+            console.error("Intake API error:", error);
+            botResponse = language === "en"
+              ? "I'm having trouble processing your request. Please try again."
+              : "आपके अनुरोध को संसाधित करने में समस्या हो रही है। कृपया पुनः प्रयास करें।";
+          }
 
-        const hasAmount = nextUserData.preKycLoanAmount != null;
-        const hasIncome = nextUserData.preKycMonthlyIncome != null;
-
-        if (hasAmount && hasIncome) {
-          activateAgent("Master Agent", "Quick eligibility preview prepared from loan amount and income.");
-          botResponse = language === "en"
-            ? "Your quick eligibility preview is ready below. Review it, then tap Proceed to KYC when you're comfortable."
-            : "आपका quick eligibility preview नीचे तैयार है। इसे देखें, फिर comfortable होने पर Proceed to KYC दबाएँ।";
-        } else {
-          const missingFields = [] as string[];
-          if (!hasAmount) missingFields.push(language === "en" ? "loan amount" : "loan amount");
-          if (!hasIncome) missingFields.push(language === "en" ? "monthly income" : "monthly income");
-
-          const missingText = missingFieldMessage(missingFields);
-          botResponse = language === "en"
-            ? `Thanks${nextUserData.name ? `, ${nextUserData.name}` : ""}. Please share your ${missingText} so I can show a quick eligibility preview before KYC.`
-            : `${nextUserData.name ? `${nextUserData.name}, ` : ""}कृपया अपना ${missingText} share करें ताकि मैं KYC से पहले quick eligibility preview दिखा सकूँ।`;
+          const newMsg: Message = { id: prevMessages.length + 1, text: botResponse, isBot: true };
+          setMessages((prev) => {
+            const updated = sourceMessageId
+              ? prev.map((message) => (message.id === sourceMessageId ? { ...message, status: "responded" as const } : message))
+              : prev;
+            return [...updated, newMsg];
+          });
+          saveSession([...prevMessages, newMsg], userData.stage, userData);
+          setIsTyping(false);
+          return;
         }
-
-        const newMsg: Message = { id: prevMessages.length + 1, text: botResponse, isBot: true };
-        setMessages((prev) => {
-          const updated = sourceMessageId
-            ? prev.map((message) => (message.id === sourceMessageId ? { ...message, status: "responded" as const } : message))
-            : prev;
-          return [...updated, newMsg];
-        });
-        saveSession([...prevMessages, newMsg], nextUserData.stage, nextUserData);
-        setIsTyping(false);
-        return;
       }
 
       switch (conversationStep.current) {

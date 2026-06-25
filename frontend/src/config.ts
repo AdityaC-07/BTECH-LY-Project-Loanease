@@ -26,4 +26,5 @@ export const ENDPOINTS = {
   session_save: `${API_BASE_URL}/session/save`,
   escalation_callback: `${API_BASE_URL}/escalation/callback-preference`,
   health: `${API_BASE_URL}/health`,
+  intake: `${API_BASE_URL}/ai/intake`,
 };
