@@ -431,5 +431,71 @@
     "hash": "00a5f4ad1c8b4357746d0fced2a6d28e3b1141b090e3f113b62db2237e6e0739",
     "nonce": 36,
     "merkle_root": "aac3aaedfcd929a023f4c228a1a8137d03fa9462a02026a2b33f19daded117cb"
+  },
+  {
+    "index": 35,
+    "timestamp": "2026-06-07T17:55:21.412053+00:00",
+    "transaction_data": {
+      "test": true,
+      "transaction_id": "SELFTEST-001"
+    },
+    "previous_hash": "00a5f4ad1c8b4357746d0fced2a6d28e3b1141b090e3f113b62db2237e6e0739",
+    "hash": "000b9ebcefd4fe3e5b078e5c56a744dc9c2a6ec3298db80484bb09241ce01d2c",
+    "nonce": 208,
+    "merkle_root": "16c203a5bc1061d834b18e96014f31672ba87ff544e6b6170ee3bb6463bf35bd"
+  },
+  {
+    "index": 36,
+    "timestamp": "2026-06-07T18:18:17.407641+00:00",
+    "transaction_data": {
+      "transaction_id": "TXN-CBB9D6579FB3",
+      "applicant_name": "Applicant",
+      "pan_number": "DHNPC1510A",
+      "loan_amount": 500000.0,
+      "interest_rate": 11.0,
+      "tenure_years": 5,
+      "timestamp": "2026-06-07T18:18:17.406072+00:00",
+      "type": "SANCTION_LETTER"
+    },
+    "previous_hash": "000b9ebcefd4fe3e5b078e5c56a744dc9c2a6ec3298db80484bb09241ce01d2c",
+    "hash": "00733b59e9de0e8b8561af3b86a0004e27c0667f91c8e42b56caf5124f53b0ae",
+    "nonce": 289,
+    "merkle_root": "71b94e43d57b70f7090716d638549176e9e44205400ae10803bab2f598c78983"
+  },
+  {
+    "index": 37,
+    "timestamp": "2026-06-23T16:03:25.122776+00:00",
+    "transaction_data": {
+      "transaction_id": "TXN-01E81DD52E12",
+      "applicant_name": "Applicant",
+      "pan_number": "DHNPC1510A",
+      "loan_amount": 500000.0,
+      "interest_rate": 11.0,
+      "tenure_years": 7,
+      "timestamp": "2026-06-23T16:03:25.118786+00:00",
+      "type": "SANCTION_LETTER"
+    },
+    "previous_hash": "00733b59e9de0e8b8561af3b86a0004e27c0667f91c8e42b56caf5124f53b0ae",
+    "hash": "00797ef6e5215a0d40c983b952164bc6385b14076708692c2a3fb4b21b70fe47",
+    "nonce": 102,
+    "merkle_root": "7db418d234e63b4ec7ba5494b4b518a97f9e590dc25afb0c7d134b281d556662"
+  },
+  {
+    "index": 38,
+    "timestamp": "2026-06-23T17:07:00.834484+00:00",
+    "transaction_data": {
+      "transaction_id": "TXN-AC9E7ED11D6A",
+      "applicant_name": "Applicant",
+      "pan_number": "DHNPC1510A",
+      "loan_amount": 500000.0,
+      "interest_rate": 11.0,
+      "tenure_years": 5,
+      "timestamp": "2026-06-23T17:07:00.828925+00:00",
+      "type": "SANCTION_LETTER"
+    },
+    "previous_hash": "00797ef6e5215a0d40c983b952164bc6385b14076708692c2a3fb4b21b70fe47",
+    "hash": "0076a72c913e1b1461ea1952355a1bd9b321f454d6bb199434704fb62be6bb06",
+    "nonce": 53,
+    "merkle_root": "1bb23b1eb3c4007cf062de1e2ac9b851d15b3fc9f44133b3f25d7bb05c4b545d"
   }
 ]

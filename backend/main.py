@@ -197,7 +197,10 @@ async def add_request_id(request: Request, call_next):
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=[
+        *settings.CORS_ORIGINS,
+        "https://btech-ly-project-loanease-1bo1rj2xy-aditya-choudhuris-projects.vercel.app"
+    ],
     allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
