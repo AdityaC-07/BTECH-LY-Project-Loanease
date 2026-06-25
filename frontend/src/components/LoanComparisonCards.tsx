@@ -135,7 +135,7 @@ export const LoanComparisonCards = ({ offers, onSelect }: LoanComparisonCardsPro
                         : "border border-[#2a2a2a] bg-transparent text-slate-100 hover:bg-white/5"
                   )}
                 >
-                  {isSelected ? "Selected ✓" : offer.isRecommended ? "Select ⭐" : "Select"}
+                  {isSelected ? "Selected" : offer.isRecommended ? "Select (Recommended)" : "Select"}
                 </Button>
               </div>
             </div>

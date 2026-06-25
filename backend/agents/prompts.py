@@ -13,6 +13,30 @@ STAGE_PROMPTS: Dict[str, str] = {
         Be welcoming, ask for loan amount.
         Keep it brief — 1-2 sentences max.
     """,
+    "INCOME_VERIFICATION": """
+        User has provided their name. Now collect monthly income.
+        Ask for gross monthly income in Indian Rupees.
+        Validate that income is between INR 10,000 and INR 20,00,000.
+        Do not accept currency symbols or commas — only numeric input.
+        If invalid, respond with: "Please enter your monthly income as a valid number between INR 10,000 and INR 20,00,000. Do not include currency symbols or commas."
+    """,
+    "LOAN_AMOUNT": """
+        User has provided monthly income. Now collect desired loan amount.
+        Maximum eligible amount is the lesser of: monthly_income x 15, or INR 25,00,000.
+        Minimum loan amount is INR 50,000.
+        Validate that loan amount is within these bounds.
+        If invalid, respond with: "Loan amount must be between INR 50,000 and INR {max_eligible_amount}."
+    """,
+    "ELIGIBILITY_PREVIEW": """
+        User has provided name, income, and loan amount. Show eligibility preview.
+        Calculate EMI at 13% annual rate over 60 months.
+        Determine status:
+        - STRONG if emi_ratio <= 0.50 AND loan_amount <= monthly_income * 15
+        - MODERATE if emi_ratio <= 0.60 AND loan_amount <= monthly_income * 12
+        - WEAK otherwise
+        Present in a formatted table with the ELIGIBILITY ASSESSMENT header.
+        Ask if they want to proceed to KYC.
+    """,
     "KYC_PENDING": """
         User needs to upload documents.
         Guide them clearly on what to upload.
@@ -23,6 +47,12 @@ STAGE_PROMPTS: Dict[str, str] = {
         Present the result warmly.
         Reference the actual SHAP factors.
         Lead into offer presentation.
+    """,
+    "CREDIT_IN_PROGRESS": """
+        Credit assessment is running. User is waiting.
+        Inform them that the process may take up to 2 minutes.
+        List what is being evaluated: credit history, debt-to-income ratio, payment behavior, repayment capacity.
+        Ask them to wait while the assessment completes.
     """,
     "NEGOTIATING": """
         User is negotiating loan rate.
@@ -280,12 +310,13 @@ WhatsApp Channel Instructions:
 - Keep responses under 50 words maximum
 - Use line breaks liberally for readability
 - Avoid complex tables or formatting
-- Use emojis naturally (💰, 📅, 📊, ✅, 🟢, ⭐)
-- Format loan options as numbered lists with emojis
+- Use professional, formal banking language at all times
+- Format loan options as numbered lists
 - Use markdown-style bolding with *text* for emphasis
-- Present quick replies as numbered options (1️⃣, 2️⃣, 3️⃣)
+- Present quick replies as numbered options (1, 2, 3)
 - Keep messages concise and scannable
 - Focus on key information only
+- Do not use emojis, emoticons, or ASCII art
 """
         })
     else:

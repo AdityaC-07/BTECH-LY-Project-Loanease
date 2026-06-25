@@ -497,10 +497,10 @@ const ComparisonSection = () => {
           <div key={i} className={cn("grid grid-cols-[1.5fr_1fr_1fr] border-b border-[#0d0d0d]", i % 2 === 0 ? "bg-black" : "bg-[#040404]")}>
             <div className="p-4 px-6 font-sans font-medium text-[14px] text-white">{row.feature}</div>
             <div className="p-4 px-6 font-sans text-[14px] text-[#444] flex items-center gap-2">
-              <span className="text-[#ef4444]">✗</span> {row.bank}
+              <span className="text-[#ef4444]">No</span> {row.bank}
             </div>
             <div className={cn("p-4 px-6 font-sans text-[14px] flex items-center gap-2", row.highlight ? "text-[#F5C518]" : "text-white")}>
-              <span className="text-[#22c55e]">✓</span> {row.loanease}
+              <span className="text-[#22c55e]">Yes</span> {row.loanease}
             </div>
           </div>
         ))}

@@ -411,3 +411,58 @@ def build_nudge(stage: str, context: Dict[str, Any] | None = None) -> Dict[str, 
         "should_nudge": True,
         "idle_seconds": int(idle_seconds),
     }
+
+
+def validate_income(income: float) -> dict:
+    MIN_INCOME = 10000
+    MAX_INCOME = 2000000
+
+    if not isinstance(income, (int, float)) or income <= 0:
+        return {"valid": False, "error": "Please enter your monthly income as a valid number between INR 10,000 and INR 20,00,000. Do not include currency symbols or commas.", "field": "income"}
+    if income < MIN_INCOME:
+        return {"valid": False, "error": f"Minimum monthly income required is INR {MIN_INCOME:,}. Your entry: INR {income:,.0f}.", "field": "income"}
+    if income > MAX_INCOME:
+        return {"valid": False, "error": f"Maximum monthly income accepted is INR {MAX_INCOME:,}. Your entry: INR {income:,.0f}.", "field": "income"}
+    return {"valid": True, "field": "income"}
+
+
+def validate_loan_amount(loan_amount: float, monthly_income: float | None = None) -> dict:
+    MIN_AMOUNT = 50000
+    MAX_AMOUNT = 2500000
+
+    if not isinstance(loan_amount, (int, float)) or loan_amount <= 0:
+        return {"valid": False, "error": f"Loan amount must be between INR {MIN_AMOUNT:,} and INR {MAX_AMOUNT:,}. Please enter a valid number.", "field": "loan_amount"}
+
+    if monthly_income is not None and monthly_income > 0:
+        income_cap = monthly_income * 15
+        max_eligible = min(income_cap, MAX_AMOUNT)
+    else:
+        max_eligible = MAX_AMOUNT
+
+    if loan_amount < MIN_AMOUNT:
+        return {"valid": False, "error": f"Loan amount must be between INR {MIN_AMOUNT:,} and INR {max_eligible:,.0f}.", "field": "loan_amount"}
+    if loan_amount > max_eligible:
+        return {"valid": False, "error": f"Loan amount must be between INR {MIN_AMOUNT:,} and INR {max_eligible:,.0f} (15x your monthly income). Please enter a lower amount.", "field": "loan_amount"}
+    return {"valid": True, "field": "loan_amount", "max_eligible": max_eligible}
+
+
+def calculate_emi(principal: float, annual_rate: float, tenure_months: int) -> float:
+    monthly_rate = annual_rate / 12 / 100
+    if monthly_rate == 0:
+        return principal / tenure_months
+    power = (1 + monthly_rate) ** tenure_months
+    return (principal * monthly_rate * power) / (power - 1)
+
+
+def determine_eligibility_status(emi: float, monthly_income: float, loan_amount: float) -> dict:
+    if monthly_income <= 0:
+        return {"status": "WEAK", "status_text": "Unable to assess without income information."}
+
+    emi_ratio = emi / monthly_income
+
+    if emi_ratio <= 0.50 and loan_amount <= monthly_income * 15:
+        return {"status": "STRONG", "status_text": "Strong. You meet our lending criteria."}
+    elif emi_ratio <= 0.60 and loan_amount <= monthly_income * 12:
+        return {"status": "MODERATE", "status_text": "Moderate. Subject to credit verification."}
+    else:
+        return {"status": "WEAK", "status_text": "Weak. May require additional documentation or co-applicant."}

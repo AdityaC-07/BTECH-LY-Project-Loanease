@@ -607,7 +607,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const signInExistingUser = async () => {
     const trimmedSessionId = existingSessionId.trim();
     if (!trimmedSessionId) {
-      toast.error("Enter a session ID to continue.");
+      toast.error("Please enter a session ID to continue.");
       return;
     }
 
@@ -625,7 +625,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       localStorage.setItem("loanease_session_id", trimmedSessionId);
       setIsRepeatBorrower(false);
       setRepeatBorrowerData(null);
-      toast.success("Session loaded. Resume or start fresh.");
+      toast.success("Session loaded successfully. You may resume or start a new application.");
     } catch (error) {
       setApplicantMode("existing");
       setUserData((prev) => ({ ...prev, sessionId: trimmedSessionId }));
@@ -634,7 +634,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       setSessionToResume(null);
       setIsRepeatBorrower(false);
       setRepeatBorrowerData(null);
-      toast.warning("No saved session found. Starting a new application with that ID.");
+      toast.warning("No saved session found. Starting a new application with the provided session ID.");
     }
   };
 
@@ -715,24 +715,24 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       1: {
         pending: '① Document & Match',
         active: '① Scanning Docs...',
-        passed: '① Docs ✓',
-        failed: '① Docs ✗',
+        passed: '① Docs Verified',
+        failed: '① Docs Failed',
       },
       2: {
         pending: '② ID Validation',
         active: '② Validating...',
-        passed: '② Aadhaar Valid ✓',
-        failed: '② Invalid Aadhaar ✗',
+        passed: '② Aadhaar Valid',
+        failed: '② Invalid Aadhaar',
       },
       3: {
         pending: '③ OTP',
         active: '③ OTP Sent...',
-        passed: '③ OTP ✓',
-        failed: '③ OTP ✗',
+        passed: '③ OTP Verified',
+        failed: '③ OTP Failed',
       }
     };
     
-    badge.textContent = `${status === 'passed' ? '✓' : status === 'active' ? '⟳' : status === 'failed' ? '✗' : '○'} ${labels[factor][status]}`;
+    badge.textContent = `${status === 'passed' ? 'Verified' : status === 'active' ? 'Processing' : status === 'failed' ? 'Failed' : 'Pending'} ${labels[factor][status]}`;
   };
 
   // Update pipeline tracker when userData.stage changes
@@ -946,7 +946,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         const baseAmount = Number(repeatBorrowerData.preapproved_limit || repeatBorrowerData.limit || repeatBorrowerData.amount || 500000);
         const preApprovedLimit = Number.isFinite(baseAmount) ? Math.round(baseAmount) : 500000;
         addBotMessage(
-          `Welcome back! Your previous loan was sanctioned on ${sanctionedAt}. Based on your repayment history, your pre-approved limit for a new loan is ${formatIndianRupees(preApprovedLimit)}.\n\n` +
+          `Welcome back. Your previous loan was sanctioned on ${sanctionedAt}. Based on your repayment history, your pre-approved limit for a new loan is ${formatIndianRupees(preApprovedLimit)}.\n\n` +
           `As a repeat borrower, your starting rate is also trimmed by 0.25%. Would you like to proceed with a new offer?`
         );
         setTimeout(() => {
@@ -958,8 +958,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         activateAgent("Master Agent", "Let's begin with a quick eligibility preview before KYC.");
         addBotMessage(
           kycText(
-            "Hello! Share your name, desired loan amount, and monthly income. I'll show a quick eligibility preview before KYC.",
-            "नमस्ते! अपना नाम, desired loan amount, और monthly income share करें। मैं KYC से पहले एक quick eligibility preview दिखाऊँगा।"
+            "Welcome to LoanEase. I am your Loan Assistant, here to guide you through a streamlined personal loan application. Please provide the following information to proceed:\n\nFirst, what is your full legal name as it appears on your identity documents?",
+            "LoanEase में आपका स्वागत है। मैं आपका Loan Assistant हूँ, जो आपको एक streamlined personal loan application के माध्यम से मार्गदर्शन करेगा। कृपया आगे बढ़ने के लिए निम्नलिखित जानकारी प्रदान करें:\n\nसबसे पहले, आपका पूरा legal name क्या है जो आपके identity documents में दिखाई देता है?"
           )
         );
       }
@@ -1293,10 +1293,10 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       try {
         const data = await callValidateAadhaarAPI(digits);
         if (data.valid) {
-          setAadhaarValidityText(kycText("✓ Valid Aadhaar", "✓ Valid Aadhaar"));
+          setAadhaarValidityText(kycText("Valid Aadhaar", "Valid Aadhaar"));
           setAadhaarValidityOk(true);
         } else {
-          setAadhaarValidityText(`✗ ${data.message}`);
+          setAadhaarValidityText(`Invalid: ${data.message}`);
           setAadhaarValidityOk(false);
         }
       } catch {
@@ -1478,8 +1478,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         
         addBotMessage(
           kycText(
-            "🎉 3-Factor KYC Complete\n\n① Document verification ✅\n② Aadhaar ID validation ✅\n③ Mobile OTP verification ✅\n\nYour identity has been verified.\nProceeding to credit assessment...",
-            "🎉 3-Factor KYC Complete\n\n① Document verification ✅\n② Aadhaar ID validation ✅\n③ Mobile OTP verification ✅\n\nआपकी identity verify हो गई है।\nअब credit assessment शुरू हो रहा है..."
+            "3-Factor KYC Complete\n\n① Document verification complete\n② Aadhaar ID validation complete\n③ Mobile OTP verification complete\n\nYour identity has been verified.\nProceeding to credit assessment...",
+            "3-Factor KYC Complete\n\n① Document verification complete\n② Aadhaar ID validation complete\n③ Mobile OTP verification complete\n\nआपकी identity verify हो गई है।\nअब credit assessment शुरू हो रहा है..."
           )
         );
         const extractedPan = pendingCreditPan || panKycData?.pan_number || verifyResultPanFromState();
@@ -1615,8 +1615,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         
         addBotMessage(
           kycText(
-            `✅ PAN card scanned successfully\n\nName: ${extractedName}\nPAN: ${extractedPanNumber}\nDOB: ${extractedDob}${extractedFather ? `\nFather: ${extractedFather}` : ""}\n\nNow please upload your Aadhaar card.`,
-            `✅ PAN कार्ड सफलतापूर्वक स्कैन हो गया\n\nनाम: ${extractedName}\nPAN: ${extractedPanNumber}\nजन्म तिथि: ${extractedDob}${extractedFather ? `\nपिता: ${extractedFather}` : ""}\n\nअब कृपया अपना Aadhaar कार्ड अपलोड करें।`
+            `PAN card scanned successfully\n\nName: ${extractedName}\nPAN: ${extractedPanNumber}\nDOB: ${extractedDob}${extractedFather ? `\nFather: ${extractedFather}` : ""}\n\nNow please upload your Aadhaar card.`,
+            `PAN कार्ड सफलतापूर्वक स्कैन हो गया\n\nनाम: ${extractedName}\nPAN: ${extractedPanNumber}\nजन्म तिथि: ${extractedDob}${extractedFather ? `\nपिता: ${extractedFather}` : ""}\n\nअब कृपया अपना Aadhaar कार्ड अपलोड करें।`
           )
         );
       }
@@ -1703,8 +1703,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       const dobMatch = Boolean(verifyResult.cross_validation?.dob_match);
       addBotMessage(
         kycText(
-          `✅ Document Cross-Check\nPAN name ↔ Aadhaar name: ${Math.round(nameScore)}% match ✓\nDate of Birth: ${dobMatch ? "Match ✓" : "Mismatch ✗"}\n\nProceeding to mobile verification...`,
-          `✅ Document Cross-Check\nPAN name ↔ Aadhaar name: ${Math.round(nameScore)}% match ✓\nजन्म तिथि: ${dobMatch ? "Match ✓" : "Mismatch ✗"}\n\nमोबाइल verification के लिए आगे बढ़ रहा हूँ...`
+          `Document Cross-Check\nPAN name ↔ Aadhaar name: ${Math.round(nameScore)}% match\nDate of Birth: ${dobMatch ? "Match" : "Mismatch"}\n\nProceeding to mobile verification...`,
+          `Document Cross-Check\nPAN name ↔ Aadhaar name: ${Math.round(nameScore)}% match\nजन्म तिथि: ${dobMatch ? "Match" : "Mismatch"}\n\nमोबाइल verification के लिए आगे बढ़ रहा हूँ...`
         )
       );
 
@@ -1713,8 +1713,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         try {
           addBotMessage(
             kycText(
-              "✅ Factor 1 Complete — Documents verified via AI Vision\n\nAadhaar number passed Verhoeff checksum validation. Proceeding to OTP verification.",
-              "✅ Factor 1 Complete — Documents verified via AI Vision\n\nAadhaar number Verhoeff checksum validation pass हो गया। OTP verification के लिए आगे बढ़ रहा हूँ।"
+              "Factor 1 Complete — Documents verified via AI Vision\n\nAadhaar number passed Verhoeff checksum validation. Proceeding to OTP verification.",
+              "Factor 1 Complete — Documents verified via AI Vision\n\nAadhaar number Verhoeff checksum validation pass हो गया। OTP verification के लिए आगे बढ़ रहा हूँ।"
             )
           );
           resetOtpFlow();
@@ -1782,8 +1782,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         stopKycProgress(timer);
         addBotMessage(
           kycText(
-            `⚠️ Aadhaar ID Validation\n❌ Checksum failed\nThe Aadhaar number extracted does not pass the Verhoeff algorithm check.\nThis may mean:\n• OCR read a digit incorrectly\n• The document may be altered\nPlease upload a clearer image of your Aadhaar card.`,
-            `⚠️ Aadhaar ID Validation\n❌ Checksum failed\nExtracted Aadhaar number Verhoeff algorithm check pass नहीं कर पाया।\nइसका मतलब हो सकता है:\n• OCR ने digit गलत पढ़ा\n• Document altered हो सकता है\nकृपया अपने Aadhaar कार्ड की एक स्पष्ट image अपलोड करें।`
+            `Aadhaar ID Validation\nChecksum failed\nThe Aadhaar number extracted does not pass the Verhoeff algorithm check.\nThis may mean:\n• OCR read a digit incorrectly\n• The document may be altered\nPlease upload a clearer image of your Aadhaar card.`,
+            `Aadhaar ID Validation\nChecksum failed\nExtracted Aadhaar number Verhoeff algorithm check pass नहीं कर पाया।\nइसका मतलब हो सकता है:\n• OCR ने digit गलत पढ़ा\n• Document altered हो सकता है\nकृपया अपने Aadhaar कार्ड की एक स्पष्ट image अपलोड करें।`
           )
         );
         setShowAadhaarUploadCard(true);
@@ -2062,21 +2062,112 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
       switch (conversationStep.current) {
         case 0:
-          setUserData((prev) => ({ ...prev, name: userMessage }));
-          activateAgent("KYC Verification Agent", "Validating identity inputs and verification details.");
-          botResponse = kycText("Please upload your PAN card first.", "कृपया पहले अपना PAN कार्ड अपलोड करें।");
-          setShowPanUploadCard(true);
-          conversationStep.current = 1;
+          // Step 1: Collect name
+          const name = userMessage.trim();
+          if (name.length < 2 || !/^[a-zA-Z\s]+$/.test(name)) {
+            botResponse = kycText(
+              "The name you provided contains invalid characters. Please provide your full legal name using only alphabetic characters and spaces. Example: John Doe",
+              "आपके द्वारा प्रदान किया गया नाम में अमान्य वर्ण हैं। कृपया केवल वर्णानुक्रमिक वर्णों और रिक्त स्थानों का उपयोग करके अपना पूरा कानूनी नाम प्रदान करें। उदाहरण: John Doe"
+            );
+          } else {
+            setUserData((prev) => ({ ...prev, name }));
+            conversationStep.current = 1;
+            botResponse = kycText(
+              `Thank you, ${name}.\n\nTo assess your loan eligibility, I need to understand your financial capacity.\nWhat is your gross monthly income (in Indian Rupees)?\n\nPlease provide the amount as a number without currency symbol.\nExample: 50000 (for INR 50,000)`,
+              `धन्यवाद, ${name}।\n\nआपकी loan eligibility का आकलन करने के लिए, मुझे आपकी financial capacity समझने की आवश्यकता है।\nआपकी gross monthly income (Indian Rupees में) क्या है?\n\nकृपया राशि को currency symbol के बिना number के रूप में प्रदान करें।\nउदाहरण: 50000 (INR 50,000 के लिए)`
+            );
+          }
           break;
 
         case 1:
+          // Step 2: Collect monthly income
+          const incomeAmount = parseMoneyAmount(userMessage);
+          if (incomeAmount === null || incomeAmount < 10000 || incomeAmount > 2000000) {
+            botResponse = kycText(
+              "Please enter your monthly income as a valid number between ₹10,000 and ₹20,00,000. Do not include currency symbols or commas. Example: 50000",
+              "कृपया अपनी मासिक आय को ₹10,000 और ₹20,00,000 के बीच एक valid number के रूप में दर्ज करें। currency symbols या commas शामिल न करें। उदाहरण: 50000"
+            );
+          } else {
+            setUserData((prev) => ({ ...prev, preKycMonthlyIncome: incomeAmount }));
+            conversationStep.current = 2;
+            const maxEligible = Math.min(incomeAmount * 15, 2500000);
+            botResponse = kycText(
+              `Thank you. Based on your monthly income of ₹${incomeAmount.toLocaleString('en-IN')}, I can now assess your borrowing capacity.\n\nWhat is the desired loan amount you wish to apply for (in Indian Rupees)?\n\nPlease provide the amount as a number without currency symbol.\nExample: 250000 (for INR 2,50,000)\n\nMaximum eligible amount: ₹${maxEligible.toLocaleString('en-IN')}`,
+              `धन्यवाद। आपकी मासिक आय ₹${incomeAmount.toLocaleString('en-IN')} के आधार पर, मैं अब आपकी borrowing capacity का आकलन कर सकता हूँ।\n\nआप जिस loan amount के लिए आवेदन करना चाहते हैं वह (Indian Rupees में) क्या है?\n\nकृपया राशि को currency symbol के बिना number के रूप में प्रदान करें।\nउदाहरण: 250000 (INR 2,50,000 के लिए)\n\nअधिकतम eligible amount: ₹${maxEligible.toLocaleString('en-IN')}`
+            );
+          }
+          break;
+
+        case 2:
+          // Step 3: Collect loan amount and show eligibility preview
+          const loanAmount = parseMoneyAmount(userMessage);
+          const monthlyIncome = userData.preKycMonthlyIncome || 0;
+          const maxEligible = Math.min(monthlyIncome * 15, 2500000);
+          
+          if (loanAmount === null || loanAmount < 50000 || loanAmount > 2500000) {
+            botResponse = kycText(
+              `The loan amount must be between ₹50,000 and ₹25,00,000. Please ensure the amount is realistic relative to your monthly income.`,
+              `Loan amount ₹50,000 और ₹25,00,000 के बीच होना चाहिए। कृपया सुनिश्चित करें कि amount आपकी मासिक आय के संबंध में realistic है।`
+            );
+          } else if (loanAmount > maxEligible) {
+            botResponse = kycText(
+              `Loan amount must be between ₹50,000 and ₹${maxEligible.toLocaleString('en-IN')} (15x your monthly income). Please enter a lower amount.`,
+              `Loan amount ₹50,000 और ₹${maxEligible.toLocaleString('en-IN')} (आपकी मासिक आय का 15x) के बीच होना चाहिए। कृपया एक कम amount दर्ज करें।`
+            );
+          } else {
+            setUserData((prev) => ({ ...prev, preKycLoanAmount: loanAmount }));
+            conversationStep.current = 3;
+            
+            // Calculate eligibility preview
+            const preview = buildQuickEligibilityPreview(loanAmount, monthlyIncome);
+            const emiRatio = preview.emiToIncomeRatio;
+            let statusText = "";
+            if (emiRatio <= 0.50 && loanAmount <= monthlyIncome * 15) {
+              statusText = "Strong. You meet our lending criteria.";
+            } else if (emiRatio <= 0.60 && loanAmount <= monthlyIncome * 12) {
+              statusText = "Moderate. Subject to credit verification.";
+            } else {
+              statusText = "Weak. May require additional documentation or co-applicant.";
+            }
+            
+            botResponse = kycText(
+              `Based on the information provided, here is your quick eligibility preview:\n\nELIGIBILITY ASSESSMENT\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nApplicant Name:              ${userData.name}\nMonthly Gross Income:        ₹${monthlyIncome.toLocaleString('en-IN')}\nDesired Loan Amount:         ₹${loanAmount.toLocaleString('en-IN')}\nProposed Tenure:             60 months\nEstimated EMI (at 13%):      ₹${preview.estimatedEmi.toLocaleString('en-IN')}\nEMI to Income Ratio:         ${(emiRatio * 100).toFixed(1)}%\nEligibility Status:          ${statusText}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\nThis is a preliminary assessment based on income alone. Your final eligibility depends on credit verification, identity authentication, and document validation.\n\nWould you like to proceed to KYC (Know Your Customer) verification?`,
+              `प्रदान की गई जानकारी के आधार पर, यहाँ आपकी quick eligibility preview है:\n\nELIGIBILITY ASSESSMENT\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nApplicant Name:              ${userData.name}\nMonthly Gross Income:        ₹${monthlyIncome.toLocaleString('en-IN')}\nDesired Loan Amount:         ₹${loanAmount.toLocaleString('en-IN')}\nProposed Tenure:             60 months\nEstimated EMI (at 13%):      ₹${preview.estimatedEmi.toLocaleString('en-IN')}\nEMI to Income Ratio:         ${(emiRatio * 100).toFixed(1)}%\nEligibility Status:          ${statusText}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\nयह केवल income के आधार पर एक preliminary assessment है। आपकी final eligibility credit verification, identity authentication, और document validation पर निर्भर करती है।\n\nक्या आप KYC (Know Your Customer) verification के लिए आगे बढ़ना चाहते हैं?`
+            );
+            
+            quickReplies = [
+              { label: language === "hi" ? "हाँ, KYC शुरू करें" : "Yes, Proceed to KYC", value: "proceed_kyc" },
+              { label: language === "hi" ? "नहीं, बाद में" : "No, Later", value: "later" }
+            ];
+          }
+          break;
+
+        case 3:
+          // Step 4: Handle response to eligibility preview
+          if (userMessage.toLowerCase().includes("proceed") || userMessage.toLowerCase().includes("yes") || userMessage.toLowerCase().includes("haan")) {
+            conversationStep.current = 4;
+            activateAgent("KYC Verification Agent", "Quick eligibility preview completed. Starting document verification.");
+            botResponse = kycText(
+              "Proceeding to KYC Verification.\n\nTo verify your identity, I will need to collect the following documents:\n1. PAN Card (Permanent Account Number)\n2. Aadhaar Card (Government Identity Number)\n\nPlease upload clear, well-lit images of both documents.\nAcceptable formats: JPG, PNG, PDF\n\nNote: All documents are processed securely on-premise. No data is shared with external parties.",
+              "KYC Verification के लिए आगे बढ़ रहा हूँ।\n\nआपकी identity verify करने के लिए, मुझे निम्नलिखित documents collect करने होंगे:\n1. PAN Card (Permanent Account Number)\n2. Aadhaar Card (Government Identity Number)\n\nकृपया दोनों documents की स्पष्ट, well-lit images upload करें।\nAcceptable formats: JPG, PNG, PDF\n\nNote: सभी documents को on-premise securely process किया जाता है। किसी भी external party के साथ data share नहीं किया जाता है।"
+            );
+            setShowPanUploadCard(true);
+          } else {
+            botResponse = kycText(
+              "I understand. You can return to complete your application at any time. Your information will be saved for 24 hours.",
+              "मैं समझ गया। आप किसी भी समय अपना application पूरा करने के लिए वापस आ सकते हैं। आपकी जानकारी 24 घंटों के लिए saved रहेगी।"
+            );
+          }
+          break;
+
+        case 4:
           botResponse = kycText(
             "Please use the upload card below to upload your PAN document.",
             "कृपया PAN दस्तावेज़ अपलोड करने के लिए नीचे दिए गए upload card का उपयोग करें।"
           );
           break;
 
-        case 3:
+        case 5:
           botResponse = "Feel free to adjust the sliders to customize your loan terms. Once satisfied, click 'Select This Plan' to proceed.";
           break;
 
@@ -2137,7 +2228,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
          setTimeout(() => {
            setMessages((prev) => [
              ...prev,
-             { id: prev.length + 1, text: "Sure! You can use this calculator to see how different amounts and tenures affect your EMI.", isBot: true, type: "emi-calculator" }
+             { id: prev.length + 1, text: "You can use this calculator to see how different amounts and tenures affect your EMI.", isBot: true, type: "emi-calculator" }
            ]);
            setMessages((prev) => prev.map((message) => (message.id === newMsg.id ? { ...message, status: "responded" } : message)));
            setIsTyping(false);
@@ -2194,12 +2285,58 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     if (res.negotiation_permitted === false) {
       setNegotiationState("HIGH_RISK");
       setNegotiationRoundsLeft(0);
+      const riskTierText = (userData.riskTier || "").toLowerCase();
+      let tierMessage = "";
+      if (riskTierText.includes("high")) {
+        tierMessage = kycText(
+          "Based on your CIBIL assessment, your profile falls in the higher risk category. Rate negotiation is not available at this time. The offered rate reflects the current risk assessment. You may improve your eligibility by maintaining consistent repayment history and reducing existing debt obligations.",
+          "आपकी CIBIL assessment के आधार पर, आपकी profile higher risk category में आती है। Rate negotiation इस समय उपलब्ध नहीं है। Offered rate current risk assessment को दर्शाता है। आप consistent repayment history बनाए रखकर और existing debt obligations को कम करके अपनी eligibility improve कर सकते हैं।"
+        );
+      } else {
+        tierMessage = kycText(
+          "Rate negotiation is not available for this profile. The offered rate is based on your current credit assessment and risk classification.",
+          "इस profile के लिए rate negotiation उपलब्ध नहीं है। Offered rate आपकी current credit assessment और risk classification के आधार पर है।"
+        );
+      }
+      addBotMessage(tierMessage);
       return;
     }
 
     const status: string = res.status ?? "ACTIVE";
     setNegotiationState(status);
     setNegotiationRoundsLeft(res.rounds_remaining ?? 0);
+
+    // Add CIBIL tier-based messaging for negotiation offers
+    if (offer && status === "ACTIVE") {
+      const riskTierText = (userData.riskTier || "").toLowerCase();
+      let negotiationMessage = "";
+      
+      if (riskTierText.includes("low")) {
+        negotiationMessage = kycText(
+          `Excellent. Your CIBIL profile qualifies you for premium pricing. The current rate of ${offer.rate.toFixed(2)}% reflects your strong credit standing. You may request further rate reduction if desired.`,
+          `बहुत अच्छा। आपकी CIBIL profile आपको premium pricing के लिए qualify करती है। Current rate ${offer.rate.toFixed(2)}% आपकी strong credit standing को दर्शाता है। यदि आवश्यक हो तो आप further rate reduction request कर सकते हैं।`
+        );
+      } else if (riskTierText.includes("medium")) {
+        negotiationMessage = kycText(
+          `Your CIBIL profile qualifies for standard pricing. The current rate of ${offer.rate.toFixed(2)}% is within your eligible range. Limited rate negotiation is available based on your credit profile.`,
+          `आपकी CIBIL profile standard pricing के लिए qualify करती है। Current rate ${offer.rate.toFixed(2)}% आपकी eligible range के भीतर है। आपकी credit profile के आधार पर limited rate negotiation उपलब्ध है।`
+        );
+      } else {
+        negotiationMessage = kycText(
+          `Based on your CIBIL assessment, the current rate of ${offer.rate.toFixed(2)}% reflects your risk classification. This rate has been optimized for your profile.`,
+          `आपकी CIBIL assessment के आधार पर, current rate ${offer.rate.toFixed(2)}% आपकी risk classification को दर्शाता है। यह rate आपकी profile के लिए optimize किया गया है।`
+        );
+      }
+      
+      if (res.rounds_remaining > 0) {
+        negotiationMessage += kycText(
+          `\n\nYou have ${res.rounds_remaining} negotiation round(s) remaining.`,
+          `\n\nआपके पास ${res.rounds_remaining} negotiation round(s) शेष हैं।`
+        );
+      }
+      
+      addBotMessage(negotiationMessage);
+    }
   };
 
   const handleNegotiationCounter = async () => {
@@ -2260,7 +2397,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
       setMessages(prev => [...prev, {
         id: prev.length + 1,
-        text: `KYC Verified ✓\nCredit Check Passed ✓\nNegotiation Complete ✓\n\n${TRANSLATIONS.approved[language]}`,
+        text: `KYC Verified\nCredit Check Passed\nNegotiation Complete\n\n${TRANSLATIONS.approved[language]}`,
         isBot: true,
       }]);
 
@@ -2350,7 +2487,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const handleBankStatementUpload = async (file: File | undefined) => {
     if (!file) return;
     setShowBankStatementCard(false);
-    addBotMessage("📄 Analyzing your bank statement...");
+    addBotMessage("Analyzing your bank statement...");
     setIsTyping(true);
     try {
       const formData = new FormData();
@@ -2365,18 +2502,18 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       setIsTyping(false);
       if (data.analysis_possible) {
         addBotMessage(
-          `✅ Bank Statement Analysis Complete\n\n` +
+          `Bank Statement Analysis Complete\n\n` +
           `Estimated Monthly Income: ${formatIndianRupees(data.estimated_monthly_income)}\n` +
           `Confidence: ${data.income_confidence}\n` +
           `Source: ${data.data_source}\n\n` +
           `This will be used to supplement your credit assessment.`
         );
       } else {
-        addBotMessage(`⚠️ Could not extract income data from the statement. ${data.reason || "Please try again with a clearer document."}`);
+        addBotMessage(`Could not extract income data from the statement. ${data.reason || "Please try again with a clearer document."}`);
       }
     } catch {
       setIsTyping(false);
-      addBotMessage("❌ Failed to analyze bank statement. Please try again.");
+      addBotMessage("Failed to analyze bank statement. Please try again.");
     }
   };
 
@@ -3073,7 +3210,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
         <div className="absolute inset-x-0 top-0 z-[60] bg-yellow-400 text-black px-4 py-3 flex items-center justify-between animate-in slide-in-from-top duration-500 shadow-xl">
           <div className="text-sm font-bold flex items-center gap-2">
             <MessageCircle className="w-4 h-4" />
-            Welcome back! Continue your application?
+            Welcome back. Continue your application?
           </div>
           <div className="flex gap-2">
             <Button size="sm" variant="secondary" className="bg-black text-white hover:bg-black/80" onClick={handleResume}>Resume</Button>
@@ -3115,6 +3252,15 @@ ${guidance.repayment_history_impact || ""}`.trim(),
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => window.open('https://www.rbi.org.in/scripts/BS_ViewBS.aspx?Id=976', '_blank')}
+                  className="text-xs px-2 py-1 h-7 border border-blue-400/20 hover:bg-blue-500/10"
+                >
+                  <FileText className="w-3 h-3 mr-1" />
+                  Glossary
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -3170,6 +3316,10 @@ ${guidance.repayment_history_impact || ""}`.trim(),
                   <span className={cn(
                     "text-[9px] uppercase tracking-wider font-bold transition-colors absolute -bottom-4 whitespace-nowrap",
                     isActive ? "text-yellow-400" : isCompleted ? "text-green-500" : "text-muted-foreground"
+                  )}>Step {idx + 1} of 5</span>
+                  <span className={cn(
+                    "text-[9px] uppercase tracking-wider font-bold transition-colors absolute -bottom-7 whitespace-nowrap",
+                    isActive ? "text-yellow-400" : isCompleted ? "text-green-500" : "text-muted-foreground"
                   )}>{s.label}</span>
                 </div>
               );
@@ -3190,7 +3340,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
                     id={`fa${idx + 1}-badge`}
                     className={`fa-badge ${status}`}
                   >
-                    {passed ? "✓" : isCurrent ? "⟳" : "○"} {factor.label}
+                    {passed ? "Verified" : isCurrent ? "Processing" : "Pending"} {factor.label}
                   </span>
                   {idx < KYC_FACTORS.length - 1 && <span className="fa-connector">→</span>}
                 </React.Fragment>
@@ -3287,7 +3437,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
                 <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-[#F5C518]/15 text-[#F5C518] shadow-[0_0_0_8px_rgba(245,197,24,0.04)]">
                   <MessageCircle className="h-8 w-8" />
                 </div>
-                <h3 className="text-2xl font-black tracking-tight text-slate-100">Hi! I'm your Loan Assistant</h3>
+                <h3 className="text-2xl font-black tracking-tight text-slate-100">Hi. I am your Loan Assistant</h3>
                 <p className="mt-3 text-sm leading-6 text-slate-300">{TRANSLATIONS.opening[language]}</p>
                 <div className="mt-6 grid gap-2 text-left text-sm text-slate-300 sm:grid-cols-2">
                   <div className="rounded-xl border border-[#2a2a2a] bg-[#151515] px-3 py-3 flex items-center gap-2">
@@ -3519,7 +3669,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
                 onClick={() => {
                   setShowPanConfirmCard(false);
                   setShowAadhaarUploadCard(true);
-                  addBotMessage(kycText("Great! Now upload your Aadhaar card.", "बहुत बढ़िया! अब अपना Aadhaar कार्ड अपलोड करें।"));
+                  addBotMessage(kycText("Please proceed to upload your Aadhaar card.", "अब अपना Aadhaar कार्ड अपलोड करें।"));
                 }}
               >
                 {kycText("Confirm", "पुष्टि करें")}
@@ -3614,7 +3764,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
               {aadhaarVerhoeffResult?.valid ? (
                 <>
                   <div className="text-sm font-medium text-green-400">
-                    {kycText("✅ Verhoeff checksum valid", "✅ Verhoeff checksum valid")}
+                    {kycText("Verhoeff checksum valid", "Verhoeff checksum valid")}
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">
                     {kycText(

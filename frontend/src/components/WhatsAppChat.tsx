@@ -210,7 +210,7 @@ export const WhatsAppChat = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
-      content: 'Hello! I\'m your LoanEase assistant. How can I help you today?\n\nReply:\n[File] Apply for Loan\n[Check] Check Eligibility\n[Help] How it works',
+      content: 'Hello. I am your LoanEase assistant. How can I help you today?\n\nReply:\n[File] Apply for Loan\n[Check] Check Eligibility\n[Help] How it works',
       type: 'assistant',
       timestamp: new Date(),
       status: 'read'

@@ -12,8 +12,8 @@ export const TRANSLATIONS = {
 
   // Opening messages
   opening: {
-    en: "Hello! I'll help you find the perfect loan. What amount are you looking for?",
-    hi: "नमस्ते! मैं आपको सही लोन खोजने में मदद करूँगा। आप कितनी राशि की तलाश में हैं?",
+    en: "Hello. I will help you find the perfect loan. What amount are you looking for?",
+    hi: "नमस्ते। मैं आपको सही लोन खोजने में मदद करूँगा। आप कितनी राशि की तलाश में हैं?",
   },
 
   // KYC verification prompts
@@ -40,8 +40,8 @@ export const TRANSLATIONS = {
 
   // Approval messages
   approved: {
-    en: "Congratulations! Based on your profile, your loan is approved.",
-    hi: "बधाई हो! आपकी प्रोफ़ाइल के आधार पर, आपका लोन स्वीकृत हो गया है।",
+    en: "Congratulations. Based on your profile, your loan is approved.",
+    hi: "बधाई हो। आपकी प्रोफ़ाइल के आधार पर, आपका लोन स्वीकृत हो गया है।",
   },
 
   approved_with_conditions: {
@@ -124,8 +124,8 @@ export const TRANSLATIONS = {
   },
 
   accepted: {
-    en: "Congratulations! Your loan has been accepted.",
-    hi: "बधाई हो! आपका लोन स्वीकृत हो गया है।",
+    en: "Congratulations. Your loan has been accepted.",
+    hi: "बधाई हो। आपका लोन स्वीकृत हो गया है।",
   },
 
   // Time units

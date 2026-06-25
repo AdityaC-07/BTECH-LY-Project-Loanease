@@ -284,7 +284,7 @@ export default function BlockchainExplorer() {
                   {renderResultField("Merkle Valid", verificationResult.merkle_root_valid ? "Yes" : "No")}
                 </div>
                 <div className="mt-4 rounded-md border border-white/10 bg-[#0d0d0d] p-3 text-xs text-zinc-500">
-                  ✓ Chain integrity verified to Block #{verificationResult.block_index} &nbsp; ✓ Block hash valid &nbsp; ✓ Merkle tree intact
+                  Chain integrity verified to Block #{verificationResult.block_index} - Block hash valid - Merkle tree intact
                 </div>
               </div>
             )}

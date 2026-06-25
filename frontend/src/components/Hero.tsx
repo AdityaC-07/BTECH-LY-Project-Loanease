@@ -80,13 +80,13 @@ export const Hero = ({ onStartChat }: HeroProps) => {
                   
                   <div className="space-y-3">
                     <div className="bg-secondary rounded-2xl rounded-tl-md p-4 max-w-[80%]">
-                      <p className="text-sm text-foreground">Hello! I'll help you find the perfect loan. What amount are you looking for?</p>
+                      <p className="text-sm text-foreground">Hello. I will help you find the perfect loan. What amount are you looking for?</p>
                     </div>
                     <div className="bg-primary rounded-2xl rounded-tr-md p-4 max-w-[80%] ml-auto">
                       <p className="text-sm text-primary-foreground">I need ₹5,00,000 for home renovation</p>
                     </div>
                     <div className="bg-secondary rounded-2xl rounded-tl-md p-4 max-w-[80%]">
-                      <p className="text-sm text-foreground">Great! Let me check your eligibility...</p>
+                      <p className="text-sm text-foreground">Let me check your eligibility...</p>
                     </div>
                   </div>
 
