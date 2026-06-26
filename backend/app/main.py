@@ -37,6 +37,14 @@ from core.config import settings, get_band
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("kyc.ocr")
+# Rate limiting
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
+
+limiter = Limiter(key_func=get_remote_address)
 
 # Load negotiation backend constants, service, and store
 neg_backend_path = Path(__file__).resolve().parent.parent.parent / "negotiation_backend" / "app"
@@ -177,6 +185,11 @@ ARTIFACTS_DIR = BASE_DIR / "artifacts"
 STORE_PATH = BASE_DIR / "data" / "applications.jsonl"
 
 app = FastAPI(title="LoanEase Unified Backend API", version="2.0.0")
+
+# Rate limiting middleware and exception handler
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # Import routers from agents
 from agents.blockchain_agent.main import router as blockchain_router

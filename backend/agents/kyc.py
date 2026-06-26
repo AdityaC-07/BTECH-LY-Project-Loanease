@@ -90,6 +90,24 @@ class VerifyResponse(BaseModel):
     three_factor_status: Dict[str, Any] | None = None
 
 
+class QuickEligibilityRequest(BaseModel):
+    action: str
+    customer_name: str
+    monthly_income: float
+    desired_loan_amount: float
+    stage: str
+
+
+class QuickEligibilityResponse(BaseModel):
+    eligibility_status: str
+    estimated_emi: float
+    estimated_tenure_months: int
+    dti_ratio: float
+    safe_loan_cap: float
+    reason: str
+    next_action: str
+
+
 def _get_aadhaar_mobile(session_id: str) -> str:
     session = session_store.get(session_id)
     if not session:
@@ -997,3 +1015,65 @@ async def verify_otp_endpoint(request: Request, payload: OtpVerifyRequest):
         )
 
     return OtpVerifyResponse(**result)
+
+
+@router.post("/quick-eligibility", response_model=QuickEligibilityResponse)
+@limiter.limit("10/minute")
+async def quick_eligibility_endpoint(request: Request, payload: QuickEligibilityRequest):
+    """
+    Quick eligibility check based on income and loan amount.
+    Calculates DTI ratio and provides preliminary eligibility assessment.
+    """
+    try:
+        # Constants for EMI calculation
+        INTEREST_RATE = 0.12  # 12% per annum
+        TENURE_MONTHS = 60
+        
+        # Calculate EMI using standard formula: EMI = P * r * (1+r)^n / ((1+r)^n - 1)
+        # where P = principal, r = monthly interest rate, n = tenure in months
+        monthly_rate = INTEREST_RATE / 12
+        emi = payload.desired_loan_amount * monthly_rate * (1 + monthly_rate) ** TENURE_MONTHS / ((1 + monthly_rate) ** TENURE_MONTHS - 1)
+        
+        # Calculate DTI ratio (EMI / Monthly Income)
+        dti_ratio = emi / payload.monthly_income
+        
+        # Calculate safe loan cap (50% DTI constraint)
+        safe_loan_cap = (TENURE_MONTHS * payload.monthly_income) / 2
+        
+        # Determine eligibility status based on DTI and loan amount
+        if dti_ratio <= 0.50 and payload.desired_loan_amount <= payload.monthly_income * 15:
+            eligibility_status = "STRONG"
+            reason = "You meet our lending criteria with strong repayment capacity."
+            next_action = "PROCEED_TO_KYC"
+        elif dti_ratio <= 0.60 and payload.desired_loan_amount <= payload.monthly_income * 12:
+            eligibility_status = "MODERATE"
+            reason = "Subject to credit verification. Your profile shows moderate eligibility."
+            next_action = "PROCEED_TO_KYC"
+        elif dti_ratio <= 0.70:
+            eligibility_status = "CONDITIONAL"
+            reason = "May require additional documentation or co-applicant for approval."
+            next_action = "PROCEED_TO_KYC"
+        else:
+            eligibility_status = "INELIGIBLE"
+            reason = "Debt-to-income ratio exceeds our lending threshold. Consider reducing loan amount."
+            next_action = "ADJUST_AMOUNT"
+        
+        logger.info(
+            f"Quick eligibility check for {payload.customer_name}: "
+            f"Income={payload.monthly_income}, Loan={payload.desired_loan_amount}, "
+            f"DTI={dti_ratio:.2%}, Status={eligibility_status}"
+        )
+        
+        return QuickEligibilityResponse(
+            eligibility_status=eligibility_status,
+            estimated_emi=round(emi, 2),
+            estimated_tenure_months=TENURE_MONTHS,
+            dti_ratio=round(dti_ratio, 4),
+            safe_loan_cap=round(safe_loan_cap, 2),
+            reason=reason,
+            next_action=next_action
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in quick eligibility check: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to process eligibility check")

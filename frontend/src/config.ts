@@ -27,4 +27,5 @@ export const ENDPOINTS = {
   escalation_callback: `${API_BASE_URL}/escalation/callback-preference`,
   health: `${API_BASE_URL}/health`,
   intake: `${API_BASE_URL}/ai/intake`,
+  quick_eligibility: `${API_BASE_URL}/kyc/quick-eligibility`,
 };

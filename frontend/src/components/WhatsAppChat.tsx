@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import { Smile, Paperclip, Mic, Send, FileText, CheckCircle, HelpCircle, Check, CheckCheck } from "lucide-react";
-import { ENDPOINTS } from "@/config";
+import { Paperclip, Mic, Send, Check, CheckCheck } from "lucide-react";
+import { ENDPOINTS } from "../config";
+import SequentialEligibilityForm from "./SequentialEligibilityForm";
 
 interface Message {
   id: string;
@@ -40,21 +41,23 @@ const SimpleMessage = ({ message }: { message: Message }) => {
   const isUser = message.type === 'user';
 
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-2`}>
-      <div className={`max-w-[70%] ${isUser ? 'order-2' : 'order-1'}`}>
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
+      <div className={`max-w-[80%] ${isUser ? 'order-2' : 'order-1'}`}>
         {/* Message Bubble */}
         <div
-          className={`
-            relative px-4 py-2 rounded-2xl
-            ${isUser 
-              ? 'bg-[#005c4b] text-white rounded-tr-none' 
-              : 'bg-[#1f2c34] text-white rounded-tl-none'
-            }
-          `}
+          className="relative px-4 py-3 rounded-lg"
+          style={{
+            backgroundColor: isUser ? '#F5C518' : '#2A2A2A',
+            color: isUser ? '#000000' : '#FFFFFF',
+            borderLeft: isUser ? 'none' : '4px solid #F5C518',
+            borderRadius: '8px',
+            fontFamily: 'DM Sans, sans-serif',
+            fontSize: '14px'
+          }}
         >
           {/* Attachment */}
           {message.attachment && (
-            <div className="flex items-center gap-2 mb-1 pb-2 border-b border-white/20">
+            <div className="flex items-center gap-2 mb-2 pb-2 border-b border-white/20">
               <div className="w-8 h-8 bg-white/20 rounded flex items-center justify-center">
                 <Paperclip className="w-4 h-4 text-white" />
               </div>
@@ -63,20 +66,9 @@ const SimpleMessage = ({ message }: { message: Message }) => {
           )}
           
           {/* Message Content */}
-          <p className="text-sm whitespace-pre-wrap break-words">
+          <p className="whitespace-pre-wrap break-words leading-relaxed">
             {message.content}
           </p>
-          
-          {/* Tail */}
-          <div
-            className={`
-              absolute w-0 h-0
-              ${isUser 
-                ? 'right-0 top-0 border-l-[8px] border-l-[#005c4b] border-t-[6px] border-t-transparent' 
-                : 'left-0 top-0 border-r-[8px] border-r-[#1f2c34] border-t-[6px] border-t-transparent'
-              }
-            `}
-          />
         </div>
         
         {/* Timestamp and Status */}
@@ -135,14 +127,6 @@ const SimpleInput = ({ onSendMessage, disabled }: { onSendMessage: (message: str
   return (
     <>
       <form onSubmit={handleSubmit} className="flex items-center gap-2">
-        <button
-          type="button"
-          className="text-[#8696a0] hover:text-white p-2 rounded-full transition-colors"
-          disabled={disabled}
-        >
-          <Smile size={20} />
-        </button>
-
         <button
           type="button"
           className="text-[#8696a0] hover:text-white p-2 rounded-full transition-colors"
@@ -210,7 +194,7 @@ export const WhatsAppChat = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
-      content: 'Hello. I am your LoanEase assistant. How can I help you today?\n\nReply:\n[File] Apply for Loan\n[Check] Check Eligibility\n[Help] How it works',
+      content: 'Welcome to LoanEase. I am your Loan Assistant, here to guide you through a streamlined personal loan application. Please provide the following information to proceed:\n\nFirst, what is your full legal name as it appears on your identity documents?',
       type: 'assistant',
       timestamp: new Date(),
       status: 'read'
@@ -218,6 +202,7 @@ export const WhatsAppChat = () => {
   ]);
   const [isTyping, setIsTyping] = useState(false);
   const [sessionId] = useState(() => `WA-${Date.now()}`);
+  const [showSequentialForm, setShowSequentialForm] = useState(true);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -246,6 +231,32 @@ export const WhatsAppChat = () => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  useEffect(() => {
+    const handleProceedToKYC = (event: CustomEvent) => {
+      const { formData, eligibilityResult } = event.detail;
+      
+      // Hide the form and show chat
+      setShowSequentialForm(false);
+      
+      // Add a message with the eligibility results
+      const eligibilityMessage: Message = {
+        id: (Date.now()).toString(),
+        content: `Based on the information provided, here is your quick eligibility preview:\n\nELIGIBILITY ASSESSMENT\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nApplicant Name: ${formData.name}\nMonthly Gross Income: ₹${formData.monthly_income?.toLocaleString('en-IN')}\nDesired Loan Amount: ₹${formData.loan_amount?.toLocaleString('en-IN')}\nProposed Tenure: 60 months\nEstimated EMI: ₹${eligibilityResult.estimated_emi.toLocaleString('en-IN')}\nEMI to Income Ratio: ${(eligibilityResult.dti_ratio * 100).toFixed(1)}%\nEligibility Status: ${eligibilityResult.eligibility_status}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\nThis is a preliminary assessment based on income alone. Your final eligibility depends on credit verification, identity authentication, and document validation.\n\nWould you like to proceed to KYC (Know Your Customer) verification?`,
+        type: 'assistant',
+        timestamp: new Date(),
+        status: 'delivered'
+      };
+      
+      setMessages(prev => [...prev, eligibilityMessage]);
+    };
+
+    window.addEventListener('proceedToKYC', handleProceedToKYC as EventListener);
+    
+    return () => {
+      window.removeEventListener('proceedToKYC', handleProceedToKYC as EventListener);
+    };
+  }, []);
 
   const handleSendMessage = async (content: string, attachment?: File) => {
     // Add user message
@@ -367,38 +378,49 @@ export const WhatsAppChat = () => {
 
   return (
     <div className="flex flex-col h-full">
+      {/* Sequential Form Container */}
+      {showSequentialForm && (
+        <div className="flex-1 overflow-y-auto px-4 py-4 flex items-center justify-center">
+          <SequentialEligibilityForm />
+        </div>
+      )}
+
       {/* Messages Container */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2">
-        {messages.map((message) => (
-          <SimpleMessage
-            key={message.id}
-            message={message}
-          />
-        ))}
-        
-        {/* Typing Indicator */}
-        {isTyping && (
-          <div className="flex items-start gap-2">
-            <div className="bg-[#1f2c34] rounded-2xl rounded-tl-none px-4 py-2 max-w-[70%]">
-              <div className="flex items-center gap-1">
-                <div className="w-2 h-2 bg-[#8696a0] rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                <div className="w-2 h-2 bg-[#8696a0] rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                <div className="w-2 h-2 bg-[#8696a0] rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+      {!showSequentialForm && (
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2">
+          {messages.map((message) => (
+            <SimpleMessage
+              key={message.id}
+              message={message}
+            />
+          ))}
+          
+          {/* Typing Indicator */}
+          {isTyping && (
+            <div className="flex items-start gap-2">
+              <div className="bg-[#1f2c34] rounded-2xl rounded-tl-none px-4 py-2 max-w-[70%]">
+                <div className="flex items-center gap-1">
+                  <div className="w-2 h-2 bg-[#8696a0] rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                  <div className="w-2 h-2 bg-[#8696a0] rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                  <div className="w-2 h-2 bg-[#8696a0] rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                </div>
               </div>
             </div>
-          </div>
-        )}
-        
-        <div ref={messagesEndRef} />
-      </div>
+          )}
+          
+          <div ref={messagesEndRef} />
+        </div>
+      )}
 
       {/* Input Area */}
-      <div className="border-t border-[#2a3942] px-4 py-2">
-        <SimpleInput
-          onSendMessage={handleSendMessage}
-          disabled={isTyping}
-        />
-      </div>
+      {!showSequentialForm && (
+        <div className="border-t border-[#2a3942] px-4 py-2">
+          <SimpleInput
+            onSendMessage={handleSendMessage}
+            disabled={isTyping}
+          />
+        </div>
+      )}
     </div>
   );
 };

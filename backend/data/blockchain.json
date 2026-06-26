@@ -497,5 +497,53 @@
     "hash": "0076a72c913e1b1461ea1952355a1bd9b321f454d6bb199434704fb62be6bb06",
     "nonce": 53,
     "merkle_root": "1bb23b1eb3c4007cf062de1e2ac9b851d15b3fc9f44133b3f25d7bb05c4b545d"
+  },
+  {
+    "index": 39,
+    "timestamp": "2026-06-26T16:10:38.833065+00:00",
+    "transaction_data": {
+      "transaction_id": "TXN-9257B9C7CB34",
+      "applicant_name": "Agniv Dutta",
+      "pan_number": "IODPD3228A",
+      "loan_amount": 500000.0,
+      "interest_rate": 11.0,
+      "tenure_years": 3,
+      "timestamp": "2026-06-26T16:10:38.782418+00:00",
+      "type": "SANCTION_LETTER"
+    },
+    "previous_hash": "0076a72c913e1b1461ea1952355a1bd9b321f454d6bb199434704fb62be6bb06",
+    "hash": "009b1295c3c8cd0df18f2b02981920e2dd978e1abb0f423c7bc65e97d133a4b7",
+    "nonce": 188,
+    "merkle_root": "7023edc5a6f5e800999a5df4a721e195d0da2cf35062d5b6d5d915f12e35598f"
+  },
+  {
+    "index": 40,
+    "timestamp": "2026-06-26T16:36:43.869965+00:00",
+    "transaction_data": {
+      "test": true,
+      "transaction_id": "SELFTEST-001"
+    },
+    "previous_hash": "009b1295c3c8cd0df18f2b02981920e2dd978e1abb0f423c7bc65e97d133a4b7",
+    "hash": "00fd26f6d46d07977d67ece825c54d04a5057155cd8925163cca39cdd4c4585b",
+    "nonce": 233,
+    "merkle_root": "16c203a5bc1061d834b18e96014f31672ba87ff544e6b6170ee3bb6463bf35bd"
+  },
+  {
+    "index": 41,
+    "timestamp": "2026-06-26T17:00:38.341200+00:00",
+    "transaction_data": {
+      "transaction_id": "TXN-C8DF1503C1AB",
+      "applicant_name": "Agniv Dutta",
+      "pan_number": "IODPD3228A",
+      "loan_amount": 500000.0,
+      "interest_rate": 11.5,
+      "tenure_years": 5,
+      "timestamp": "2026-06-26T17:00:38.341023+00:00",
+      "type": "SANCTION_LETTER"
+    },
+    "previous_hash": "00fd26f6d46d07977d67ece825c54d04a5057155cd8925163cca39cdd4c4585b",
+    "hash": "00b8cfc7194b9912b55150dc83a4535868f037f3d9651ee61710a27dbcfb7d4f",
+    "nonce": 254,
+    "merkle_root": "b8501ca7e2f9afc99f501fdcf299703b79ac558f7fa67e28f2c9611e65f1110d"
   }
 ]

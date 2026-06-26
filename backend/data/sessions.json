@@ -2432,5 +2432,500 @@
         "signature": "1bca44facf4e2bd8f5bdd6b1bf09e879e46a1d039b316e9ad4c9ef2a20d68f2fe93fae5bbabf79f1ce09bef22f3c4c84811a1cdba2e9b014aad7454636744f74c346035b28e385f6de92d6082c3c53f91359477bba3dc8cba735261fba7e4603ee174a8bce3ec775964f4955612cd3e927e75a13f5263065b5f8afd787c57618b6e3cf11be1d967f7221bf94cef00dd2911eb9f1f39389fea877ecda888779a874954f9648087dd3b37a58c0e7d1e88233fc91d37c51321237fb6a725dddf82b559d59c231a0b0574282af0e3376a16990ddfa04f1cdbc89df80c4d84e12191db86a913bf3c5d825cfc7b62dc759842ff6e0c2b4cb008203363e0b418394fa12"
       }
     }
+  },
+  "LE-2026-74136": {
+    "id": "LE-2026-74136",
+    "created_at": "2026-06-26T16:03:01.538951",
+    "expires_at": "2026-06-27T16:03:01.540866",
+    "stage": "NEGOTIATION_COMPLETE",
+    "agent_log": [
+      {
+        "agent": "MasterOrchestratorAgent",
+        "action": "INITIATED_SESSION",
+        "reasoning": "New loan inquiry received. Starting orchestration.",
+        "status": "SUCCESS"
+      },
+      {
+        "agent": "kyc",
+        "action": "pan_extraction",
+        "success": true,
+        "confidence": 0.98,
+        "processing_time_ms": 30957
+      },
+      {
+        "agent": "KYCAgent",
+        "action": "AADHAAR_EXTRACTED",
+        "fa1_vlm": "complete",
+        "fa2_verhoeff": "PASS",
+        "fa3_otp": "pending"
+      },
+      {
+        "agent": "kyc",
+        "action": "verification",
+        "success": true,
+        "kyc_status": "VERIFIED",
+        "reference_id": "KYC-2026-00004"
+      },
+      {
+        "agent": "KYCVerificationAgent",
+        "action": "OTP_SENT",
+        "reasoning": "Sending verification OTP to Aadhaar-linked mobile ending in 6627",
+        "status": "SUCCESS",
+        "timestamp": "2026-06-26T16:08:57.865757+00:00"
+      },
+      {
+        "agent": "KYCVerificationAgent",
+        "action": "OTP_VERIFIED",
+        "reasoning": "Aadhaar-linked mobile OTP verified successfully.",
+        "status": "SUCCESS",
+        "timestamp": "2026-06-26T16:09:12.664442+00:00"
+      },
+      {
+        "agent": "underwriting",
+        "action": "assessment",
+        "success": true,
+        "application_id": "APP-30D9BF5AA8E3",
+        "credit_score": 556,
+        "decision": "APPROVED"
+      },
+      {
+        "agent": "negotiation",
+        "action": "start",
+        "negotiation_id": "NEG-28F1D79C",
+        "initial_rate": 11.5,
+        "min_rate": 10.5,
+        "max_rounds": 3
+      },
+      {
+        "agent": "negotiation",
+        "negotiation_id": "NEG-28F1D79C",
+        "action": "CONCEDE",
+        "prev_rate": 11.5,
+        "new_rate": 11.25,
+        "round": 1
+      },
+      {
+        "agent": "negotiation",
+        "negotiation_id": "NEG-28F1D79C",
+        "action": "CONCEDE",
+        "prev_rate": 11.25,
+        "new_rate": 11.0,
+        "round": 2
+      },
+      {
+        "agent": "negotiation",
+        "negotiation_id": "NEG-28F1D79C",
+        "rate": 11.0
+      },
+      {
+        "agent": "negotiation",
+        "action": "accept",
+        "negotiation_id": "NEG-28F1D79C",
+        "final_rate": 11.0,
+        "monthly_emi": 16369.36
+      }
+    ],
+    "data": {
+      "pan_data": {
+        "pan_number": "IODPD3228A",
+        "name": "AGNIV DUTTA",
+        "fathers_name": "KINGSHUK DUTTA",
+        "date_of_birth": "06/03/2005",
+        "age": 21,
+        "age_eligible": true,
+        "age_calculated_at": "2026-06-26"
+      },
+      "kyc_pan_done": true,
+      "aadhaar_mobile": "8108706627",
+      "aadhaar_mobile_last4": "6627",
+      "aadhaar_data": {
+        "aadhaar_last4": "4290",
+        "aadhaar_number": "732487454290",
+        "name": "Agniv Dutta",
+        "date_of_birth": "06/03/2005",
+        "year_of_birth": 2005,
+        "age": 21,
+        "age_eligible": true,
+        "age_calculated_at": "2026-06-26",
+        "gender": "Male",
+        "address": {
+          "full": "T4/504, SPRING GROVE TOWERS, AKURLI ROAD, LOKHANDWALA CIRCLE, LOKHANDWALA TOWNSHIP, KANDIVALI EAST, VTC: Mumbai, PO: Kandivali East, District: Mumbai Suburban, State: Maharashtra, PIN Code: 400101",
+          "pincode": "400101",
+          "city": "Mumbai",
+          "state": "Maharashtra"
+        },
+        "mobile_number": "8108706627",
+        "mobile_last4": "6627",
+        "mobile_found": true
+      },
+      "fa2_verhoeff_passed": true,
+      "fa2_verhoeff_result": {
+        "valid": true,
+        "checked": true,
+        "reason": "VALID",
+        "message": "Aadhaar number passes all validation checks. Format is correct and Verhoeff checksum is valid.",
+        "aadhaar_last4": "4290",
+        "last4": "4290",
+        "masked": "XXXX XXXX 4290",
+        "algorithm": "Verhoeff (UIDAI)"
+      },
+      "kyc_aadhaar_done": true,
+      "kyc_cross_validated": true,
+      "fa1_document_passed": true,
+      "kyc_reference": "KYC-2026-00004",
+      "aadhaar_otp_pending": true,
+      "aadhaar_otp_verified": true,
+      "mobile_verified": true,
+      "verification_method": "OTP_SMS",
+      "fa3_otp_passed": true,
+      "underwriting_result": {
+        "application_id": "APP-30D9BF5AA8E3",
+        "decision": "APPROVED",
+        "credit_score": 556,
+        "interest_rate": 14.0,
+        "risk_category": "HIGH",
+        "risk_score": 80,
+        "loan_amount": 500000.0,
+        "tenure_years": 5,
+        "monthly_income": 5000.0,
+        "employment_type": "salaried",
+        "employer_name": "TCS",
+        "loan_purpose": "general",
+        "alternative_score": null,
+        "alternative_eligible": null,
+        "alternative_details": null
+      },
+      "final_rate": 11.0,
+      "emi_details": {
+        "monthly_emi": 16369.36,
+        "holiday_months": 0
+      }
+    },
+    "kyc_audit_trail": [
+      {
+        "timestamp": "2026-06-26T16:07:50.632132+00:00",
+        "factor": "FA1",
+        "event": "PAN_EXTRACTED",
+        "result": "success",
+        "details": {
+          "pan_last4": "228A",
+          "confidence": 0.98
+        }
+      },
+      {
+        "timestamp": "2026-06-26T16:08:09.485022+00:00",
+        "factor": "FA1",
+        "event": "AADHAAR_EXTRACTED",
+        "result": "success",
+        "details": {
+          "aadhaar_last4": "4290",
+          "confidence": 0.98
+        }
+      },
+      {
+        "timestamp": "2026-06-26T16:08:09.546768+00:00",
+        "factor": "FA2",
+        "event": "PASSED",
+        "result": "Aadhaar number passes all validation checks. Format is correct and Verhoeff checksum is valid.",
+        "details": {
+          "algorithm": "Verhoeff D5",
+          "aadhaar_last4": "4290",
+          "reason": "VALID"
+        }
+      },
+      {
+        "timestamp": "2026-06-26T16:08:36.092937+00:00",
+        "factor": "FA1",
+        "event": "CROSS_VALIDATED",
+        "result": "passed",
+        "details": {
+          "name_similarity": null,
+          "dob_match": true,
+          "name_match": null,
+          "kyc_reference": "KYC-2026-00004"
+        }
+      },
+      {
+        "timestamp": "2026-06-26T16:08:57.865828+00:00",
+        "factor": "FA3",
+        "event": "OTP_SENT",
+        "result": "pending",
+        "details": {
+          "mobile_last4": "6627",
+          "method": "TWILIO_VERIFY"
+        }
+      },
+      {
+        "timestamp": "2026-06-26T16:09:12.664540+00:00",
+        "factor": "FA3",
+        "event": "OTP_VERIFIED",
+        "result": "success",
+        "details": {
+          "method": "OTP_SMS",
+          "mobile_last4": "6627"
+        }
+      }
+    ]
+  },
+  "NEG-28F1D79C": {
+    "id": "NEG-28F1D79C",
+    "created_at": "2026-06-26T16:09:58.686497",
+    "expires_at": "2026-06-27T16:09:58.686511",
+    "stage": "INITIATED",
+    "agent_log": [
+      {
+        "agent": "MasterOrchestratorAgent",
+        "action": "INITIATED_SESSION",
+        "reasoning": "New loan inquiry received. Starting orchestration.",
+        "status": "SUCCESS"
+      },
+      {
+        "agent": "MasterOrchestratorAgent",
+        "action": "INITIATED_SESSION",
+        "reasoning": "New loan inquiry received. Starting orchestration.",
+        "status": "SUCCESS"
+      }
+    ],
+    "data": {
+      "blockchain_data": {
+        "transaction_id": "TXN-9257B9C7CB34",
+        "block_hash": "009b1295c3c8cd0df18f2b02981920e2dd978e1abb0f423c7bc65e97d133a4b7",
+        "signature": "c7097aa5d838eb173a2427af0429c3448981031df4f9146a89e648cfe2993444fee468513715ecbabdba214443ab102f638138f626208e48e918e87f322ce8d8ced2740f7b1b97aaef827dc6c999882f140533cf5b2d5d97418b5abf1b13c689f4ef4b57749c33623915d8a6f9541607ffadd61f3d6bd9b8f046f21d782903bcc28808ad58481a1a3106895b682874a3f53f0d9ed1c3e2a5edc0e7425f2bf9f937ef2d8ae3a222e118c422e107a9f47ac3eb0260483d2b905cb1163dde74f900acbac68fa3df0167f27cd273eb8accf7970c44a16b17c70afa939e8be65969bb46b6a35b2a67c626306b5397e4deb829ba04a8de1d18ab75f7e4712c4e76c76f"
+      }
+    }
+  },
+  "LE-2026-53847": {
+    "id": "LE-2026-53847",
+    "created_at": "2026-06-26T16:58:09.128540",
+    "expires_at": "2026-06-27T16:58:09.128561",
+    "stage": "NEGOTIATION_COMPLETE",
+    "agent_log": [
+      {
+        "agent": "MasterOrchestratorAgent",
+        "action": "INITIATED_SESSION",
+        "reasoning": "New loan inquiry received. Starting orchestration.",
+        "status": "SUCCESS"
+      },
+      {
+        "agent": "kyc",
+        "action": "pan_extraction",
+        "success": true,
+        "confidence": 0.98,
+        "processing_time_ms": 7322
+      },
+      {
+        "agent": "KYCAgent",
+        "action": "AADHAAR_EXTRACTED",
+        "fa1_vlm": "complete",
+        "fa2_verhoeff": "PASS",
+        "fa3_otp": "pending"
+      },
+      {
+        "agent": "kyc",
+        "action": "verification",
+        "success": true,
+        "kyc_status": "VERIFIED",
+        "reference_id": "KYC-2026-00004"
+      },
+      {
+        "agent": "KYCVerificationAgent",
+        "action": "OTP_SENT",
+        "reasoning": "Sending verification OTP to Aadhaar-linked mobile ending in 6627",
+        "status": "SUCCESS",
+        "timestamp": "2026-06-26T16:59:51.975865+00:00"
+      },
+      {
+        "agent": "KYCVerificationAgent",
+        "action": "OTP_VERIFIED",
+        "reasoning": "Aadhaar-linked mobile OTP verified successfully.",
+        "status": "SUCCESS",
+        "timestamp": "2026-06-26T17:00:11.016861+00:00"
+      },
+      {
+        "agent": "underwriting",
+        "action": "assessment",
+        "success": true,
+        "application_id": "APP-6CB0BFB06820",
+        "credit_score": 556,
+        "decision": "APPROVED"
+      },
+      {
+        "agent": "negotiation",
+        "action": "start",
+        "negotiation_id": "NEG-776272CF",
+        "initial_rate": 11.5,
+        "min_rate": 10.5,
+        "max_rounds": 3
+      },
+      {
+        "agent": "negotiation",
+        "action": "accept",
+        "negotiation_id": "NEG-776272CF",
+        "final_rate": 11.5,
+        "monthly_emi": 10996.3
+      }
+    ],
+    "data": {
+      "pan_data": {
+        "pan_number": "IODPD3228A",
+        "name": "AGNIV DUTTA",
+        "fathers_name": "KINGSHUK DUTTA",
+        "date_of_birth": "06/03/2005",
+        "age": 21,
+        "age_eligible": true,
+        "age_calculated_at": "2026-06-26"
+      },
+      "kyc_pan_done": true,
+      "aadhaar_mobile": "8108706627",
+      "aadhaar_mobile_last4": "6627",
+      "aadhaar_data": {
+        "aadhaar_last4": "4290",
+        "aadhaar_number": "732487454290",
+        "name": "Agniv Dutta",
+        "date_of_birth": "06/03/2005",
+        "year_of_birth": 2005,
+        "age": 21,
+        "age_eligible": true,
+        "age_calculated_at": "2026-06-26",
+        "gender": "Male",
+        "address": {
+          "full": "T4/504, SPRING GROVE TOWERS, AKURLI ROAD, LOKHANDWALA CIRCLE, LOKHANDWALA TOWNSHIP, KANDIVALI EAST, VTC: Mumbai, PO: Kandivali East, District: Mumbai Suburban, State: Maharashtra, PIN Code: 400101",
+          "pincode": "400101",
+          "city": "Mumbai",
+          "state": "Maharashtra"
+        },
+        "mobile_number": "8108706627",
+        "mobile_last4": "6627",
+        "mobile_found": true
+      },
+      "fa2_verhoeff_passed": true,
+      "fa2_verhoeff_result": {
+        "valid": true,
+        "checked": true,
+        "reason": "VALID",
+        "message": "Aadhaar number passes all validation checks. Format is correct and Verhoeff checksum is valid.",
+        "aadhaar_last4": "4290",
+        "last4": "4290",
+        "masked": "XXXX XXXX 4290",
+        "algorithm": "Verhoeff (UIDAI)"
+      },
+      "kyc_aadhaar_done": true,
+      "kyc_cross_validated": true,
+      "fa1_document_passed": true,
+      "kyc_reference": "KYC-2026-00004",
+      "aadhaar_otp_pending": true,
+      "aadhaar_otp_verified": true,
+      "mobile_verified": true,
+      "verification_method": "OTP_SMS",
+      "fa3_otp_passed": true,
+      "underwriting_result": {
+        "application_id": "APP-6CB0BFB06820",
+        "decision": "APPROVED",
+        "credit_score": 556,
+        "interest_rate": 14.0,
+        "risk_category": "HIGH",
+        "risk_score": 80,
+        "loan_amount": 500000.0,
+        "tenure_years": 5,
+        "monthly_income": 5000.0,
+        "employment_type": "salaried",
+        "employer_name": "TCS",
+        "loan_purpose": "general",
+        "alternative_score": null,
+        "alternative_eligible": null,
+        "alternative_details": null
+      },
+      "final_rate": 11.5,
+      "emi_details": {
+        "monthly_emi": 10996.3,
+        "holiday_months": 0
+      }
+    },
+    "kyc_audit_trail": [
+      {
+        "timestamp": "2026-06-26T16:59:03.732616+00:00",
+        "factor": "FA1",
+        "event": "PAN_EXTRACTED",
+        "result": "success",
+        "details": {
+          "pan_last4": "228A",
+          "confidence": 0.98
+        }
+      },
+      {
+        "timestamp": "2026-06-26T16:59:29.050891+00:00",
+        "factor": "FA1",
+        "event": "AADHAAR_EXTRACTED",
+        "result": "success",
+        "details": {
+          "aadhaar_last4": "4290",
+          "confidence": 0.98
+        }
+      },
+      {
+        "timestamp": "2026-06-26T16:59:29.055798+00:00",
+        "factor": "FA2",
+        "event": "PASSED",
+        "result": "Aadhaar number passes all validation checks. Format is correct and Verhoeff checksum is valid.",
+        "details": {
+          "algorithm": "Verhoeff D5",
+          "aadhaar_last4": "4290",
+          "reason": "VALID"
+        }
+      },
+      {
+        "timestamp": "2026-06-26T16:59:48.495210+00:00",
+        "factor": "FA1",
+        "event": "CROSS_VALIDATED",
+        "result": "passed",
+        "details": {
+          "name_similarity": null,
+          "dob_match": true,
+          "name_match": null,
+          "kyc_reference": "KYC-2026-00004"
+        }
+      },
+      {
+        "timestamp": "2026-06-26T16:59:51.976068+00:00",
+        "factor": "FA3",
+        "event": "OTP_SENT",
+        "result": "pending",
+        "details": {
+          "mobile_last4": "6627",
+          "method": "TWILIO_VERIFY"
+        }
+      },
+      {
+        "timestamp": "2026-06-26T17:00:11.016924+00:00",
+        "factor": "FA3",
+        "event": "OTP_VERIFIED",
+        "result": "success",
+        "details": {
+          "method": "OTP_SMS",
+          "mobile_last4": "6627"
+        }
+      }
+    ]
+  },
+  "NEG-776272CF": {
+    "id": "NEG-776272CF",
+    "created_at": "2026-06-26T17:00:27.605602",
+    "expires_at": "2026-06-27T17:00:27.605621",
+    "stage": "BLOCKCHAIN_VERIFIED",
+    "agent_log": [
+      {
+        "agent": "MasterOrchestratorAgent",
+        "action": "INITIATED_SESSION",
+        "reasoning": "New loan inquiry received. Starting orchestration.",
+        "status": "SUCCESS"
+      }
+    ],
+    "data": {
+      "blockchain_data": {
+        "transaction_id": "TXN-C8DF1503C1AB",
+        "block_hash": "00b8cfc7194b9912b55150dc83a4535868f037f3d9651ee61710a27dbcfb7d4f",
+        "signature": "bcd10e1abbf44aa2e1855577eec4147a294b2aef0364764a50d4dea21f85166f846b2fd8a41c91ada599480cec657037e9c4e4a5469e7debc887646638e61f050e46e3426d7f76d9f62733cd917734ba0c82771711e1e56601aef435a9755ff5250635d5d845c1bf555b265258ea0676326f7afc76096767d1733d2c4b9252241b992990c113e652ace2c74f39871c5753b039a83ec8343d579f92b22310de1ea0013cea4ca430ffc1b66c2f23e9ec45a04fd63fc94eeb198be8d044f4866aefbab4d5d656c400a628a8619beaca4cada2a62a01ba191f8fcae2381699a5a61cc623eb264821b34681f33e19dda6cd724cc184679bce54354fa00f4b60298662"
+      }
+    }
   }
 }
