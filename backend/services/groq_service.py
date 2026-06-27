@@ -13,6 +13,30 @@ from groq import AsyncGroq
 
 logger = logging.getLogger("loanease.groq_service")
 
+_EMOJI_PATTERN = re.compile(
+    "["
+    "\U0001F600-\U0001F64F"
+    "\U0001F300-\U0001F5FF"
+    "\U0001F680-\U0001F6FF"
+    "\U0001F700-\U0001F77F"
+    "\U0001F780-\U0001F7FF"
+    "\U0001F800-\U0001F8FF"
+    "\U0001F900-\U0001F9FF"
+    "\U0001FA00-\U0001FA6F"
+    "\U0001FA70-\U0001FAFF"
+    "\U00002702-\U000027B0"
+    "\U000024C2-\U0001F251"
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+def sanitize_response(text: str) -> str:
+    """Remove all emoji characters from LLM output."""
+    cleaned = _EMOJI_PATTERN.sub("", text)
+    cleaned = cleaned.replace("✓", "VERIFIED").replace("✗", "FAILED").replace("→", "Next:")
+    return cleaned.strip()
+
 
 Message = Dict[str, str]
 
@@ -119,7 +143,7 @@ class GroqService:
                 max_tokens=max_tokens,
             )
             self._last_successful_call = datetime.now(timezone.utc).isoformat()
-            return result.text, result.xai_trace
+            return sanitize_response(result.text), result.xai_trace
         except Exception as e:
             if settings.DEMO_MODE:
                 logger.error(f"Groq Chat failed, using demo fallback: {e}")

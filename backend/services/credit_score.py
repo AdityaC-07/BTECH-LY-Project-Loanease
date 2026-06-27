@@ -22,7 +22,7 @@ def simulate_cibil_score(pan_number: str) -> int:
     if settings.DEMO_MODE:
         demo_score = DEMO_PAN_SCORES.get(pan_number.upper())
         if demo_score is not None:
-            logger.info("🎯 DEMO_MODE: Returning hardcoded CIBIL score %d for PAN %s", demo_score, pan_number)
+            logger.info("DEMO_MODE: Returning hardcoded CIBIL score %d for PAN %s", demo_score, pan_number)
             return demo_score
     
     # Create hash from PAN (case-insensitive)

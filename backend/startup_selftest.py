@@ -23,8 +23,8 @@ async def run_startup_selftest(app: Any) -> Dict[str, str]:
         return await asyncio.wait_for(_run_startup_selftest(app), timeout=_SELFTEST_TIMEOUT_SEC)
     except asyncio.TimeoutError:
         logger.warning("Startup self-test timed out after %ss — server is still running", _SELFTEST_TIMEOUT_SEC)
-        print("\n   ⚠️  STARTUP SELF-TEST timed out (server ready anyway)\n")
-        return {"selftest": "⚠️ TIMEOUT"}
+        print("\n   WARNING: STARTUP SELF-TEST timed out (server ready anyway)\n")
+        return {"selftest": "TIMEOUT"}
 
 
 async def _run_startup_selftest(app: Any) -> Dict[str, str]:
@@ -35,11 +35,11 @@ async def _run_startup_selftest(app: Any) -> Dict[str, str]:
         from agents.underwriting_agent.main import model_loaded
 
         if model_loaded():
-            results["xgboost"] = "✅ PASS"
+            results["xgboost"] = "PASS"
         else:
-            results["xgboost"] = "⚠️ DEGRADED: using rule-based fallback"
+            results["xgboost"] = "DEGRADED: using rule-based fallback"
     except Exception as e:
-        results["xgboost"] = f"❌ FAIL: {e}"
+        results["xgboost"] = f"FAIL: {e}"
     # ── Test 2: VLM KYC engine ───────────────────────────────────
     try:
         from services.vlm_kyc import init_vlm, vlm_ready
@@ -47,11 +47,11 @@ async def _run_startup_selftest(app: Any) -> Dict[str, str]:
         if not vlm_ready():
             init_vlm()
         if vlm_ready():
-            results["vlm_kyc"] = "✅ PASS"
+            results["vlm_kyc"] = "PASS"
         else:
-            results["vlm_kyc"] = "⚠️ DEGRADED: engine not available"
+            results["vlm_kyc"] = "DEGRADED: engine not available"
     except Exception as e:
-        results["vlm_kyc"] = f"❌ FAIL: {e}"
+        results["vlm_kyc"] = f"FAIL: {e}"
 
     # ── Test 3: Groq connectivity ────────────────────────────────
     try:
@@ -62,16 +62,16 @@ async def _run_startup_selftest(app: Any) -> Dict[str, str]:
                 timeout=5,
             )
             if connected:
-                results["groq"] = "✅ PASS"
+                results["groq"] = "PASS"
                 await test_groq(groq_service)
             else:
-                results["groq"] = "⚠️ FALLBACK: connection failed but service initialized"
+                results["groq"] = "FALLBACK: connection failed but service initialized"
         else:
-            results["groq"] = "⚠️ FALLBACK: GroqService not in app state"
+            results["groq"] = "FALLBACK: GroqService not in app state"
     except asyncio.TimeoutError:
-        results["groq"] = "⚠️ FALLBACK: connectivity check timed out"
+        results["groq"] = "FALLBACK: connectivity check timed out"
     except Exception as e:
-        results["groq"] = f"⚠️ FALLBACK: {e}"
+        results["groq"] = f"FALLBACK: {e}"
     # ── Test 4: Blockchain ledger ────────────────────────────────
     try:
         from blockchain import ledger
@@ -83,9 +83,9 @@ async def _run_startup_selftest(app: Any) -> Dict[str, str]:
         assert ledger.is_chain_valid(), "Chain validation failed"
         # Remove the test block so it doesn't pollute real data
         ledger.chain.pop()
-        results["blockchain"] = "✅ PASS"
+        results["blockchain"] = "PASS"
     except Exception as e:
-        results["blockchain"] = f"❌ FAIL: {e}"
+        results["blockchain"] = f"FAIL: {e}"
 
     # ── Print startup report ─────────────────────────────────────
     from core.config import settings
@@ -97,14 +97,14 @@ async def _run_startup_selftest(app: Any) -> Dict[str, str]:
         print(f"   {component.upper():15s} {status}")
     print("-" * 44)
     if settings.DEMO_MODE:
-        print("   📌 DEMO_MODE = ON")
+        print("   DEMO_MODE = ON")
     print("-" * 44)
 
     failed = [k for k, v in results.items() if "FAIL" in v]
     if failed:
-        print(f"   ⚠️  {len(failed)} component(s) need attention: {failed}")
+        print(f"   Warning: {len(failed)} component(s) need attention: {failed}")
     else:
-        print("   🎯 ALL SYSTEMS GO — Demo ready")
+        print("   ALL SYSTEMS GO — Demo ready")
     print("=" * 44 + "\n")
 
     return results
@@ -118,8 +118,8 @@ async def test_groq(groq_service: Any) -> bool:
             max_tokens=5,
         )
         if "ok" in (resp or "").lower():
-            logger.info("✅ Groq LLaMA 70B: Active")
+            logger.info("Groq LLaMA 70B: Active")
             return True
     except Exception as e:
-        logger.warning(f"⚠️ Groq test failed: {e}")
+        logger.warning(f"Groq test failed: {e}")
     return False

@@ -127,9 +127,9 @@ interface KycFactorState {
 }
 
 const KYC_FACTORS: Array<{ key: KycFactorKey; label: string }> = [
-  { key: "fa1", label: "① Document & Match" },
-  { key: "fa2", label: "② ID Validation" },
-  { key: "fa3", label: "③ OTP" },
+  { key: "fa1", label: "1. Document & Match" },
+  { key: "fa2", label: "2. ID Validation" },
+  { key: "fa3", label: "3. OTP" },
 ];
 
 const formatMissingFields = (fields: string[]) => fields.join(", ");
@@ -717,22 +717,22 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     
     const labels: Record<number, Record<string, string>> = {
       1: {
-        pending: '① Document & Match',
-        active: '① Scanning Docs...',
-        passed: '① Docs Verified',
-        failed: '① Docs Failed',
+        pending: '1. Document & Match',
+        active: '1. Scanning Docs...',
+        passed: '1. Docs Verified',
+        failed: '1. Docs Failed',
       },
       2: {
-        pending: '② ID Validation',
-        active: '② Validating...',
-        passed: '② Aadhaar Valid',
-        failed: '② Invalid Aadhaar',
+        pending: '2. ID Validation',
+        active: '2. Validating...',
+        passed: '2. Aadhaar Valid',
+        failed: '2. Invalid Aadhaar',
       },
       3: {
-        pending: '③ OTP',
-        active: '③ OTP Sent...',
-        passed: '③ OTP Verified',
-        failed: '③ OTP Failed',
+        pending: '3. OTP',
+        active: '3. OTP Sent...',
+        passed: '3. OTP Verified',
+        failed: '3. OTP Failed',
       }
     };
     
@@ -1485,8 +1485,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         
         addBotMessage(
           kycText(
-            "3-Factor KYC Complete\n\n① Document verification complete\n② Aadhaar ID validation complete\n③ Mobile OTP verification complete\n\nYour identity has been verified.\nProceeding to credit assessment...",
-            "3-Factor KYC Complete\n\n① Document verification complete\n② Aadhaar ID validation complete\n③ Mobile OTP verification complete\n\nआपकी identity verify हो गई है।\nअब credit assessment शुरू हो रहा है..."
+            "3-Factor KYC Complete\n\n1. Document verification complete\n2. Aadhaar ID validation complete\n3. Mobile OTP verification complete\n\nYour identity has been verified.\nProceeding to credit assessment...",
+            "3-Factor KYC Complete\n\n1. Document verification complete\n2. Aadhaar ID validation complete\n3. Mobile OTP verification complete\n\nआपकी identity verify हो गई है।\nअब credit assessment शुरू हो रहा है..."
           )
         );
         const extractedPan = pendingCreditPan || panKycData?.pan_number || verifyResultPanFromState();
@@ -2082,6 +2082,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
         }
       }
 
+      let quickReplies: { label: string; value: string }[] | undefined = undefined;
+
       switch (conversationStep.current) {
         case 0:
           // Step 1: Collect name
@@ -2202,7 +2204,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
       }
 
       if (botResponse) {
-        let quickReplies = undefined;
+        quickReplies = undefined;
         const type: "emi-calculator" | "escalation" | "comparison-cards" | undefined = undefined;
 
         if (conversationStep.current === 1) {
@@ -3376,7 +3378,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
           <div className="absolute top-24 left-1/2 -translate-x-1/2 w-64 bg-card border border-border rounded-xl shadow-2xl z-50 p-4 animate-in fade-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between mb-3 pb-2 border-b border-border">
               <h3 className="font-bold text-sm flex items-center gap-2">
-                <span className="w-5 h-5 rounded-full bg-green-500/20 text-green-500 flex items-center justify-center text-xs">②</span>
+                <span className="w-5 h-5 rounded-full bg-green-500/20 text-green-500 flex items-center justify-center text-xs">2</span>
                 Credit Check <Check className="w-3 h-3 text-green-500" />
               </h3>
               <button onClick={() => setShowCreditSummaryPopup(false)} className="text-muted-foreground hover:text-foreground">

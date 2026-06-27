@@ -370,7 +370,7 @@ Demo
               </span>
               <span className="text-[10px] font-medium text-muted-foreground">Groq LLaMA 70B: Active</span>
             </div>
-            <span className="text-[10px] text-muted-foreground font-mono">📡 loanease.local:8000</span>
+            <span className="text-[10px] text-muted-foreground font-mono">loanease.local:8000</span>
           </div>
         )}
       </div>

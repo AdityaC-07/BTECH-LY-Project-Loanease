@@ -356,7 +356,7 @@ async def create_sanction_letter(request: SanctionRequest):
             pdf_path = os.path.join(sanctions_dir, f"{transaction_id}.pdf")
             with open(pdf_path, "wb") as f:
                 f.write(pdf_bytes)
-            logger.info(f"📄 Sanction letter saved to {pdf_path}")
+            logger.info(f"Sanction letter saved to {pdf_path}")
             
         except Exception as pdf_err:
             logger.warning(f"PDF generation failed (non-fatal): {pdf_err}")

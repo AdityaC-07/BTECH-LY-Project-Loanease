@@ -28,7 +28,7 @@ export const MerkleTree = ({ treeData, blockIndex }: MerkleTreeProps) => {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h3 className="text-xl font-bold text-white flex items-center gap-2">
-            <span className="text-2xl">🌳</span> Merkle Tree — Block #{blockIndex}
+Merkle Tree — Block #{blockIndex}
           </h3>
           <p className="text-xs text-muted-foreground mt-1 uppercase tracking-widest font-mono">
             Cryptographic Integrity Proof

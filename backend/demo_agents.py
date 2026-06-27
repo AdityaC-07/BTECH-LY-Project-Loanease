@@ -42,7 +42,7 @@ def demo_list_agents():
     agents = orchestrator.list_agents()
     
     for agent in agents:
-        print(f"\n  📋 {agent['name']}")
+        print(f"\n  {agent['name']}")
         print(f"     Role: {agent['role']}")
         print(f"     Tools: {', '.join(agent['tools'])}")
 
@@ -64,7 +64,7 @@ def demo_kyc_agent():
     print_result(result)
     
     if result.status == AgentStatus.SUCCESS:
-        print(f"\n  ✅ KYC Verified!")
+        print(f"\n  KYC VERIFIED")
         print(f"     PAN: {result.output['pan_details']['pan_number']}")
         print(f"     Name: {result.output['pan_details']['name']}")
         print(f"     Eligible: {result.output['eligibility']['eligible']}")
@@ -89,7 +89,7 @@ def demo_underwriting_agent():
     print_result(result)
     
     if result.status == AgentStatus.SUCCESS:
-        print(f"\n  ✅ Assessment Complete!")
+        print(f"\n  ASSESSMENT COMPLETE")
         print(f"     Decision: {result.output['decision']}")
         print(f"     Credit Score: {result.output['credit_score']}")
         print(f"     Risk Tier: {result.output['risk_tier']}")
@@ -118,7 +118,7 @@ def demo_negotiation_agent():
     print_result(result)
     
     if result.status == AgentStatus.SUCCESS:
-        print(f"\n  ✅ Negotiation Complete!")
+        print(f"\n  NEGOTIATION COMPLETE")
         print(f"     Initial Rate: {result.output['initial_rate']}%")
         print(f"     Final Rate: {result.output['final_rate']}%")
         print(f"     Monthly EMI: ₹{result.output['monthly_emi']:,.2f}")
@@ -143,7 +143,7 @@ def demo_translation_agent():
     print_result(result)
     
     if result.status == AgentStatus.SUCCESS:
-        print(f"\n  ✅ Translation Complete!")
+        print(f"\n  TRANSLATION COMPLETE")
         print(f"     Original: {result.output['translation']['original_text']}")
         print(f"     Translated: {result.output['translation']['translated_text']}")
 
@@ -172,25 +172,25 @@ def demo_complete_workflow():
     
     result = orchestrator.run_workflow(application_data)
     
-    print(f"\n  📊 Workflow Result:")
+    print(f"\n  Workflow Result:")
     print(f"     Status: {result.status.value}")
     print(f"     Total Duration: {result.duration_ms}ms")
-    
+
     # Show workflow history
     history = result.output.get("workflow_history", [])
-    print(f"\n  🔄 Agents Executed:")
+    print(f"\n  Agents Executed:")
     for i, step in enumerate(history, 1):
         print(f"     {i}. {step['agent_name']} - {step['status']}")
-    
+
     # Show application summary
     summary = result.output.get("application_summary", {})
-    print(f"\n  📋 Application Summary:")
+    print(f"\n  Application Summary:")
     for key, value in summary.items():
         print(f"     {key}: {value}")
-    
+
     # Show next steps
     next_steps = result.output.get("next_steps", [])
-    print(f"\n  📝 Next Steps:")
+    print(f"\n  Next Steps:")
     for step in next_steps:
         print(f"     • {step}")
 
@@ -216,12 +216,12 @@ def demo_workflow_with_negotiation():
     
     result = orchestrator.run_workflow(application_data)
     
-    print(f"\n  📊 Workflow Result:")
+    print(f"\n  Workflow Result:")
     print(f"     Status: {result.status.value}")
     print(f"     Reasoning: {result.reasoning}")
-    
+
     summary = result.output.get("application_summary", {})
-    print(f"\n  📋 Final Offer:")
+    print(f"\n  Final Offer:")
     print(f"     Decision: {summary.get('decision')}")
     print(f"     Credit Score: {summary.get('credit_score')}")
     print(f"     Final Rate: {summary.get('final_rate')}% p.a.")

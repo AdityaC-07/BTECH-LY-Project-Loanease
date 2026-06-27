@@ -55,7 +55,7 @@ export const TamperDemo = ({ onTamper, sanctionReference, onReset }: TamperDemoP
       <div className="relative z-10">
         <h3 className="text-lg font-bold text-white flex items-center gap-2 mb-2">
           <AlertTriangle className="text-red-500" size={20} />
-          🔬 Tamper Detection Demo
+          Tamper Detection Demo
         </h3>
         <p className="text-xs text-muted-foreground mb-6 max-w-md">
           Simulate a malicious actor trying to modify a sanctioned loan amount 
