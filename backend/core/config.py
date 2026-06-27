@@ -101,3 +101,84 @@ class Settings(BaseSettings):    # Groq
 
 
 settings = Settings()
+
+
+# ---------------------------------------------------------------------------
+# CIBIL band lookup — enriches a raw score with rate, eligibility, and
+# negotiation metadata expected by AssessResponse / credit-score endpoint.
+# ---------------------------------------------------------------------------
+
+_BAND_META: dict[str, dict] = {
+    "POOR": {
+        "label": "Poor",
+        "display": "Poor Credit",
+        "cibil_classification": "POOR",
+        "color": "red",
+        "eligible": False,
+        "conditional": False,
+        "rate_min": None,
+        "rate_max": None,
+        "max_rounds": 0,
+    },
+    "FAIR": {
+        "label": "Fair",
+        "display": "Fair / Below Average",
+        "cibil_classification": "FAIR",
+        "color": "orange",
+        "eligible": True,
+        "conditional": True,
+        "rate_min": 13.5,
+        "rate_max": 14.0,
+        "max_rounds": 1,
+    },
+    "GOOD": {
+        "label": "Good",
+        "display": "Good Credit",
+        "cibil_classification": "GOOD",
+        "color": "yellow",
+        "eligible": True,
+        "conditional": False,
+        "rate_min": 12.5,
+        "rate_max": 14.0,
+        "max_rounds": 2,
+    },
+    "VERY_GOOD": {
+        "label": "Very Good",
+        "display": "Very Good Credit",
+        "cibil_classification": "VERY_GOOD",
+        "color": "green",
+        "eligible": True,
+        "conditional": False,
+        "rate_min": 11.0,
+        "rate_max": 12.5,
+        "max_rounds": 2,
+    },
+    "EXCELLENT": {
+        "label": "Excellent",
+        "display": "Excellent Credit",
+        "cibil_classification": "EXCELLENT",
+        "color": "green",
+        "eligible": True,
+        "conditional": False,
+        "rate_min": 10.5,
+        "rate_max": 11.5,
+        "max_rounds": 3,
+    },
+}
+
+_CIBIL_RANGES = [
+    ("POOR",      300, 549),
+    ("FAIR",      550, 649),
+    ("GOOD",      650, 749),
+    ("VERY_GOOD", 750, 799),
+    ("EXCELLENT", 800, 900),
+]
+
+
+def get_band(score: int) -> dict:
+    """Return enriched band metadata for a CIBIL score."""
+    score = max(300, min(900, int(score)))
+    for key, lo, hi in _CIBIL_RANGES:
+        if lo <= score <= hi:
+            return _BAND_META[key]
+    return _BAND_META["POOR"]

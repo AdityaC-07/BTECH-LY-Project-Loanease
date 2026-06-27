@@ -4,7 +4,73 @@
 @tailwind utilities;
 
 @layer base {
+  /* ── Light mode (default :root) ─────────────────────────────────── */
   :root {
+    --background: 0 0% 97%;
+    --foreground: 0 0% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 10%;
+
+    --primary: 47 100% 42%;
+    --primary-foreground: 0 0% 13%;
+
+    --secondary: 0 0% 92%;
+    --secondary-foreground: 0 0% 10%;
+
+    --muted: 0 0% 92%;
+    --muted-foreground: 0 0% 45%;
+
+    --accent: 47 95% 40%;
+    --accent-foreground: 0 0% 13%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 76% 36%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 13%;
+
+    --border: 0 0% 85%;
+    --input: 0 0% 85%;
+    --ring: 47 100% 42%;
+    --radius: 0.5rem;
+
+    --gradient-primary: linear-gradient(135deg, hsl(47, 100%, 42%) 0%, hsl(45, 100%, 38%) 100%);
+    --gradient-hero: linear-gradient(180deg, hsl(0, 0%, 95%) 0%, hsl(0, 0%, 97%) 100%);
+    --gradient-card: linear-gradient(145deg, hsl(0, 0%, 100%) 0%, hsl(0, 0%, 96%) 100%);
+
+    --shadow-sm: 0 1px 2px 0 hsl(0 0% 0% / 0.08);
+    --shadow-md: 0 4px 6px -1px hsl(0 0% 0% / 0.1), 0 2px 4px -2px hsl(0 0% 0% / 0.1);
+    --shadow-lg: 0 10px 15px -3px hsl(0 0% 0% / 0.12), 0 4px 6px -4px hsl(0 0% 0% / 0.12);
+    --shadow-glow: 0 0 40px hsl(47 100% 42% / 0.25);
+
+    --sidebar-background: 0 0% 95%;
+    --sidebar-foreground: 0 0% 10%;
+    --sidebar-primary: 47 100% 42%;
+    --sidebar-primary-foreground: 0 0% 13%;
+    --sidebar-accent: 0 0% 88%;
+    --sidebar-accent-foreground: 0 0% 10%;
+    --sidebar-border: 0 0% 85%;
+    --sidebar-ring: 47 100% 42%;
+
+    --y: #c89f00;
+    --black: #1a1a1a;
+    --card-custom: #ffffff;
+    --border-custom: #e5e5e5;
+    --muted-custom: #aaaaaa;
+    --dim: #f0f0f0;
+    --green: #16a34a;
+    --red: #dc2626;
+  }
+
+  /* ── Dark mode (.dark on <html>) ────────────────────────────────── */
+  .dark {
     /* EY Brand Colors - Black background, White text, Yellow buttons */
     --background: 0 0% 13%; /* EY Black background */
     --foreground: 0 0% 100%; /* White text */
@@ -72,47 +138,6 @@
     --red: #ef4444;
   }
 
-  .dark {
-    --background: 0 0% 13%;
-    --foreground: 0 0% 100%;
-
-    --card: 0 0% 18%;
-    --card-foreground: 0 0% 100%;
-
-    --popover: 0 0% 18%;
-    --popover-foreground: 0 0% 100%;
-
-    --primary: 47 100% 50%;
-    --primary-foreground: 0 0% 13%;
-
-    --secondary: 0 0% 25%;
-    --secondary-foreground: 0 0% 100%;
-
-    --muted: 0 0% 25%;
-    --muted-foreground: 0 0% 70%;
-
-    --accent: 47 100% 50%;
-    --accent-foreground: 0 0% 13%;
-
-    --destructive: 0 63% 31%;
-    --destructive-foreground: 0 0% 100%;
-
-    --success: 142 76% 36%;
-    --success-foreground: 0 0% 100%;
-
-    --border: 0 0% 25%;
-    --input: 0 0% 25%;
-    --ring: 47 100% 50%;
-
-    --sidebar-background: 0 0% 10%;
-    --sidebar-foreground: 0 0% 100%;
-    --sidebar-primary: 47 100% 50%;
-    --sidebar-primary-foreground: 0 0% 13%;
-    --sidebar-accent: 0 0% 20%;
-    --sidebar-accent-foreground: 0 0% 100%;
-    --sidebar-border: 0 0% 20%;
-    --sidebar-ring: 47 100% 50%;
-  }
 }
 
 @layer base {
@@ -122,8 +147,6 @@
 
   body {
     @apply bg-background text-foreground font-sans antialiased;
-    background-color: hsl(0, 0%, 13%); /* Force black background */
-    color: hsl(0, 0%, 100%); /* Force white text */
   }
 }
 

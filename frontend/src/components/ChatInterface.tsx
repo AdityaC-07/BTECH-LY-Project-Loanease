@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, ClipboardEvent } from "react";
-import { ENDPOINTS } from "../config";
+import { ENDPOINTS, API_BASE_URL } from "../config";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import { ChatMessage } from "./ChatMessage";
@@ -7,7 +7,9 @@ import { CreditScoreCard } from "./CreditScoreCard";
 import { SanctionLetter } from "./SanctionLetter";
 import { AnalyticsDashboard } from "./AnalyticsDashboard";
 import { LanguageSwitcher } from "./LanguageSwitcher";
-import { Send, ArrowLeft, MessageCircle, Upload, CheckCircle2, FileText, Pencil, Check, X, Smartphone, Zap, Bot, MessageSquare, Clock, AlertTriangle, CheckCircle, Shield, ShieldCheck } from "lucide-react";
+import { MarketRateComparison } from "./MarketRateComparison";
+import { AuditTrailModal } from "./AuditTrailModal";
+import { Send, ArrowLeft, MessageCircle, Upload, CheckCircle2, FileText, Pencil, Check, X, Smartphone, Zap, Bot, MessageSquare, Clock, AlertTriangle, CheckCircle, Shield, ShieldCheck, History, Mail } from "lucide-react";
 import { toast } from "sonner";
 import { QuickReplies } from "./QuickReplies";
 import { EmiCalculatorWidget } from "./EmiCalculatorWidget";
@@ -526,6 +528,18 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
   const [intakeCompleted, setIntakeCompleted] = useState(false);
   const [intakePreview, setIntakePreview] = useState<QuickEligibilityPreview | null>(null);
 
+  // Enhancement 6: Co-applicant income (captured during intake)
+  const [coApplicantIncome, setCoApplicantIncome] = useState(0);
+
+  // Enhancement: Audit trail modal (E10)
+  const [showAuditTrail, setShowAuditTrail] = useState(false);
+
+  // Enhancement: Sanction email/SMS delivery (E7)
+  const [sanctionEmail, setSanctionEmail] = useState("");
+  const [sanctionPhone, setSanctionPhone] = useState("");
+  const [sanctionDeliverySent, setSanctionDeliverySent] = useState(false);
+  const [sanctionDeliveryLoading, setSanctionDeliveryLoading] = useState(false);
+
   // Feature 2: Bank Statement Analysis
   const [showBankStatementCard, setShowBankStatementCard] = useState(false);
   const [bankStatementResult, setBankStatementResult] = useState<BankStatementAnalysis | null>(null);
@@ -561,6 +575,38 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
     window._analyticsSessionId = userData.sessionId;
     localStorage.setItem("loanease_session_id", userData.sessionId);
     setShowAnalytics(true);
+  };
+
+  // Enhancement 7: deliver sanction letter via email / SMS
+  const handleSanctionDeliver = async () => {
+    if (!sanctionEmail && !sanctionPhone) {
+      toast.error("Enter an email address or phone number first.");
+      return;
+    }
+    const refId = userData.blockchainData?.transaction_id || `LOAN${Date.now().toString().slice(-8)}`;
+    setSanctionDeliveryLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/sanction/deliver`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reference_id: refId,
+          email: sanctionEmail || undefined,
+          phone: sanctionPhone || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (data.success || data.sent_via?.length > 0) {
+        toast.success(`Sanction confirmation sent via ${(data.sent_via ?? []).join(" & ") || "requested channel"}.`);
+        setSanctionDeliverySent(true);
+      } else {
+        toast.error("Delivery failed. Check your details and try again.");
+      }
+    } catch {
+      toast.error("Could not reach the server. Please try again.");
+    } finally {
+      setSanctionDeliveryLoading(false);
+    }
   };
 
   const startNewApplication = () => {
@@ -746,6 +792,8 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationStep = useRef(0);
+  // Enhancement 6: tracks whether the next Case-2 message is co-applicant income
+  const coApplicantPendingRef = useRef(false);
   const activeAgentIndex = AGENT_PIPELINE.indexOf(activeAgent);
   const panInputRef = useRef<HTMLInputElement>(null);
   const aadhaarInputRef = useRef<HTMLInputElement>(null);
@@ -772,6 +820,36 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
 
     return () => clearInterval(timer);
   }, [showOtpCard]);
+
+  // Enhancement 1: Auto-detect saved session on mount and offer resume
+  useEffect(() => {
+    const saved = localStorage.getItem("loanease_session_id");
+    if (saved && !hasStartedConversation && !showSessionBanner) {
+      setUserData((prev) => ({ ...prev, sessionId: saved }));
+      toast.info(
+        `Resume your session? (${saved})`,
+        {
+          action: {
+            label: "Resume",
+            onClick: () => {
+              signInExistingUser();
+            },
+          },
+          duration: 8000,
+        }
+      );
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Enhancement 2: Show processing notification when agent is thinking
+  useEffect(() => {
+    if (isTyping) {
+      toast.loading("Agent is processing your request…", { id: "agent-processing", duration: 30000 });
+    } else {
+      toast.dismiss("agent-processing");
+    }
+  }, [isTyping]);
 
   const showWelcomeState = messages.length === 0 && !showSessionBanner && !hasStartedConversation;
   const isInputLocked =
@@ -2113,20 +2191,41 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
             );
           } else {
             setUserData((prev) => ({ ...prev, preKycMonthlyIncome: incomeAmount }));
+            // Enhancement 6: ask for co-applicant income before loan amount
+            coApplicantPendingRef.current = true;
             conversationStep.current = 2;
-            const maxEligible = Math.min(incomeAmount * 15, 2500000);
             botResponse = kycText(
-              `Thank you. Based on your monthly income of ₹${incomeAmount.toLocaleString('en-IN')}, I can now assess your borrowing capacity.\n\nWhat is the desired loan amount you wish to apply for (in Indian Rupees)?\n\nPlease provide the amount as a number without currency symbol.\nExample: 250000 (for INR 2,50,000)\n\nMaximum eligible amount: ₹${maxEligible.toLocaleString('en-IN')}`,
-              `धन्यवाद। आपकी मासिक आय ₹${incomeAmount.toLocaleString('en-IN')} के आधार पर, मैं अब आपकी borrowing capacity का आकलन कर सकता हूँ।\n\nआप जिस loan amount के लिए आवेदन करना चाहते हैं वह (Indian Rupees में) क्या है?\n\nकृपया राशि को currency symbol के बिना number के रूप में प्रदान करें।\nउदाहरण: 250000 (INR 2,50,000 के लिए)\n\nअधिकतम eligible amount: ₹${maxEligible.toLocaleString('en-IN')}`
+              `Thank you. Your monthly income of ₹${incomeAmount.toLocaleString('en-IN')} has been recorded.\n\nDo you have a co-applicant (spouse, parent, or sibling) whose income can support this application?\n\nIf yes, enter their monthly gross income (e.g. 30000).\nIf not, type 0 or 'no'.`,
+              `धन्यवाद। आपकी मासिक आय ₹${incomeAmount.toLocaleString('en-IN')} दर्ज कर ली गई है।\n\nक्या आपके पास कोई co-applicant (पति/पत्नी, माता-पिता, या भाई-बहन) है जिनकी income इस application को support कर सकती है?\n\nयदि हाँ, तो उनकी मासिक gross income दर्ज करें (जैसे 30000)।\nयदि नहीं, तो 0 या 'no' टाइप करें।`
             );
           }
           break;
 
         case 2:
+          // Enhancement 6: co-applicant income sub-step
+          if (coApplicantPendingRef.current) {
+            coApplicantPendingRef.current = false;
+            const noCoApplicant = /^(0|no|nahi|nahi?|skip|none)$/i.test(userMessage.trim());
+            const coIncome = noCoApplicant ? 0 : (parseMoneyAmount(userMessage) ?? 0);
+            setCoApplicantIncome(coIncome);
+            const monthlyIncomeCo = userData.preKycMonthlyIncome || 0;
+            const maxEligibleCo = Math.min((monthlyIncomeCo + coIncome) * 15, 2500000);
+            botResponse = kycText(
+              coIncome > 0
+                ? `Co-applicant income of ₹${coIncome.toLocaleString('en-IN')}/month added. Combined income: ₹${(monthlyIncomeCo + coIncome).toLocaleString('en-IN')}.\n\nWhat is the desired loan amount? (Max eligible: ₹${maxEligibleCo.toLocaleString('en-IN')})`
+                : `No co-applicant — proceeding with your income alone.\n\nWhat is the desired loan amount? (Max eligible: ₹${maxEligibleCo.toLocaleString('en-IN')})`,
+              coIncome > 0
+                ? `Co-applicant की income ₹${coIncome.toLocaleString('en-IN')}/माह जोड़ी गई। Combined income: ₹${(monthlyIncomeCo + coIncome).toLocaleString('en-IN')}.\n\nVांछित loan amount क्या है? (अधिकतम eligible: ₹${maxEligibleCo.toLocaleString('en-IN')})`
+                : `कोई co-applicant नहीं — केवल आपकी income के साथ आगे बढ़ रहे हैं।\n\nवांछित loan amount क्या है? (अधिकतम eligible: ₹${maxEligibleCo.toLocaleString('en-IN')})`
+            );
+            break;
+          }
+
           // Step 3: Collect loan amount and show eligibility preview
           const loanAmount = parseMoneyAmount(userMessage);
           const monthlyIncome = userData.preKycMonthlyIncome || 0;
-          const maxEligible = Math.min(monthlyIncome * 15, 2500000);
+          const combinedIncome = monthlyIncome + coApplicantIncome;
+          const maxEligible = Math.min(combinedIncome * 15, 2500000);
           
           if (loanAmount === null || loanAmount < 50000 || loanAmount > 2500000) {
             botResponse = kycText(
@@ -2632,7 +2731,7 @@ export const ChatInterface = ({ onClose }: ChatInterfaceProps) => {
           education: "Graduate",
           self_employed: "No",
           applicant_income: Number(bankStatementResult?.estimated_monthly_income || 5000),
-          coapplicant_income: 1500,
+          coapplicant_income: coApplicantIncome || 0,
           loan_amount: amount / 100000,
           loan_amount_term: tenure,
           credit_history: 1,
@@ -3294,6 +3393,17 @@ ${guidance.repayment_history_impact || ""}`.trim(),
                   <Smartphone className="w-3 h-3 mr-1" />
                   WhatsApp
                 </Button>
+                {/* Enhancement 10: Audit Trail button */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowAuditTrail(true)}
+                  aria-label="View loan processing audit trail"
+                  className="text-xs px-2 py-1 h-7 border border-blue-400/20 hover:bg-blue-500/10"
+                >
+                  <History className="w-3 h-3 mr-1" aria-hidden="true" />
+                  Audit
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -3944,13 +4054,19 @@ ${guidance.repayment_history_impact || ""}`.trim(),
 
         {showLoanOffers && (
           <div className="space-y-4">
-            <LoanComparisonCards 
+            <LoanComparisonCards
               offers={[
                 { id: 'std', name: 'Standard', amount: 500000, rate: 11.5, tenure: 36, emi: 16607, total: '6.2L' },
                 { id: 'bv', name: 'Premium', amount: 500000, rate: 11.0, tenure: 60, emi: 10747, total: '6.45L', isRecommended: true },
                 { id: 'flx', name: 'Flexi', amount: 500000, rate: 10.75, tenure: 84, emi: 8234, total: '6.92L' }
               ]}
               onSelect={handleOfferPreview}
+            />
+
+            {/* Enhancement 8: Market rate comparison sidebar */}
+            <MarketRateComparison
+              ourRate={negotiationOffer?.rate ?? 11.0}
+              className="mt-2"
             />
 
             {emiHolidayOption && (
@@ -4245,7 +4361,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
         )}
 
         {showSanction && (
-          <div className="py-4">
+          <div className="py-4 space-y-4">
             <SanctionLetter
               customerName={userData.name}
               loanAmount={userData.selectedLoan.amount}
@@ -4257,6 +4373,48 @@ ${guidance.repayment_history_impact || ""}`.trim(),
               blockchainHash={userData.blockchainData?.block_hash || "0x..."}
               onViewAnalytics={handleViewAnalytics}
             />
+
+            {/* Enhancement 7: Email / SMS delivery after sanction */}
+            {!sanctionDeliverySent ? (
+              <div className="rounded-xl border border-border/60 bg-card/60 p-4 space-y-3" role="region" aria-label="Sanction letter delivery">
+                <p className="text-sm font-semibold flex items-center gap-2">
+                  <Mail className="w-4 h-4 text-accent" aria-hidden="true" />
+                  Receive your sanction letter
+                </p>
+                <p className="text-xs text-muted-foreground">Enter your email and/or phone to get a copy sent directly to you.</p>
+                <div className="flex flex-col gap-2">
+                  <input
+                    type="email"
+                    value={sanctionEmail}
+                    onChange={(e) => setSanctionEmail(e.target.value)}
+                    placeholder="Email address (e.g. you@example.com)"
+                    aria-label="Email address for sanction delivery"
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-accent placeholder:text-muted-foreground/60"
+                  />
+                  <input
+                    type="tel"
+                    value={sanctionPhone}
+                    onChange={(e) => setSanctionPhone(e.target.value)}
+                    placeholder="Mobile number (e.g. 9876543210)"
+                    aria-label="Phone number for SMS confirmation"
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-accent placeholder:text-muted-foreground/60"
+                  />
+                  <Button
+                    onClick={handleSanctionDeliver}
+                    disabled={sanctionDeliveryLoading || (!sanctionEmail && !sanctionPhone)}
+                    aria-label="Send sanction letter via email or SMS"
+                    className="w-full bg-accent text-accent-foreground font-bold hover:bg-accent/90"
+                  >
+                    {sanctionDeliveryLoading ? "Sending…" : "Send Confirmation"}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-green-500/30 bg-green-500/10 p-4 flex items-center gap-2 text-sm text-green-400" role="alert">
+                <CheckCircle2 className="w-4 h-4 shrink-0" aria-hidden="true" />
+                Sanction confirmation sent successfully.
+              </div>
+            )}
           </div>
         )}
 
@@ -4283,6 +4441,7 @@ ${guidance.repayment_history_impact || ""}`.trim(),
       {/* Input */}
       <div className="chat-input-container">
             <div className="flex max-w-4xl flex-1 items-center gap-3 mx-auto w-full">
+          {/* Enhancement 4: ARIA labels for accessibility */}
           <Textarea
             ref={textAreaRef}
             value={input}
@@ -4297,6 +4456,9 @@ ${guidance.repayment_history_impact || ""}`.trim(),
             rows={1}
                 className={cn("chat-input flex-1", !isProcessing && hasStartedConversation && !isEscalated ? "ready-glow" : "")}
             disabled={isInputLocked}
+            aria-label="Message input"
+            aria-disabled={isInputLocked}
+            aria-describedby="chat-input-hint"
           />
           <Button
             variant="chat"
@@ -4307,8 +4469,9 @@ ${guidance.repayment_history_impact || ""}`.trim(),
               isInputLocked
             }
             className="send-button h-10 w-10"
+            aria-label="Send message"
           >
-            <Send className="w-4 h-4" />
+            <Send className="w-4 h-4" aria-hidden="true" />
           </Button>
         </div>
 
@@ -4359,6 +4522,19 @@ ${guidance.repayment_history_impact || ""}`.trim(),
         </div>
         </div>
       </div>
+
+      {/* Enhancement 4: screen-reader hint for the chat input */}
+      <span id="chat-input-hint" className="sr-only">
+        Press Enter to send, Shift+Enter for a new line
+      </span>
+
+      {/* Enhancement 10: Audit Trail Modal */}
+      {showAuditTrail && (
+        <AuditTrailModal
+          sessionId={userData.sessionId}
+          onClose={() => setShowAuditTrail(false)}
+        />
+      )}
     </>
   );
 };

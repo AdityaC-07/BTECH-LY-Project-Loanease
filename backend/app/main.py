@@ -759,7 +759,8 @@ def _assert_upload_constraints(file: UploadFile, file_bytes: bytes) -> None:
 
 
 @app.post("/kyc/extract/pan")
-async def extract_pan_document(document: UploadFile = File(...), session_id: str | None = Form(None)):
+@limiter.limit("10/minute")
+async def extract_pan_document(request: Request, document: UploadFile = File(...), session_id: str | None = Form(None)):
     file_bytes = await document.read()
     _assert_upload_constraints(document, file_bytes)
     
@@ -778,9 +779,11 @@ async def extract_pan_document(document: UploadFile = File(...), session_id: str
     try:
         extension = (document.filename or "").lower().split(".")[-1]
         preprocessed = preprocess_image(file_bytes, extension)
-        ocr_text, confidence = run_ocr(preprocessed)
+        ocr_text, confidence = await _run_ocr_with_timeout(preprocessed, timeout_s=5.0)
+        if not ocr_text:
+            raise HTTPException(status_code=503, detail="OCR service timed out. Please retry or upload a clearer image.")
         result = extract_pan(ocr_text)
-        
+
         return {
             "document_type": "PAN",
             "extracted_fields": result["extracted_fields"],
@@ -788,13 +791,16 @@ async def extract_pan_document(document: UploadFile = File(...), session_id: str
             "confidence_score": confidence,
             "processing_time_ms": 0,
         }
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error(f"KYC PAN: Extraction failed - {str(exc)}")
         raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/kyc/extract/aadhaar")
-async def extract_aadhaar_document(document: UploadFile = File(...), session_id: str | None = Form(None)):
+@limiter.limit("10/minute")
+async def extract_aadhaar_document(request: Request, document: UploadFile = File(...), session_id: str | None = Form(None)):
     file_bytes = await document.read()
     _assert_upload_constraints(document, file_bytes)
     
@@ -813,7 +819,9 @@ async def extract_aadhaar_document(document: UploadFile = File(...), session_id:
     try:
         extension = (document.filename or "").lower().split(".")[-1]
         preprocessed = preprocess_image(file_bytes, extension)
-        ocr_text, confidence = run_ocr(preprocessed)
+        ocr_text, confidence = await _run_ocr_with_timeout(preprocessed, timeout_s=5.0)
+        if not ocr_text:
+            raise HTTPException(status_code=503, detail="OCR service timed out. Please retry or upload a clearer image.")
         result = extract_aadhaar(ocr_text)
         mobile_number = result.get("extracted_fields", {}).get("mobile_number")
         if session_id and mobile_number:
@@ -830,6 +838,8 @@ async def extract_aadhaar_document(document: UploadFile = File(...), session_id:
             "confidence_score": confidence,
             "processing_time_ms": 0,
         }
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error(f"KYC Aadhaar: Extraction failed - {str(exc)}")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -1300,6 +1310,498 @@ async def download_sanction_letter(reference_id: str):
     
     logger.error(f"Sanction letter not found: {ref}")
     raise HTTPException(status_code=404, detail=f"Sanction letter {ref} not found. It may still be generating.")
+
+# =============================================================================
+# AUDIT TRAIL
+# =============================================================================
+
+@app.get("/kyc/audit/{session_id}")
+async def get_kyc_audit_trail(session_id: str):
+    """Structured audit trail for all KYC and loan processing events in a session."""
+    session = session_store.get(session_id)
+    if not session:
+        session = session_store.get_or_create(session_id)
+
+    agent_log = session.get("agent_log", []) if isinstance(session, dict) else []
+    events = [
+        {
+            "timestamp": entry.get("timestamp", ""),
+            "event": entry.get("action", "").replace("_", " ").title(),
+            "agent": entry.get("agent", ""),
+            "status": entry.get("status", ""),
+            "details": entry.get("reasoning", ""),
+        }
+        for entry in agent_log
+    ]
+    return {
+        "session_id": session_id,
+        "events": events,
+        "total_events": len(events),
+    }
+
+
+# =============================================================================
+# SANCTION DELIVERY (Email / SMS confirmation)
+# =============================================================================
+
+class SanctionDeliveryRequest(BaseModel):
+    reference_id: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+
+
+@app.post("/sanction/deliver")
+async def deliver_sanction_notification(payload: SanctionDeliveryRequest):
+    """
+    Send sanction letter confirmation via email and/or SMS.
+    In DEMO_MODE or when credentials are absent, returns a success stub.
+    """
+    reference_id = payload.reference_id.strip()
+    sent_channels: list[str] = []
+    errors: list[str] = []
+
+    if not reference_id:
+        raise HTTPException(status_code=422, detail="reference_id is required")
+
+    # ── Email delivery ────────────────────────────────────────────────
+    if payload.email:
+        try:
+            if settings.DEMO_MODE or not any([
+                getattr(settings, "SENDGRID_API_KEY", ""),
+                getattr(settings, "SMTP_HOST", ""),
+            ]):
+                logger.info(f"[DEMO] Email sanction confirmation to {payload.email} for {reference_id}")
+            else:
+                import smtplib, email.mime.text as _mime
+                smtp_host = getattr(settings, "SMTP_HOST", "")
+                smtp_port = int(getattr(settings, "SMTP_PORT", 587))
+                smtp_user = getattr(settings, "SMTP_USER", "")
+                smtp_pass = getattr(settings, "SMTP_PASS", "")
+                from_addr = getattr(settings, "SMTP_FROM", smtp_user)
+
+                body = (
+                    f"Dear Applicant,\n\n"
+                    f"Your loan sanction letter is ready.\n"
+                    f"Reference ID: {reference_id}\n\n"
+                    f"Please log in to LoanEase to download your document.\n\n"
+                    f"Regards,\nLoanEase Team"
+                )
+                msg = _mime.MIMEText(body)
+                msg["Subject"] = f"LoanEase — Sanction Letter Ready ({reference_id})"
+                msg["From"] = from_addr
+                msg["To"] = payload.email
+
+                with smtplib.SMTP(smtp_host, smtp_port) as srv:
+                    srv.starttls()
+                    srv.login(smtp_user, smtp_pass)
+                    srv.sendmail(from_addr, [payload.email], msg.as_string())
+            sent_channels.append("email")
+        except Exception as exc:
+            logger.warning(f"Sanction email failed: {exc}")
+            errors.append(f"email: {str(exc)[:80]}")
+
+    # ── SMS delivery ──────────────────────────────────────────────────
+    if payload.phone:
+        try:
+            sms_text = (
+                f"LoanEase: Your loan is sanctioned! "
+                f"Ref: {reference_id}. "
+                f"Download your sanction letter from the app."
+            )
+            if settings.DEMO_MODE or not settings.FAST2SMS_API_KEY:
+                logger.info(f"[DEMO] SMS to {payload.phone}: {sms_text}")
+            else:
+                import httpx
+                r = await httpx.AsyncClient().post(
+                    "https://www.fast2sms.com/dev/bulkV2",
+                    params={
+                        "authorization": settings.FAST2SMS_API_KEY,
+                        "message": sms_text,
+                        "language": "english",
+                        "route": "q",
+                        "numbers": payload.phone.replace("+91", "").strip(),
+                    },
+                    timeout=8,
+                )
+                r.raise_for_status()
+            sent_channels.append("sms")
+        except Exception as exc:
+            logger.warning(f"Sanction SMS failed: {exc}")
+            errors.append(f"sms: {str(exc)[:80]}")
+
+    if not payload.email and not payload.phone:
+        raise HTTPException(status_code=422, detail="Provide at least one of: email, phone")
+
+    return {
+        "success": len(sent_channels) > 0,
+        "reference_id": reference_id,
+        "sent_via": sent_channels,
+        "errors": errors,
+        "demo_mode": settings.DEMO_MODE,
+    }
+
+
+# =============================================================================
+# API VERSIONING — version header middleware + /v1/ aliases
+# =============================================================================
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response as StarletteResponse
+
+
+class ApiVersionMiddleware(BaseHTTPMiddleware):
+    """Attach X-API-Version header to every response."""
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-API-Version-Current"] = "2"
+        response.headers["X-API-Version-Deprecated"] = "1"
+        return response
+
+
+app.add_middleware(ApiVersionMiddleware)
+
+# /v1/ router — exposes stable aliases for key endpoints
+v1_router = APIRouter(prefix="/v1", tags=["v1 (stable)"])
+
+
+@v1_router.get("/health")
+def v1_health(request: Request):
+    return {"status": "ok", "api_version": 1, "upgrade_to": "/health"}
+
+
+@v1_router.post("/assess")
+@limiter.limit("20/minute")
+async def v1_assess(request: Request, payload: AssessRequest):
+    return await assess(request, payload)
+
+
+@v1_router.get("/credit-score/{pan_number}")
+def v1_credit_score(pan_number: str):
+    return credit_score(pan_number)
+
+
+app.include_router(v1_router)
+
+
+# =============================================================================
+# ENHANCEMENT 14 — FRAUD DETECTION & RISK SCORING
+# =============================================================================
+
+import difflib
+import time as _time
+
+_fraud_rate_window: dict[str, list[float]] = {}  # phone → [timestamps]
+_FRAUD_WINDOW_SECONDS = 300  # 5-minute sliding window
+_FRAUD_MAX_APPS = 3          # flag if > 3 apps in the window
+
+
+class FraudAssessRequest(BaseModel):
+    session_id: str
+    pan_name: Optional[str] = None
+    aadhaar_name: Optional[str] = None
+    pan_confidence: Optional[float] = None
+    aadhaar_confidence: Optional[float] = None
+    phone: Optional[str] = None
+    application_timestamp: Optional[str] = None  # ISO-8601
+
+
+def _name_similarity(a: str, b: str) -> float:
+    """Token-sort ratio between two names (0–1)."""
+    if not a or not b:
+        return 1.0  # can't compare → no penalty
+    a_tokens = sorted(a.lower().split())
+    b_tokens = sorted(b.lower().split())
+    return difflib.SequenceMatcher(None, " ".join(a_tokens), " ".join(b_tokens)).ratio()
+
+
+def _is_after_market_hours(ts: Optional[str]) -> bool:
+    """True if the application arrived outside 9 AM – 6 PM IST on a weekday."""
+    if not ts:
+        return False
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        # IST = UTC+5:30
+        ist_hour = (dt.hour + 5) % 24 + (1 if dt.minute >= 30 else 0)
+        return ist_hour < 9 or ist_hour >= 18 or dt.weekday() >= 5
+    except Exception:
+        return False
+
+
+def _rapid_application_flag(phone: Optional[str]) -> bool:
+    """Return True if the same phone has > _FRAUD_MAX_APPS apps in last 5 min."""
+    if not phone:
+        return False
+    now = _time.monotonic()
+    key = phone.strip().replace(" ", "")
+    history = _fraud_rate_window.setdefault(key, [])
+    # Prune old entries
+    _fraud_rate_window[key] = [t for t in history if now - t < _FRAUD_WINDOW_SECONDS]
+    _fraud_rate_window[key].append(now)
+    return len(_fraud_rate_window[key]) > _FRAUD_MAX_APPS
+
+
+@app.post("/fraud/assess")
+@limiter.limit("30/minute")
+async def assess_fraud_risk(request: Request, payload: FraudAssessRequest):
+    """
+    Enhancement 14: Fraud Detection.
+    Returns a risk_score (0–100) with contributing factors.
+    Score > 60 → escalate to human agent.
+    """
+    risk_score = 0
+    flags: list[str] = []
+
+    # Rule 1: PAN ↔ Aadhaar name mismatch
+    sim = _name_similarity(payload.pan_name or "", payload.aadhaar_name or "")
+    if sim < 0.30:
+        risk_score += 20
+        flags.append(f"Name mismatch: PAN vs Aadhaar similarity {sim:.0%} (threshold 30%)")
+
+    # Rule 2: Low document extraction confidence
+    for doc, conf in [("PAN", payload.pan_confidence), ("Aadhaar", payload.aadhaar_confidence)]:
+        if conf is not None and conf < 0.70:
+            risk_score += 15
+            flags.append(f"Low {doc} extraction confidence: {conf:.0%} (threshold 70%)")
+
+    # Rule 3: Rapid successive applications from same phone
+    if _rapid_application_flag(payload.phone):
+        risk_score += 25
+        flags.append(f"Rapid successive applications detected from phone ending {(payload.phone or '')[-4:]}")
+
+    # Rule 4: Application after market hours
+    if _is_after_market_hours(payload.application_timestamp):
+        risk_score += 10
+        flags.append("Application submitted outside business hours (9 AM–6 PM IST, Mon–Fri)")
+
+    escalate = risk_score >= 60
+    risk_level = "HIGH" if risk_score >= 60 else "MEDIUM" if risk_score >= 30 else "LOW"
+
+    # Log to audit trail
+    session_store.log_agent(payload.session_id, {
+        "agent": "FraudDetectionAgent",
+        "action": "FRAUD_RISK_ASSESSED",
+        "reasoning": f"Fraud risk score: {risk_score}/100. Level: {risk_level}. Flags: {len(flags)}",
+        "status": "ESCALATE" if escalate else "PASS",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+
+    return {
+        "session_id": payload.session_id,
+        "risk_score": risk_score,
+        "risk_level": risk_level,
+        "flags": flags,
+        "escalate_to_human": escalate,
+        "recommendation": (
+            "Refer to human loan officer for manual review."
+            if escalate
+            else "Proceed with automated processing."
+        ),
+    }
+
+
+# =============================================================================
+# WEBHOOK NOTIFICATIONS — register, list, test, deliver
+# =============================================================================
+
+_webhook_registry: dict[str, dict] = {}  # webhook_id → {url, events, secret, active}
+
+WEBHOOK_EVENTS = {
+    "loan.created", "kyc.verified", "credit.assessed",
+    "offer.generated", "negotiation.accepted", "loan.sanctioned",
+}
+
+
+class WebhookRegisterRequest(BaseModel):
+    url: str
+    events: list[str]
+    secret: Optional[str] = None
+
+
+class WebhookTestRequest(BaseModel):
+    webhook_id: str
+
+
+async def _deliver_webhook(webhook_id: str, event: str, payload: dict) -> bool:
+    """Attempt to POST event payload to the registered webhook URL (3 retries)."""
+    entry = _webhook_registry.get(webhook_id)
+    if not entry or not entry.get("active"):
+        return False
+    delivery_payload = {
+        "event": event,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "webhook_id": webhook_id,
+        "data": payload,
+    }
+    headers = {"Content-Type": "application/json"}
+    if entry.get("secret"):
+        import hmac, hashlib
+        body = json.dumps(delivery_payload).encode()
+        sig = hmac.new(entry["secret"].encode(), body, hashlib.sha256).hexdigest()
+        headers["X-LoanEase-Signature"] = f"sha256={sig}"
+
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                r = await client.post(entry["url"], json=delivery_payload, headers=headers)
+                if r.status_code < 300:
+                    logger.info("Webhook %s delivered event %s (attempt %d)", webhook_id, event, attempt + 1)
+                    return True
+                logger.warning("Webhook %s got HTTP %s on attempt %d", webhook_id, r.status_code, attempt + 1)
+        except Exception as exc:
+            logger.warning("Webhook %s delivery error (attempt %d): %s", webhook_id, attempt + 1, exc)
+        await asyncio.sleep(2 ** attempt)  # 0s, 2s, 4s backoff
+    return False
+
+
+async def _fire_webhook_event(event: str, payload: dict) -> None:
+    """Fire event to all registered, active webhooks that subscribe to it."""
+    for wid, entry in list(_webhook_registry.items()):
+        if entry.get("active") and event in entry.get("events", []):
+            asyncio.create_task(_deliver_webhook(wid, event, payload))
+
+
+@app.post("/webhooks/register")
+@limiter.limit("10/minute")
+async def register_webhook(request: Request, payload: WebhookRegisterRequest):
+    invalid = [e for e in payload.events if e not in WEBHOOK_EVENTS]
+    if invalid:
+        raise HTTPException(status_code=422, detail=f"Unknown events: {invalid}. Valid: {sorted(WEBHOOK_EVENTS)}")
+    wid = str(uuid4())[:12]
+    _webhook_registry[wid] = {
+        "id": wid,
+        "url": payload.url,
+        "events": list(payload.events),
+        "secret": payload.secret,
+        "active": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return {"webhook_id": wid, "url": payload.url, "events": payload.events, "active": True}
+
+
+@app.get("/webhooks")
+async def list_webhooks():
+    return {
+        "webhooks": [
+            {k: v for k, v in w.items() if k != "secret"}
+            for w in _webhook_registry.values()
+        ]
+    }
+
+
+@app.delete("/webhooks/{webhook_id}")
+async def delete_webhook(webhook_id: str):
+    if webhook_id not in _webhook_registry:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    _webhook_registry[webhook_id]["active"] = False
+    return {"webhook_id": webhook_id, "active": False}
+
+
+@app.post("/webhooks/test")
+async def test_webhook(payload: WebhookTestRequest):
+    if payload.webhook_id not in _webhook_registry:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    success = await _deliver_webhook(
+        payload.webhook_id,
+        "loan.created",
+        {"test": True, "session_id": "TEST-SESSION"},
+    )
+    return {"webhook_id": payload.webhook_id, "delivered": success}
+
+
+# =============================================================================
+# COMPLIANCE AUDIT — IP-aware logging + CSV/JSON export
+# (RBI Digital Lending Guidelines 2022 — 7-year retention)
+# =============================================================================
+
+class ComplianceAuditRequest(BaseModel):
+    session_id: str
+    action: str
+    details: Optional[str] = None
+
+
+@app.post("/audit/log")
+@limiter.limit("60/minute")
+async def log_compliance_event(request: Request, payload: ComplianceAuditRequest):
+    """Append an immutable compliance audit event (include requester IP)."""
+    client_ip = request.client.host if request.client else "unknown"
+    session_store.log_agent(payload.session_id, {
+        "agent": "ComplianceAuditAgent",
+        "action": payload.action,
+        "reasoning": payload.details or "",
+        "status": "LOGGED",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "ip_address": client_ip,
+    })
+    return {"logged": True, "session_id": payload.session_id, "action": payload.action}
+
+
+@app.get("/admin/audit-logs")
+async def export_audit_logs(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    format: str = "json",
+):
+    """
+    Export all audit logs across all sessions.
+    Filter by ISO date (YYYY-MM-DD). format=json|csv.
+    """
+    all_events: list[dict] = []
+    for sid, session in session_store._sessions.items():
+        for entry in session.get("agent_log", []):
+            entry_copy = dict(entry)
+            entry_copy["session_id"] = sid
+            ts = entry_copy.get("timestamp", "")
+            if start_date and ts < start_date:
+                continue
+            if end_date and ts > end_date + "Z":
+                continue
+            all_events.append(entry_copy)
+
+    all_events.sort(key=lambda e: e.get("timestamp", ""))
+
+    if format == "csv":
+        from fastapi.responses import StreamingResponse
+        import csv, io
+        output = io.StringIO()
+        if all_events:
+            writer = csv.DictWriter(output, fieldnames=list(all_events[0].keys()))
+            writer.writeheader()
+            writer.writerows(all_events)
+        output.seek(0)
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=audit_logs.csv"},
+        )
+
+    return {
+        "total": len(all_events),
+        "start_date": start_date,
+        "end_date": end_date,
+        "events": all_events,
+    }
+
+
+# =============================================================================
+# GRACEFUL DEGRADATION — timeout wrapper for VLM (KYC) extraction
+# =============================================================================
+
+async def _run_ocr_with_timeout(preprocessed: bytes, timeout_s: float = 5.0):
+    """
+    Run OCR in a thread pool with a 5-second timeout.
+    Falls back to an empty string on timeout so the caller can handle gracefully.
+    """
+    loop = asyncio.get_event_loop()
+    try:
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, run_ocr, preprocessed),
+            timeout=timeout_s,
+        )
+        return result
+    except asyncio.TimeoutError:
+        logger.warning("OCR timed out after %ss — returning empty result", timeout_s)
+        return ("", 0.0)
+
 
 # =============================================================================
 # AGENT ORCHESTRATION ROUTES
